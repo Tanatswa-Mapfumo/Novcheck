@@ -14,7 +14,7 @@ requirements:
     implementation: ["src/novelty_harness/ports/"]
     tests: ["tests/unit/test_port_models.py", "tests/contract/test_mock_provider_contracts.py", "tests/unit/test_import_boundaries.py"]
     status: implemented
-    scope: "Async abstract ports and fixture contract suite; no concrete adapters"
+    scope: "Async abstract ports and fixture contract suite, including reranker mapping/ranks (ADR-005); no concrete adapters"
   - requirement: "FR-PROV-003"
     implementation: ["src/novelty_harness/ports/models.py", "src/novelty_harness/runtime/tracing/models.py", "tests/fixtures/providers.py"]
     tests: ["tests/unit/test_port_models.py", "tests/unit/test_tracing.py", "tests/contract/test_mock_provider_contracts.py"]
@@ -31,7 +31,7 @@ requirements:
     status: implemented
   - requirement: "Section 54"
     implementation: ["src/novelty_harness/runtime/tracing/", "src/novelty_harness/runtime/logging.py"]
-    tests: ["tests/unit/test_tracing.py", "tests/integration/test_phase0_smoke.py"]
+    tests: ["tests/unit/test_tracing.py", "tests/unit/test_logging.py", "tests/integration/test_phase0_smoke.py"]
     status: implemented
     scope: "Structured log/trace infrastructure; semantic decision producers remain deferred"
   - requirement: "Sections 58 / 59 / 61 / 62"

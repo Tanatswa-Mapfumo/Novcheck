@@ -111,5 +111,12 @@ async def assert_embedding_provider_contract(provider: EmbeddingProvider) -> Non
 
 
 async def assert_reranker_contract(provider: Reranker) -> None:
-    result = _assert_model(await provider.rank("query", ["first", "second"]), RerankResult)
+    candidates = ["first", "second"]
+    result = _assert_model(await provider.rank("query", candidates), RerankResult)
     _assert_call(provider.name, result.call)
+    candidate_ids = [candidate.candidate_id for candidate in result.candidates]
+    ranks = [candidate.rank for candidate in result.candidates]
+    assert all(candidate_id in candidates for candidate_id in candidate_ids)
+    assert len(candidate_ids) == len(set(candidate_ids))
+    assert all(1 <= rank <= len(candidates) for rank in ranks)
+    assert len(ranks) == len(set(ranks))

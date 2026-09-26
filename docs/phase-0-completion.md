@@ -36,6 +36,7 @@ docs/architecture/decisions/ADR-001-tooling-stack.md
 docs/architecture/decisions/ADR-002-lifecycle-stage-and-status.md
 docs/architecture/decisions/ADR-003-provider-call-audit.md
 docs/architecture/decisions/ADR-004-serialized-contract-validation.md
+docs/architecture/decisions/ADR-005-reranker-candidate-mapping.md
 docs/traceability/phase-0.yaml
 pyproject.toml
 scripts/verify.py
@@ -77,6 +78,7 @@ tests/unit/test_base_contracts.py
 tests/unit/test_config.py
 tests/unit/test_enums_and_ids.py
 tests/unit/test_import_boundaries.py
+tests/unit/test_logging.py
 tests/unit/test_network_isolation.py
 tests/unit/test_port_models.py
 tests/unit/test_state_machine.py
@@ -177,7 +179,7 @@ do not recursively freeze metadata; trace sinks store isolated snapshots.
 DTO validation establishes transport structure, not an arbitrary LLM task schema.
 Later concrete adapters must implement audit and failure behavior and pass contracts.
 
-## Review and unresolved minors
+## Review and follow-up fixes
 
 A fresh read-only reviewer inspected the complete Phase 0 implementation and
 bootstrap tooling through e44489c. No Critical findings. Three Important findings
@@ -185,13 +187,54 @@ were reproduced and fixed in one TDD pass: credential token redaction, non-finit
 nested JSON, and serialized lifecycle/audit validation. Fixes were verified by
 focused regressions and the full suite; no second reviewer pass was performed.
 
-Two Minor findings remain deferred and do not fail a documented Phase 0 criterion:
+Two Minor findings were initially deferred and did not fail a documented Phase 0 criterion:
 
 - Reranker candidate-ID mapping is unspecified, and the shared helper does not
   assert candidate membership, uniqueness, or rank validity. Define the mapping
   by ADR before adding those behavioral rules.
 - JSON logging emits the required fields but omits exception traceback diagnostics.
   A future logging improvement should add logger.exception coverage.
+
+Both findings are now closed in the Phase 0 follow-up, with no Phase 1 work:
+
+- ADR-005 defines candidate IDs as exact input strings, unique returned IDs, and
+  unique one-based ranks within the input count. The abstract port documents the
+  rule and the shared helper checks it without changing signatures or DTOs.
+  Reordered, partial, and empty responses remain valid; no score or novelty
+  behavior is introduced. Six malformed-response regressions failed before the
+  fix and pass after it, alongside three valid-response preservation cases.
+- JSON logs include an optional exception field formatted with the standard
+  library's traceback and cause/context-chain formatting. Existing fields and
+  plain log output remain unchanged; exception diagnostics are JSON-escaped to
+  keep one physical line per record. Three logger.exception regressions failed
+  on the missing exception field before the fix and now pass, covering traceback
+  details, explicit causes, implicit context, and a subsequent plain log.
+
+Follow-up verification commands:
+
+- `uv run pytest tests/contract/test_mock_provider_contracts.py -q --tb=short`:
+  six expected regression failures before the fix; 16 passed after it.
+- `uv run pytest tests/unit/test_logging.py -q --tb=short`:
+  three expected missing-exception-field failures before the fix.
+- `uv run pytest tests/unit/test_logging.py tests/unit/test_tracing.py -q --tb=short`:
+  31 passed after the fix.
+- `uv run pyright src/novelty_harness/ports/reranking.py tests/contract/provider_contracts.py tests/contract/test_mock_provider_contracts.py`:
+  zero errors/warnings.
+- `uv run pyright src/novelty_harness/runtime/logging.py tests/unit/test_logging.py`:
+  zero errors/warnings.
+- `uv run python scripts/verify.py`: Ruff lint/format and strict Pyright passed;
+  all 527 tests passed without warnings.
+- `git diff --check`: passed.
+
+No dependencies were added. ADR-005 is the only new decision; it clarifies the
+review's unspecified mapping rather than changing serialized artifact shapes.
+No novelty semantics or later-phase functionality changed. Existing limitations
+above still apply; future concrete adapters must pass these strengthened checks.
+
+A read-only follow-up reviewer inspected the two fixes, ADR, and regressions
+against 9c31b00 and found no actionable issues. Independent focused verification
+with `.venv/bin/python -B -m pytest -p no:cacheprovider tests/contract/test_mock_provider_contracts.py tests/unit/test_logging.py tests/unit/test_tracing.py -q --tb=short`
+passed all 47 cases. Coverage remains fixture-based until later concrete adapters.
 
 Rulings on everything the reviewer declined to judge:
 
@@ -212,11 +255,11 @@ Rulings on everything the reviewer declined to judge:
 | Acceptance gate | Result and evidence |
 | --- | --- |
 | 1. Clean checkout install | PASS: fresh clone, new environment, uv sync --dev |
-| 2. Full quality gate | PASS: lint, format, strict Pyright, 515 tests |
+| 2. Full quality gate | PASS: lint, format, strict Pyright, 527 tests after follow-up |
 | 3. JSON round trips | PASS: domain enums/IDs, assessments, events, provider DTOs |
 | 4. Invalid transitions | PASS: dedicated logged errors; invalid artifacts rejected |
 | 5. Stage/status independence | PASS: partial and abstained progress/resume tests |
-| 6. Neutral async provider ports | PASS: six protocols and seven mock contract tests |
+| 6. Neutral async provider ports | PASS: six protocols and 16 mock contract cases after follow-up |
 | 7. No network in tests | PASS: default IP socket blocking, no host allowances; Unix IPC documented |
 | 8. Auditable traces | PASS: JSONL append, concurrent threads, canonical hash, redaction, snapshots |
 | 9. Safe settings | PASS: no credential fields or invented research thresholds |

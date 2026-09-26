@@ -5,14 +5,15 @@ from datetime import UTC, datetime
 
 class _JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        return json.dumps(
-            {
-                "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
-                "level": record.levelname,
-                "logger": record.name,
-                "message": record.getMessage(),
-            }
-        )
+        data = {
+            "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info and record.exc_info[0] is not None:
+            data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(data)
 
 
 def configure_logging(level: str) -> None:

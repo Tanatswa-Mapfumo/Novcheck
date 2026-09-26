@@ -177,6 +177,64 @@ async def test_mock_reranker_contract() -> None:
     assert provider.calls == (metadata(name, "rank"), metadata(name, "rank"))
 
 
+@pytest.mark.parametrize(
+    "candidates",
+    [
+        [RankedCandidate(candidate_id="absent-from-request", score=0.5, rank=1)],
+        [RankedCandidate(candidate_id="first", score=0.5, rank=-5)],
+        [RankedCandidate(candidate_id="first", score=0.5, rank=0)],
+        [RankedCandidate(candidate_id="first", score=0.5, rank=3)],
+        [
+            RankedCandidate(candidate_id="first", score=0.5, rank=1),
+            RankedCandidate(candidate_id="first", score=0.4, rank=2),
+        ],
+        [
+            RankedCandidate(candidate_id="first", score=0.5, rank=1),
+            RankedCandidate(candidate_id="second", score=0.4, rank=1),
+        ],
+    ],
+    ids=[
+        "unknown-id",
+        "negative-rank",
+        "zero-rank",
+        "out-of-range-rank",
+        "duplicate-id",
+        "duplicate-rank",
+    ],
+)
+async def test_reranker_contract_rejects_invalid_mapping_or_ranks(
+    candidates: list[RankedCandidate],
+) -> None:
+    provider = MockReranker(
+        name="mock-reranker",
+        result=RerankResult(candidates=candidates, call=metadata("mock-reranker", "rank")),
+    )
+    with pytest.raises(AssertionError):
+        await assert_reranker_contract(provider)
+
+
+@pytest.mark.parametrize(
+    "candidates",
+    [
+        [
+            RankedCandidate(candidate_id="second", score=0.5, rank=1),
+            RankedCandidate(candidate_id="first", score=0.4, rank=2),
+        ],
+        [RankedCandidate(candidate_id="second", score=0.5, rank=1)],
+        [],
+    ],
+    ids=["reordered", "subset", "empty"],
+)
+async def test_reranker_contract_accepts_valid_mapping_and_ranks(
+    candidates: list[RankedCandidate],
+) -> None:
+    provider = MockReranker(
+        name="mock-reranker",
+        result=RerankResult(candidates=candidates, call=metadata("mock-reranker", "rank")),
+    )
+    await assert_reranker_contract(provider)
+
+
 async def test_mock_failed_response_retains_explicit_failure_metadata() -> None:
     call = metadata("mock-llm", "failure").model_copy(
         update={"status": TraceStatus.FAILURE, "failure_code": "PROVIDER_FAILURE"}
