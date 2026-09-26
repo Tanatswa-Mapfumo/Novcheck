@@ -93,3 +93,29 @@ def test_import_guard_detects_absolute_and_relative_boundaries(source: str) -> N
 )
 def test_domain_guard_detects_application_and_test_dependency_leaks(source):
     assert forbidden_imports(source, "novelty_harness.domain")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from ..intake import pipeline",
+        "from novelty_harness import mcu",
+        "from ..mcu import decomposition",
+    ],
+)
+def test_domain_guard_detects_understanding_layer_leaks(source):
+    assert forbidden_imports(
+        source,
+        "novelty_harness.domain",
+        banned=(*FORBIDDEN, "novelty_harness.intake", "novelty_harness.mcu"),
+    )
+
+
+def test_domain_does_not_depend_on_semantic_understanding_layers():
+    root = Path(__file__).resolve().parents[2] / "src/novelty_harness/domain"
+    for path in root.rglob("*.py"):
+        assert not forbidden_imports(
+            path.read_text(),
+            "novelty_harness.domain",
+            banned=(*FORBIDDEN, "novelty_harness.intake", "novelty_harness.mcu"),
+        ), path

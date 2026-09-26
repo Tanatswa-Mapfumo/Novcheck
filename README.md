@@ -5,7 +5,8 @@ A phase-gated, evidence-grounded novelty assessment project.
 The authoritative behavior is in [the master specification](docs/specs/master-design-spec.md).
 Implementation follows [the Phase 0 plan](docs/superpowers/plans/2026-09-26-phase-0-repository-governance-contracts.md)
 [the Phase 1 plan](docs/superpowers/plans/2026-09-26-phase-1-deterministic-thin-vertical-slice-implementation-plan.md)
-and [AGENTS.md](AGENTS.md).
+and [the Phase 2 plan](docs/superpowers/plans/2026-09-26-phase-2-intake-sufficiency-robust-mcu-engine-implementation-plan.md),
+with [AGENTS.md](AGENTS.md).
 
 Phase 0 provides versioned Pydantic contracts, canonical enums and opaque IDs,
 pure audited lifecycle transitions, credential-free settings with unset budget
@@ -65,8 +66,53 @@ and lifecycle/trace IDs remain opaque UUID4 IDs; transport source/passages use
 stable exact-identity/content hashes (not semantic source identity resolution).
 Trace writes are locked within one process, not across processes.
 Redaction covers sensitive mapping keys, not secrets embedded in arbitrary prose.
-Phase 2 has not started.
+The accepted Phase 1 snapshot is retained; Phase 2 extends understanding as below.
+
+## Phase 2: Intake, sufficiency and robust MCU engine
+
+Phase 2 adds real provider-independent, model-assisted understanding behind the
+four existing intake/sufficiency/MCU ports. Strict structured validation, extractive
+material-field grounding and explicit unknowns preserve original input. Structural
+sufficiency ceilings do not use length/fluency or inferred novelty. Missing/withheld
+mechanisms stay unassessable; claimed advantages remain CLAIMED.
+
+Independent A/B prompts share only CIR/original input, never the other's result.
+Alignment compares feature concepts, directed relationships and material scope;
+semantic alias proposals must pass structural checks. Reconciliation retains
+resolutions/disagreements and separate combinations. All six structural tests run.
+Material unresolved instability caps affected contributions at EXPLORATORY and
+reduces aggregate sufficiency before research; it does not decide a novelty verdict.
+
+`understand_idea` in `intake/pipeline.py` accepts a request, SemanticRunner wrapping
+the abstract LLMProvider, optional artifact writer/assessment ID and clock. It
+returns frozen CIR/sufficiency, A/B, reconciliation and an immutable MCUVersion.
+`UnderstandingComponents` is a fresh request-scoped adapter for the four existing
+vertical-slice ports. It publishes A/B, alignment, critic, version and semantic-call
+audits; initial CIR/sufficiency remain retained when final bindings/ceilings change.
+
+```bash
+uv run pytest tests/integration/test_phase1_slice_with_phase2_components.py -v
+uv run pytest tests/adversarial/test_phase2_mcu_attacks.py -v
+```
+
+Default responses are recorded test data; production never imports fixtures.
+No vendor SDK, live model, literature/web/patent search, evidence-family planner,
+search critic, RRF, adaptive controller, prior-art equivalence, evidence support
+reasoning, prosecutor/defender or novelty adjudication is implemented. Later
+research/evidence/adjudication remain fixture-backed in the end-to-end tests.
+
+Overrides use strict operation payloads and return new content-hashed versions
+with actor/reason/time, parent and before/after graph audit. Merge/split explicitly
+update affected combinations; dangling references reject the edit. No in-place
+API, implicit cascading edit, database or UI. Rollback selects a retained parent.
+Old structural ceilings are not erased by an override.
+
+Span/schema checks do not prove semantic entailment or deployed model robustness.
+Fixtures prove safeguards and architectural flow, not general model intelligence.
+No real novelty assessment is possible yet. Phase 3 has not started.
 
 See [Phase 0 traceability](docs/traceability/phase-0.yaml),
-[Phase 1 traceability](docs/traceability/phase-1.yaml) and
+[Phase 1 traceability](docs/traceability/phase-1.yaml),
+[Phase 2 traceability](docs/traceability/phase-2.yaml),
+[Phase 2 completion](docs/phase-2-completion.md) and
 [architecture decisions](docs/architecture/decisions/) for scope and decisions.

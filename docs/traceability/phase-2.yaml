@@ -1,0 +1,37 @@
+phase: 2
+scope: Intake, sufficiency, robust MCU understanding only
+requirements:
+  - ids: [FR-IN-001, FR-IN-002]
+    status: Implemented for accepted text AssessmentRequest; document upload/parsing deferred
+    modules: [intake/normalization.py]
+    tests: [tests/unit/intake/test_normalization.py]
+  - ids: [FR-IN-003, FR-IN-004, FR-IN-005, FR-IN-006, INV-05, INV-12]
+    status: Implemented structural resolution ceilings, partial dimensions and explicit unknowns
+    modules: [intake/sufficiency.py, intake/pipeline.py]
+    tests: [tests/unit/intake/test_sufficiency.py, tests/adversarial/test_phase2_mcu_attacks.py]
+  - ids: [FR-MCU-001, FR-MCU-002, FR-MCU-003, FR-MCU-004, FR-MCU-005, INV-03]
+    status: Implemented model-assisted understanding plus deterministic grounding/structure safeguards
+    modules: [mcu/decomposition.py, mcu/alignment.py, mcu/critic.py, mcu/reconciliation.py]
+    tests: [tests/unit/mcu, tests/adversarial/test_phase2_mcu_attacks.py]
+  - ids: [FR-MCU-006]
+    status: Implemented affected IDs and structural sufficiency ceiling; verdict gate deferred to Phase 7
+    modules: [mcu/reconciliation.py, intake/pipeline.py, application/vertical_slice.py]
+    tests: [tests/unit/mcu/test_critic.py, tests/integration/test_phase1_slice_with_phase2_components.py]
+  - ids: [FR-MCU-007, FR-AUD-001, FR-AUD-002]
+    status: Implemented immutable version history, explicit operations and canonical hashes
+    modules: [mcu/overrides.py]
+    tests: [tests/unit/mcu/test_overrides.py]
+  - ids: [FR-PROV-003, FR-OBS-002, FR-SEC-001]
+    status: Implemented semantic call validation/version/hash audit and untrusted context delimiting
+    modules: [runtime/semantic/structured.py, application/understanding.py]
+    tests: [tests/unit/runtime/test_structured_semantic_calls.py, tests/unit/intake/test_normalization.py]
+  - sections: [9, 10, 11, 12, 44, 46, 47, 48, 49, 60 Phase 2, 61, 62, Appendix E.1]
+    status: Phase 2 subset implemented; full model red-team hardening and later failure classes deferred
+    tests: [tests/integration/test_phase2_understanding_pipeline.py, tests/unit/test_phase2_architecture_guards.py]
+deferred:
+  - Phase 3 evidence-family planning, search critic and real provider integrations
+  - Phase 4 RRF, retrieval strategy fusion, adaptive research and citation chasing
+  - Phase 5 source interpretation and provenance
+  - Phase 6 prior-art equivalence and evidence support reasoning
+  - Phase 7 prosecutor/defender, adjudication, verdict permission and novelty scoring
+  - Phase 8 full ranked report reasoning; accepted minimal frozen-findings compiler remains
