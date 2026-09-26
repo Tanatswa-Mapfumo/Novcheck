@@ -105,3 +105,48 @@ def decomposition(strategy, candidates=None, **updates):
         "combinations": [],
         **updates,
     }
+
+
+def reconciliation_proposal(
+    candidates=None, left_ids=("mcu_control",), right_ids=("mcu_control",), **updates
+):
+    candidates = candidates if candidates is not None else [candidate()]
+    ids = [c["mcu"]["mcu_id"] for c in candidates]
+    return {
+        "prompt_version": "structural-critic-v1",
+        "candidates": candidates,
+        "combinations": [],
+        "unresolved_disagreements": [],
+        "resolutions": [
+            {
+                "strategy": strategy,
+                "input_mcu_id": mcu_id,
+                "output_mcu_ids": ids,
+                "reason": "Retain supported contribution",
+            }
+            for strategy, mcus in (
+                ("INDEPENDENCE_FOCUSED", left_ids),
+                ("RELATIONSHIP_FOCUSED", right_ids),
+            )
+            for mcu_id in mcus
+        ],
+        "structural_tests": [
+            {
+                "test_name": name,
+                "mcu_ids": ids,
+                "passed": True,
+                "severity": "INFO",
+                "explanation": "Supported meaningful structure",
+                "source_support": ["Sensor controls relay."],
+            }
+            for name in (
+                "REMOVAL",
+                "INDEPENDENCE",
+                "RELATIONSHIP_PRESERVATION",
+                "MERGE",
+                "PARAPHRASE_STABILITY",
+                "SPECIFICITY",
+            )
+        ],
+        **updates,
+    }
