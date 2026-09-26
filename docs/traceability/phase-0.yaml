@@ -1,0 +1,52 @@
+phase: 0
+scope: "Repository, governance, and infrastructure contracts only"
+requirements:
+  - requirement: "Section 0.2 / 0.4"
+    implementation: ["AGENTS.md", "docs/specs/master-design-spec.md", "docs/superpowers/plans/2026-09-26-phase-0-repository-governance-contracts.md"]
+    tests: []
+    status: implemented
+  - requirement: "Section 8"
+    implementation: ["src/novelty_harness/domain/state_machine.py", "src/novelty_harness/domain/assessment.py"]
+    tests: ["tests/unit/test_state_machine.py", "tests/integration/test_phase0_smoke.py"]
+    status: implemented
+    scope: "Pure stage/status transitions and lifecycle event contracts; callers persist returned events"
+  - requirement: "Section 42"
+    implementation: ["src/novelty_harness/ports/"]
+    tests: ["tests/unit/test_port_models.py", "tests/contract/test_mock_provider_contracts.py", "tests/unit/test_import_boundaries.py"]
+    status: implemented
+    scope: "Async abstract ports and fixture contract suite; no concrete adapters"
+  - requirement: "FR-PROV-003"
+    implementation: ["src/novelty_harness/ports/models.py", "src/novelty_harness/runtime/tracing/models.py", "tests/fixtures/providers.py"]
+    tests: ["tests/unit/test_port_models.py", "tests/unit/test_tracing.py", "tests/contract/test_mock_provider_contracts.py"]
+    status: implemented
+    scope: "Provider call metadata contracts and deterministic mock audit history (ADR-003)"
+  - requirement: "FR-SEC-003"
+    implementation: ["src/novelty_harness/runtime/config/", "src/novelty_harness/runtime/tracing/"]
+    tests: ["tests/unit/test_config.py", "tests/unit/test_tracing.py"]
+    status: implemented
+    scope: "No credential fields; secret-key redaction in trace sinks"
+  - requirement: "FR-AUD-001"
+    implementation: ["src/novelty_harness/runtime/tracing/sinks.py"]
+    tests: ["tests/unit/test_tracing.py"]
+    status: implemented
+  - requirement: "Section 54"
+    implementation: ["src/novelty_harness/runtime/tracing/", "src/novelty_harness/runtime/logging.py"]
+    tests: ["tests/unit/test_tracing.py", "tests/integration/test_phase0_smoke.py"]
+    status: implemented
+    scope: "Structured log/trace infrastructure; semantic decision producers remain deferred"
+  - requirement: "Sections 58 / 59 / 61 / 62"
+    implementation: ["AGENTS.md", "pyproject.toml", "scripts/verify.py", "docs/architecture/decisions/", "docs/traceability/phase-0.yaml"]
+    tests: ["tests/unit/test_base_contracts.py", "tests/unit/test_network_isolation.py", "tests/unit/test_import_boundaries.py"]
+    status: implemented
+    scope: "Phase 0 governance, verification, dependency boundaries, and traceability"
+  - requirement: "Phase 0 / Section 60"
+    implementation: ["pyproject.toml", "src/novelty_harness/", "tests/fixtures/providers.py"]
+    tests: ["tests/unit/", "tests/contract/", "tests/integration/test_phase0_smoke.py"]
+    status: implemented
+deferred:
+  - "INV-01 through INV-15: governing semantics preserved, semantic enforcement awaits later phases"
+  - "Sections 6, 9, 13, 14, 24, 29, 36, 46: enum vocabulary only, not semantic implementations"
+  - "FR-EXP-003: as_of is required, but evidence cutoff enforcement awaits evidence processing"
+  - "FR-AUD-002: canonical hash utility exists; content-derived source/passage IDs await normalization"
+  - "FR-PROV-004, FR-OBS-001, FR-OBS-002: metadata and traces are available; orchestration and verdict audit await later phases"
+  - "All Phase 1 and later services, provider integrations, novelty analysis, and reports"
