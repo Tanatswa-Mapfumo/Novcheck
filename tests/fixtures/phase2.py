@@ -67,3 +67,41 @@ def normalization_draft(**updates):
         "prompt_version": "normalization-v1",
         **updates,
     }
+
+
+def candidate(mcu_id="mcu_control", statement="Sensor controls relay.", **updates):
+    return {
+        "mcu": {
+            "mcu_id": mcu_id,
+            "label": "Sensor control",
+            "statement": statement,
+            "mechanism": statement,
+            "features": [
+                {"feature_id": "F1", "concept": "Sensor"},
+                {"feature_id": "F2", "concept": "relay"},
+            ],
+            "relationships": [{"subject": "F1", "relation": "CONTROLS", "object": "F2"}],
+            "provenance": {
+                "kind": "implemented",
+                "component": "decomposition",
+                "detail": "Model proposed; requires validation",
+            },
+        },
+        "source_support": [statement],
+        "rationale": "Independently meaningful control",
+        "unresolved_questions": [],
+        **updates,
+    }
+
+
+def decomposition(strategy, candidates=None, **updates):
+    return {
+        "strategy": strategy,
+        "prompt_version": "decomposition-a-v1"
+        if strategy == "INDEPENDENCE_FOCUSED"
+        else "decomposition-b-v1",
+        "candidates": candidates if candidates is not None else [candidate()],
+        "global_unknowns": [],
+        "combinations": [],
+        **updates,
+    }
