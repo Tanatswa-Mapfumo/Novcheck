@@ -209,3 +209,45 @@ async def test_decisive_edge_must_belong_to_the_finding_mcu(tmp_path):
     components = replace(fixture.components, adjudicator=FixtureAdjudicationEngine(wrong))
     with pytest.raises(ValueError, match="finding MCU"):
         await run_fixture(tmp_path, components=components)
+
+
+async def test_assessment_summary_copies_frozen_findings_without_fabricated_coverage(tmp_path):
+    fixture = make_fixture()
+    result, _ = await run_fixture(tmp_path)
+    raw = json.loads((result.run_dir / "assessment.json").read_text())
+    assert {
+        "id",
+        "as_of",
+        "input_sufficiency",
+        "overall_verdict",
+        "mcu_findings",
+        "closest_precedents",
+        "value_findings",
+        "evidence_limitations",
+        "coverage_matrix",
+        "trace_ref",
+        "schema_version",
+    } <= raw.keys()
+    summary = AssessmentSummary.model_validate(raw)
+    assert summary == result.summary
+    assert summary.id == result.record.assessment_id
+    assert summary.as_of == fixture.request.as_of
+    assert summary.input_sufficiency == fixture.sufficiency.state
+    assert summary.overall_verdict == result.adjudication.overall_state
+    assert summary.mcu_findings == result.adjudication.mcus
+    assert summary.value_findings == result.adjudication.value_findings
+    assert summary.evidence_limitations == result.adjudication.evidence_limitations
+    assert summary.closest_precedents == (fixture.sources[0].source_id,)
+    assert summary.coverage_matrix == result.adjudication.coverage_matrix == ()
+    assert summary.provenance.kind == "fixture"
+    assert (result.run_dir / summary.trace_ref).is_file()
+    assert "novelty_score" not in raw and "confidence" not in raw
+
+
+async def test_summary_round_trips_and_rejects_unknown_fields(tmp_path):
+    from pydantic import ValidationError
+
+    result, _ = await run_fixture(tmp_path)
+    assert AssessmentSummary.model_validate_json(result.summary.model_dump_json()) == result.summary
+    with pytest.raises(ValidationError):
+        AssessmentSummary.model_validate({**result.summary.model_dump(), "confidence": 0.99})

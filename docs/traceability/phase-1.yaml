@@ -1,0 +1,56 @@
+phase: 1
+scope: "Deterministic architectural thin vertical slice only"
+requirements:
+  - requirement: "Section 8 / Section 60 Phase 1"
+    implementation: ["src/novelty_harness/application/vertical_slice.py"]
+    tests: ["tests/integration/test_phase1_vertical_slice.py"]
+    status: implemented
+    scope: "Canonical stage/status lifecycle, injected components, explicit fixture/deferred trace labels"
+  - requirement: "Sections 9-12 / FR-IN-002 / FR-IN-004 / FR-MCU-005"
+    implementation: ["src/novelty_harness/domain/idea.py", "src/novelty_harness/domain/mcu.py"]
+    tests: ["tests/unit/test_phase1_domain_contracts.py", "tests/unit/test_phase1_fixtures.py"]
+    status: contracts_implemented_semantics_deferred
+    scope: "Original input preserved, missing fields retained, sufficiency and relationship/combination artifacts; no reasoning"
+  - requirement: "Sections 15-16 / FR-SRCH-002"
+    implementation: ["src/novelty_harness/domain/research.py", "src/novelty_harness/application/ports.py"]
+    tests: ["tests/unit/test_phase1_domain_contracts.py", "tests/integration/test_phase1_vertical_slice.py"]
+    status: contracts_implemented_semantics_deferred
+    scope: "Query purpose/family fields and review binding; no query generation or semantic review"
+  - requirement: "Sections 23 / 27-28 / FR-EVID-004"
+    implementation: ["src/novelty_harness/domain/evidence.py", "src/novelty_harness/application/vertical_slice.py"]
+    tests: ["tests/unit/test_phase1_domain_contracts.py", "tests/integration/test_phase1_vertical_slice.py"]
+    status: contracts_implemented_semantics_deferred
+    scope: "Source/passage transport, edge reference integrity, supplied support states; unsupported decisive edges rejected, no support reasoning"
+  - requirement: "Sections 34 / 37-38 / INV-15"
+    implementation: ["src/novelty_harness/domain/adjudication.py", "src/novelty_harness/domain/reporting.py", "src/novelty_harness/reporting/minimal.py"]
+    tests: ["tests/unit/test_phase1_domain_contracts.py", "tests/unit/test_minimal_report_compiler.py"]
+    status: implemented_architecture_only
+    scope: "Deeply frozen injected findings, adjudication hash, nine-question rendering without changing verdicts"
+  - requirement: "Section 6 / INV-09"
+    implementation: ["src/novelty_harness/domain/idea.py", "src/novelty_harness/domain/adjudication.py", "src/novelty_harness/reporting/minimal.py"]
+    tests: ["tests/unit/test_minimal_report_compiler.py", "tests/integration/test_phase1_vertical_slice.py"]
+    status: implemented_architecture_only
+    scope: "Separate supplied value maturity/findings, never inferred from novelty"
+  - requirement: "Sections 42 / 56 / FR-PROV-003"
+    implementation: ["src/novelty_harness/application/ports.py", "src/novelty_harness/application/models.py", "src/novelty_harness/application/vertical_slice.py"]
+    tests: ["tests/unit/test_application_ports.py", "tests/unit/test_phase1_fixtures.py", "tests/integration/test_phase1_vertical_slice.py"]
+    status: implemented
+    scope: "Nine replaceable async semantic ports; existing mock search/content ports and explicit call metadata"
+  - requirement: "Sections 44 / 54 / 57 / FR-AUD-001 / FR-AUD-002 / FR-OBS-001"
+    implementation: ["src/novelty_harness/runtime/artifacts/writer.py", "src/novelty_harness/application/vertical_slice.py"]
+    tests: ["tests/unit/test_artifact_writer.py", "tests/integration/test_phase1_vertical_slice.py"]
+    status: implemented_architecture_only
+    scope: "Versioned files, atomic per-file writes, exact transport hashes, append-only run-local trace, explicit failure without fallback"
+  - requirement: "Sections 49 / 58-62"
+    implementation: ["README.md", "docs/phase-1-completion.md", "docs/traceability/phase-1.yaml"]
+    tests: ["tests/unit/test_import_boundaries.py", "tests/unit/test_phase1_architecture_guards.py", "tests/unit/test_network_isolation.py"]
+    status: implemented_architecture_only
+    scope: "Phase gate, import guards, no live providers, default socket blocking"
+deferred:
+  - "Phase 2: real intake, structural sufficiency reasoning, independent MCU decomposition, reconciliation quality and overrides"
+  - "Phases 3-4: real providers, research planning/criticism, floors, strategy diversity, adaptive escalation and saturation/budgets"
+  - "Phases 5-6: semantic normalization, source versions/lineage, independence, chronology, passage selection and equivalence/support reasoning"
+  - "Phase 7: prosecutor/defender, adjudication permission gates and robustness reasoning"
+  - "Phase 8: full narrative/citation compiler and context lenses"
+  - "Phases 9-10: full adversarial suite, recovery/resume and calibrated evaluation"
+  - "No numeric novelty/confidence scoring or invented thresholds"
