@@ -21,12 +21,16 @@ def _canonical_value(value: object) -> object:
     return to_jsonable_python(value)
 
 
-def canonical_hash(value: JsonValue | BaseModel) -> str:
-    encoded = json.dumps(
+def canonical_json(value: JsonValue | BaseModel, *, ensure_ascii: bool = True) -> str:
+    return json.dumps(
         _canonical_value(value),
         sort_keys=True,
         separators=(",", ":"),
-        ensure_ascii=True,
+        ensure_ascii=ensure_ascii,
         allow_nan=False,
-    ).encode("utf-8")
+    )
+
+
+def canonical_hash(value: JsonValue | BaseModel) -> str:
+    encoded = canonical_json(value).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
