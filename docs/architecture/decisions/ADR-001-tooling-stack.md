@@ -19,6 +19,13 @@ on the first failure.
 Defer Typer, SQLAlchemy, HTTPX, and provider SDKs until an approved phase uses
 them. No research defaults, saturation thresholds, or novelty scores are chosen.
 
+Ruff formats Python only; supplied authoritative Markdown is preserved verbatim.
+Its str/Enum modernization rule is disabled to match the plan's explicit enum base.
+pytest-socket blocks IPv4/IPv6 sockets by default, with no allowed hosts. Local
+Unix sockets are allowed solely because asyncio constructs a socket pair for
+event-loop wakeups. A failing async setup demonstrated this requirement; tests
+verify TCP and UDP socket construction remain blocked for both IP families.
+
 ## Consequences
 
 Phase 0 installs without any external-provider credentials. Later phases must
