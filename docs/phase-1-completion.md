@@ -15,6 +15,7 @@ This proves architectural data flow using synthetic fixtures, not novelty intell
 | 6 | Complete lifecycle orchestration and artifacts | 7a7603a |
 | 7 | Summary assertions, README and traceability | bd14ce2 |
 | 8 | Architecture guards and acceptance record | 2304469 |
+| Review closure | Snapshot and finding-reference integrity regressions | 535029a |
 
 Phase 0 prerequisite fixes were accepted in 8d272ec before any Phase 1 work.
 Every task passed focused tests and the complete repository quality gate before
@@ -126,8 +127,8 @@ tests with `.venv/bin/python -m pytest`; ordinary uv commands verified the gate.
 - AssessmentSummary was established with application contracts for Task 6 to
   persist its required output; Task 7 verifies its detailed field-copy behavior.
   Cost: no separate runtime implementation in Task 7.
-- Fresh-checkout verification follows the Task 8 commit to test an exact tracked
-  snapshot. Final review/fresh verification results will be recorded below.
+- Fresh-checkout verification follows the Task 8 and review-fix commits to test
+  exact tracked snapshots. Results are recorded below.
 
 ## Fixture-backed and deferred stages
 
@@ -204,3 +205,13 @@ went RED then GREEN; the full 657-test gate passed. Public interfaces and artifa
 shapes did not change, and no novelty reasoning was added. No second reviewer pass
 was performed; verification uses the regression tests and full gate. See
 `docs/reviews/2026-09-26-phase-1-review.md` for findings and all declined-scope rulings.
+
+Fresh post-review clone `/private/tmp/novcheck-phase1-final.vTNRA0` at 535029a
+created a new environment with `uv sync --dev`. The full verification command
+passed all 657 tests without warnings, Ruff lint and all 66 formatted files,
+and strict Pyright with zero errors/warnings. Its working tree was clean.
+This is 130 additional test cases over the accepted Phase 0 baseline of 527.
+
+All 17 Phase 1 acceptance gates pass. No review findings remain open; deferred
+semantic and operational limitations above remain intentional. Phase 2 has not
+started. The branch and isolated worktree are retained without merge or push.
