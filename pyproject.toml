@@ -20,6 +20,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+ignore = ["UP042"]  # The approved contracts explicitly use str, Enum.
 
 [tool.ruff.format]
 exclude = ["*.md"]
