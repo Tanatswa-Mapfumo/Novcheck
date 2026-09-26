@@ -1,12 +1,85 @@
 """Recorded semantic responses; no understanding implementation lives here."""
 
 from collections.abc import Sequence
+from copy import deepcopy
 
 from pydantic import JsonValue
 
 from novelty_harness.ports.models import ContextBlock, LLMCallConfig, StructuredResult
 from tests.fixtures.phase1 import FIXED_TIME
 from tests.fixtures.providers import MockLLMProvider
+
+
+def attack_responses(
+    text,
+    *,
+    candidates=(),
+    mechanism=False,
+    contribution=True,
+    advantages=(),
+    ambiguity=(),
+    withheld=False,
+    combinations=(),
+):
+    norm = normalization_draft(
+        problem=text,
+        advantage_statements=list(advantages),
+        ambiguities=list(ambiguity),
+        explicit_unknowns=["Core mechanism withheld"] if withheld else [],
+        source_attributions=[{"field_path": "problem", "supporting_excerpt": text}]
+        + [
+            {"field_path": f"advantage_statements.{i}", "supporting_excerpt": value}
+            for i, value in enumerate(advantages)
+        ],
+    )
+    signals = {
+        "problem_defined": True,
+        "contribution_identifiable": contribution,
+        "mechanism_described": mechanism,
+        "relationship_structure_described": mechanism,
+        "comparison_scope_identifiable": mechanism,
+        "critical_unknowns": [],
+        "withheld_mechanism": withheld,
+        "contradictory_specification": bool(ambiguity),
+    }
+    suff = {
+        "proposed_state": "HIGH_RESOLUTION",
+        "assessable_dimensions": ["problem_landscape", "mechanism"],
+        "unassessable_dimensions": [],
+        "missing_information": [],
+        "consequences": [],
+        "signals": signals,
+        "prompt_version": "sufficiency-v1",
+        "source_attributions": [
+            {"field_path": key, "supporting_excerpt": text}
+            for key, value in signals.items()
+            if value is True
+        ],
+    }
+    ids = tuple(c["mcu"]["mcu_id"] for c in candidates)
+    critic = reconciliation_proposal(
+        list(candidates), left_ids=ids, right_ids=ids, combinations=list(combinations)
+    )
+    for test in critic["structural_tests"]:
+        test["source_support"] = [text]
+        if not candidates:
+            test.update(passed=None, severity="MATERIAL")
+    return {
+        "normalize_idea": norm,
+        "assess_sufficiency": suff,
+        "decompose_a": decomposition(
+            "INDEPENDENCE_FOCUSED",
+            deepcopy(list(candidates)),
+            combinations=deepcopy(list(combinations)),
+        ),
+        "decompose_b": decomposition(
+            "RELATIONSHIP_FOCUSED",
+            deepcopy(list(candidates)),
+            combinations=deepcopy(list(combinations)),
+        ),
+        "align_mcus": {"prompt_version": "alignment-v1", "mappings": []},
+        "criticize_mcus": critic,
+    }
 
 
 class RecordedLLM(MockLLMProvider):
@@ -181,7 +254,7 @@ def reconciliation_proposal(
             {
                 "strategy": strategy,
                 "input_mcu_id": mcu_id,
-                "output_mcu_ids": ids,
+                "output_mcu_ids": [mcu_id] if mcu_id in ids else ids,
                 "reason": "Retain supported contribution",
             }
             for strategy, mcus in (

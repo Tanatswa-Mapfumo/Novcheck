@@ -117,21 +117,30 @@ def validate_criticism(
     if referenced != set(outputs):
         raise ValueError("unbound reconciled contribution")
     # Combinations are separately retained; any incompatible representation stays unresolved.
-    for original in (*left.combinations, *right.combinations):
+    for decomposition in (left, right):
         mappings = {
             r.input_mcu_id: r.output_mcu_ids
             for r in proposal.resolutions
-            if r.strategy == (left.strategy if original in left.combinations else right.strategy)
+            if r.strategy == decomposition.strategy
         }
-        members = {
-            target for member in original.combination.member_ids for target in mappings[member]
-        }
-        if not any(
-            set(c.combination.member_ids) == members
-            and c.combination.statement == original.combination.statement
-            for c in proposal.combinations
-        ):
-            raise ValueError("meaningful combination lost during reconciliation")
+        for original in decomposition.combinations:
+            members = {
+                target for member in original.combination.member_ids for target in mappings[member]
+            }
+            expected_links = {
+                (subject, r.relation, obj)
+                for r in original.combination.relationships
+                for subject in mappings[r.subject]
+                for obj in mappings[r.object]
+            }
+            if not any(
+                set(c.combination.member_ids) == members
+                and c.combination.statement == original.combination.statement
+                and expected_links
+                <= {(r.subject, r.relation, r.object) for r in c.combination.relationships}
+                for c in proposal.combinations
+            ):
+                raise ValueError("meaningful combination relationship lost during reconciliation")
 
 
 async def criticize_structure(
