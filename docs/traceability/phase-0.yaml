@@ -6,7 +6,7 @@ requirements:
     tests: []
     status: implemented
   - requirement: "Section 8"
-    implementation: ["src/novelty_harness/domain/state_machine.py", "src/novelty_harness/domain/assessment.py"]
+    implementation: ["src/novelty_harness/domain/state_machine.py", "src/novelty_harness/domain/assessment.py", "src/novelty_harness/domain/lifecycle_policy.py"]
     tests: ["tests/unit/test_state_machine.py", "tests/integration/test_phase0_smoke.py"]
     status: implemented
     scope: "Pure stage/status transitions and lifecycle event contracts; callers persist returned events"

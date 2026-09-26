@@ -97,3 +97,11 @@ def test_transport_contracts_reject_unknown_enum_values() -> None:
     ):
         with pytest.raises(ValidationError):
             model_type.model_validate(data)
+
+
+@pytest.mark.parametrize("number", [float("inf"), float("-inf"), float("nan")])
+def test_provider_json_data_rejects_nested_nonfinite_numbers(number: float) -> None:
+    with pytest.raises(ValidationError):
+        m.StructuredResult.model_validate({"call": CALL, "data": {"nested": [number]}})
+    with pytest.raises(ValidationError):
+        m.LLMCallConfig(metadata={"nested": {"value": number}})

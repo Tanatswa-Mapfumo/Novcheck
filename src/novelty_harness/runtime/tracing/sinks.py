@@ -30,12 +30,14 @@ def _redact(value: object) -> object:
     return value
 
 
+def _is_sensitive(key: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", key.casefold())
+    return any(sensitive in normalized for sensitive in _SENSITIVE) or normalized.endswith("token")
+
+
 def redact_mapping(value: Mapping[str, object]) -> dict[str, object]:
     return {
-        key: "[REDACTED]"
-        if any(sensitive in re.sub(r"[^a-z0-9]", "", key.casefold()) for sensitive in _SENSITIVE)
-        else _redact(item)
-        for key, item in value.items()
+        key: "[REDACTED]" if _is_sensitive(key) else _redact(item) for key, item in value.items()
     }
 
 

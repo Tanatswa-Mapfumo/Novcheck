@@ -147,3 +147,44 @@ def test_json_logging_contains_required_fields_and_utc_time(capsys) -> None:
             handler.close()
         root.handlers = handlers
         root.setLevel(level)
+
+
+def test_trace_sinks_redact_github_credentials_without_hiding_token_counters(
+    tmp_path: Path,
+) -> None:
+    value = event().model_copy(
+        update={
+            "data": {
+                "credentials": {"GITHUB_TOKEN": "test-only-github-secret"},
+                "input_tokens": 10,
+                "output_tokens": 20,
+            }
+        }
+    )
+    memory = InMemoryTraceSink()
+    memory.emit(value)
+    expected = {
+        "credentials": {"GITHUB_TOKEN": "[REDACTED]"},
+        "input_tokens": 10,
+        "output_tokens": 20,
+    }
+    assert memory.events[0].data == expected
+    path = tmp_path / "github-trace.jsonl"
+    JsonlTraceSink(path).emit(value)
+    assert TraceEvent.model_validate_json(path.read_text()).data == expected
+    assert "test-only-github-secret" not in path.read_text()
+
+
+@pytest.mark.parametrize("number", [float("inf"), float("-inf"), float("nan")])
+def test_trace_nested_json_rejects_nonfinite_numbers(number: float) -> None:
+    with pytest.raises(ValidationError):
+        TraceEvent.model_validate({**event().model_dump(), "data": {"nested": [number]}})
+
+
+@pytest.mark.parametrize("sink_type", [InMemoryTraceSink, JsonlTraceSink])
+def test_trace_sinks_revalidate_mutated_nested_data(sink_type, tmp_path: Path) -> None:
+    value = event()
+    value.data["later"] = float("inf")
+    sink = sink_type() if sink_type is InMemoryTraceSink else sink_type(tmp_path / "invalid.jsonl")
+    with pytest.raises(ValidationError):
+        sink.emit(value)

@@ -6,32 +6,9 @@ from novelty_harness.domain.assessment import AssessmentRecord, LifecycleEvent
 from novelty_harness.domain.base import utc_now
 from novelty_harness.domain.enums import AssessmentStage, AssessmentStatus
 from novelty_harness.domain.ids import new_lifecycle_event_id
-
-_STAGES = tuple(AssessmentStage)
-_REPORTABLE = {AssessmentStatus.ACTIVE, AssessmentStatus.PARTIAL, AssessmentStatus.ABSTAINED}
-_STATUS_TARGETS: dict[AssessmentStatus, set[AssessmentStatus]] = {
-    AssessmentStatus.ACTIVE: {
-        AssessmentStatus.PARTIAL,
-        AssessmentStatus.ABSTAINED,
-        AssessmentStatus.BLOCKED,
-        AssessmentStatus.FAILED,
-    },
-    AssessmentStatus.PARTIAL: {
-        AssessmentStatus.ACTIVE,
-        AssessmentStatus.ABSTAINED,
-        AssessmentStatus.BLOCKED,
-        AssessmentStatus.FAILED,
-    },
-    AssessmentStatus.ABSTAINED: {
-        AssessmentStatus.ACTIVE,
-        AssessmentStatus.PARTIAL,
-        AssessmentStatus.BLOCKED,
-        AssessmentStatus.FAILED,
-    },
-    AssessmentStatus.BLOCKED: {AssessmentStatus.ACTIVE, AssessmentStatus.FAILED},
-    AssessmentStatus.FAILED: set(),
-    AssessmentStatus.COMPLETED: set(),
-}
+from novelty_harness.domain.lifecycle_policy import REPORTABLE_STATUSES
+from novelty_harness.domain.lifecycle_policy import can_advance_stage as can_advance_stage
+from novelty_harness.domain.lifecycle_policy import can_change_status as can_change_status
 
 
 class InvalidLifecycleTransition(ValueError):
@@ -39,14 +16,6 @@ class InvalidLifecycleTransition(ValueError):
         message = f"Invalid lifecycle transition: {current} -> {target}"
         logging.getLogger(__name__).error(message)
         super().__init__(message)
-
-
-def can_advance_stage(current: AssessmentStage, target: AssessmentStage) -> bool:
-    return _STAGES.index(target) == _STAGES.index(current) + 1
-
-
-def can_change_status(current: AssessmentStatus, target: AssessmentStatus) -> bool:
-    return target in _STATUS_TARGETS[current]
 
 
 def _transition(
@@ -58,8 +27,6 @@ def _transition(
     reason: str,
     occurred_at: datetime | None,
 ) -> tuple[AssessmentRecord, LifecycleEvent]:
-    if not actor.strip() or not reason.strip():
-        raise ValueError("actor and reason must contain non-whitespace text")
     event = LifecycleEvent(
         event_id=new_lifecycle_event_id(),
         assessment_id=record.assessment_id,
@@ -82,7 +49,7 @@ def advance_stage(
     reason: str,
     occurred_at: datetime | None = None,
 ) -> tuple[AssessmentRecord, LifecycleEvent]:
-    if record.status not in _REPORTABLE or not can_advance_stage(record.stage, target):
+    if record.status not in REPORTABLE_STATUSES or not can_advance_stage(record.stage, target):
         raise InvalidLifecycleTransition(
             f"{record.stage.value}/{record.status.value}", target.value
         )
@@ -111,7 +78,7 @@ def complete_assessment(
     reason: str,
     occurred_at: datetime | None = None,
 ) -> tuple[AssessmentRecord, LifecycleEvent]:
-    if record.stage != AssessmentStage.REPORTED or record.status not in _REPORTABLE:
+    if record.stage != AssessmentStage.REPORTED or record.status not in REPORTABLE_STATUSES:
         raise InvalidLifecycleTransition(
             f"{record.stage.value}/{record.status.value}", AssessmentStatus.COMPLETED.value
         )

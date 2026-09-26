@@ -32,7 +32,7 @@ def record(stage: Stage = Stage.RECEIVED, status: Status = Status.ACTIVE) -> Ass
     return AssessmentRecord(
         assessment_id="asm_test",
         request=AssessmentRequest(idea_id="idea_test", input_text="x", as_of=date(2026, 9, 26)),
-        stage=stage,
+        stage=Stage.REPORTED if status == Status.COMPLETED else stage,
         status=status,
         created_at=NOW,
         updated_at=NOW,

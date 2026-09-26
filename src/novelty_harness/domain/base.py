@@ -5,7 +5,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict
 
 
 class ContractModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     schema_version: Literal["0.1"] = "0.1"
 
 

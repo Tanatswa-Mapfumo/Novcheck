@@ -74,3 +74,61 @@ def test_assessment_contracts_reject_extra_fields_and_invalid_enum_strings() -> 
     for field, value in (("stage", "UNKNOWN"), ("status", "UNKNOWN"), ("extra", 1)):
         with pytest.raises(ValidationError):
             AssessmentRecord.model_validate({**record, field: value})
+
+
+def test_completed_record_requires_reported_stage_on_json_load() -> None:
+    data = {
+        "assessment_id": "asm_test",
+        "request": {"idea_id": "idea_test", "input_text": "x", "as_of": "2026-09-26"},
+        "stage": "RECEIVED",
+        "status": "COMPLETED",
+        "created_at": "2026-09-26T12:00:00Z",
+        "updated_at": "2026-09-26T12:00:00Z",
+    }
+    import json
+
+    with pytest.raises(ValidationError):
+        AssessmentRecord.model_validate_json(json.dumps(data))
+    data["stage"] = "REPORTED"
+    assert AssessmentRecord.model_validate(data).status == AssessmentStatus.COMPLETED
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"from_value": "UNKNOWN_STAGE"},
+        {"to_value": "COMPLETED"},
+        {"actor": " \n"},
+        {"reason": " \t"},
+        {"to_value": "REPORTED"},
+        {"event_type": "STATUS_TRANSITION", "from_value": "ACTIVE", "to_value": "NORMALIZED"},
+        {"event_type": "STATUS_TRANSITION", "from_value": "FAILED", "to_value": "ACTIVE"},
+        {"event_type": "STATUS_TRANSITION", "from_value": "BLOCKED", "to_value": "COMPLETED"},
+    ],
+)
+def test_lifecycle_artifact_rejects_invalid_values_and_blank_audit_fields(
+    changes: dict[str, str],
+) -> None:
+    data = {
+        "event_id": "life_test",
+        "assessment_id": "asm_test",
+        "event_type": "STAGE_TRANSITION",
+        "from_value": "RECEIVED",
+        "to_value": "NORMALIZED",
+        "actor": "test",
+        "reason": "test",
+        "occurred_at": "2026-09-26T12:00:00Z",
+    }
+    with pytest.raises(ValidationError):
+        LifecycleEvent.model_validate({**data, **changes})
+
+
+@pytest.mark.parametrize("number", [float("inf"), float("-inf"), float("nan")])
+def test_request_metadata_rejects_nested_nonfinite_numbers(number: float) -> None:
+    with pytest.raises(ValidationError):
+        AssessmentRequest(
+            idea_id="idea_test",
+            input_text="x",
+            as_of=date(2026, 9, 26),
+            metadata={"nested": [number]},
+        )
