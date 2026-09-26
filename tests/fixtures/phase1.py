@@ -276,7 +276,7 @@ def make_fixture() -> FixtureScenario:
     )
     source_id = "src_" + canonical_hash({"canonical_url": ref.canonical_url})
     passage_id = "pass_" + canonical_hash(
-        {"source_id": source_id, "locator": "full_text", "text": text}
+        {"source_id": source_id, "locator": "resolved_content", "text": text}
     )
     source = SourceRecord(
         source_id=source_id,
@@ -295,7 +295,7 @@ def make_fixture() -> FixtureScenario:
         passage_id=passage_id,
         source_id=source_id,
         text=text,
-        locator="full_text",
+        locator="resolved_content",
         content_hash=canonical_hash(text),
         provenance=fixture_provenance("FixturePassage"),
     )
@@ -380,10 +380,10 @@ def make_fixture() -> FixtureScenario:
             content_type="text/plain",
             call=call("fixture-content", canonical_hash(ref)),
         ),
-        passage=Passage(passage_id=passage_id, source=ref, text=text, locator="full_text"),
+        passage=Passage(passage_id=passage_id, source=ref, text=text, locator="resolved_content"),
         passage_call=call(
             "fixture-content",
-            canonical_hash({"source": ref.model_dump(mode="json"), "locator": "full_text"}),
+            canonical_hash({"source": ref.model_dump(mode="json"), "locator": "resolved_content"}),
         ),
     )
     components = VerticalSliceComponents(

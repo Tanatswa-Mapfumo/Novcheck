@@ -47,7 +47,9 @@ async def test_fixture_outputs_are_repeated_deterministically_without_network():
         page = await scenario.search_provider.search(scenario.search_query)
         assert len(page.results) == 1
         content = await scenario.content_resolver.resolve(page.results[0].source)
-        passage = await scenario.content_resolver.resolve_passage(content.source, "full_text")
+        passage = await scenario.content_resolver.resolve_passage(
+            content.source, "resolved_content"
+        )
         assert passage.text == content.text
         edges = await components.mapper.map(mcus, scenario.sources, scenario.passages)
         verified = await components.verifier.verify(

@@ -36,7 +36,7 @@ class SourceRecord(ContractModel):
     authors_or_owners: tuple[str, ...] = ()
     dates: SourceDates = Field(default_factory=SourceDates)
     languages: tuple[str, ...] = ()
-    access_state: Literal["full_text", "abstract_only", "metadata_only", "blocked"]
+    access_state: Literal["full_text", "abstract_only", "metadata_only", "blocked", "unknown"]
     content_hash: NonBlankText
     provider_name: NonBlankText
     provider_source_id: NonBlankText
