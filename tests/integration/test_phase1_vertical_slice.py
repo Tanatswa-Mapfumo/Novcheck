@@ -7,17 +7,28 @@ from novelty_harness.application.models import AssessmentSummary
 from novelty_harness.application.vertical_slice import run_vertical_slice
 from novelty_harness.domain.adjudication import FrozenAdjudication
 from novelty_harness.domain.assessment import AssessmentRecord, AssessmentRequest, LifecycleEvent
-from novelty_harness.domain.enums import AssessmentStage, AssessmentStatus, SupportVerificationState
+from novelty_harness.domain.enums import (
+    AssessmentStage,
+    AssessmentStatus,
+    EvidenceFamily,
+    ResearchDepth,
+    SupportVerificationState,
+)
 from novelty_harness.domain.evidence import EvidenceEdge, SourcePassage, SourceRecord
 from novelty_harness.domain.idea import CanonicalIdeaRepresentation, SufficiencyAssessment
 from novelty_harness.domain.mcu import MCUGraph
 from novelty_harness.domain.reporting import CANONICAL_QUESTIONS, CompiledReport
-from novelty_harness.domain.research import SearchPlan, SearchPlanReview
+from novelty_harness.domain.research import CoverageEntry, SearchPlan, SearchPlanReview
 from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
 from novelty_harness.runtime.tracing.hashing import canonical_hash
 from novelty_harness.runtime.tracing.models import TraceEvent
 from novelty_harness.runtime.tracing.sinks import InMemoryTraceSink, JsonlTraceSink
-from tests.fixtures.phase1 import FixtureAdjudicationEngine, FixtureIdeaNormalizer, make_fixture
+from tests.fixtures.phase1 import (
+    FixtureAdjudicationEngine,
+    FixtureIdeaNormalizer,
+    fixture_provenance,
+    make_fixture,
+)
 
 
 async def run_fixture(root, *, components=None, search_provider=None, trace_sink=None):
@@ -251,3 +262,113 @@ async def test_summary_round_trips_and_rejects_unknown_fields(tmp_path):
     assert AssessmentSummary.model_validate_json(result.summary.model_dump_json()) == result.summary
     with pytest.raises(ValidationError):
         AssessmentSummary.model_validate({**result.summary.model_dump(), "confidence": 0.99})
+
+
+async def test_mutating_normalizer_cannot_redefine_the_original_input(tmp_path):
+    fixture = make_fixture()
+
+    class MutatingNormalizer:
+        async def normalize(self, request):
+            request.input_text = "Replacement supplied by normalizer"
+            return fixture.idea.model_copy(update={"original_input": request.input_text})
+
+    components = replace(fixture.components, normalizer=MutatingNormalizer())
+    with pytest.raises(ValueError, match="original input"):
+        await run_fixture(tmp_path, components=components)
+    directory = next(tmp_path.iterdir())
+    saved_request = AssessmentRequest.model_validate_json((directory / "request.json").read_text())
+    saved_record = AssessmentRecord.model_validate_json(
+        (directory / "assessment_record.json").read_text()
+    )
+    assert saved_record.request.input_text == saved_request.input_text == fixture.request.input_text
+    assert saved_record.status == AssessmentStatus.FAILED
+
+
+async def test_normalizer_input_mutation_does_not_contaminate_the_retained_request(tmp_path):
+    fixture = make_fixture()
+
+    class MutatingNormalizer:
+        async def normalize(self, request):
+            request.input_text = "Replacement supplied by normalizer"
+            request.metadata["injected"] = True
+            return fixture.idea
+
+    result, _ = await run_fixture(
+        tmp_path, components=replace(fixture.components, normalizer=MutatingNormalizer())
+    )
+    saved = AssessmentRequest.model_validate_json((result.run_dir / "request.json").read_text())
+    assert result.record.request == saved == fixture.request
+
+
+@pytest.mark.parametrize(
+    "approve_mutated", [True, False], ids=["reject-mutated-approval", "retain-snapshot"]
+)
+async def test_review_and_execution_use_the_persisted_plan_snapshot(tmp_path, approve_mutated):
+    fixture = make_fixture()
+
+    class MutatingReviewer:
+        async def review(self, plan):
+            original_hash = canonical_hash(plan)
+            plan.queries[0].filters["injected"] = True
+            return SearchPlanReview(
+                plan_hash=canonical_hash(plan) if approve_mutated else original_hash,
+                approved=True,
+                provenance=fixture_provenance("FixtureMutatingReviewer"),
+            )
+
+    class RecordingSearch:
+        name = fixture.search_provider.name
+
+        def __init__(self):
+            self.queries = []
+
+        async def search(self, query, cursor=None):
+            self.queries.append(query.model_copy(deep=True))
+            return await fixture.search_provider.search(fixture.search_query, cursor)
+
+    components = replace(fixture.components, plan_reviewer=MutatingReviewer())
+    search = RecordingSearch()
+    if approve_mutated:
+        with pytest.raises(ValueError, match="review.*match"):
+            await run_fixture(tmp_path, components=components, search_provider=search)
+        assert search.queries == []
+    else:
+        result, _ = await run_fixture(tmp_path, components=components, search_provider=search)
+        saved_plan = SearchPlan.model_validate_json(
+            (result.run_dir / "search_plan.json").read_text()
+        )
+        review = SearchPlanReview.model_validate_json(
+            (result.run_dir / "search_plan_review.json").read_text()
+        )
+        assert review.plan_hash == canonical_hash(saved_plan) == canonical_hash(fixture.plan)
+        assert search.queries == [fixture.search_query]
+
+
+@pytest.mark.parametrize(
+    "invalid, message",
+    [
+        ("duplicate-findings", "duplicate MCU findings"),
+        ("unknown-coverage-mcu", "coverage references unknown MCU"),
+        ("unknown-coverage-query", "coverage references unknown query"),
+    ],
+)
+async def test_frozen_findings_reject_ambiguous_or_dangling_references(tmp_path, invalid, message):
+    fixture = make_fixture()
+    if invalid == "duplicate-findings":
+        bad = fixture.adjudication.model_copy(update={"mcus": (fixture.adjudication.mcus[0],) * 2})
+    else:
+        coverage = CoverageEntry(
+            mcu_id="mcu_nonexistent" if invalid == "unknown-coverage-mcu" else "mcu_control",
+            family=EvidenceFamily.SOFTWARE,
+            applicability="synthetic fixture",
+            depth=ResearchDepth.SCREENING,
+            query_ids=("qry_nonexistent",)
+            if invalid == "unknown-coverage-query"
+            else ("qry_control",),
+            provenance=fixture_provenance("FixtureCoverage"),
+        )
+        bad = fixture.adjudication.model_copy(update={"coverage_matrix": (coverage,)})
+    components = replace(fixture.components, adjudicator=FixtureAdjudicationEngine(bad))
+    with pytest.raises(ValueError, match=message):
+        await run_fixture(tmp_path, components=components)
+    assert not (next(tmp_path.iterdir()) / "adjudication.json").exists()

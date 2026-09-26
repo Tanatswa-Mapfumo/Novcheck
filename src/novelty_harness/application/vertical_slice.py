@@ -293,7 +293,10 @@ async def run_vertical_slice(
         data={"execution": "implemented", "semantics_implemented": True},
     )
     try:
-        idea = _checked(await components.normalizer.normalize(request), CanonicalIdeaRepresentation)
+        idea = _checked(
+            await components.normalizer.normalize(request.model_copy(deep=True)),
+            CanonicalIdeaRepresentation,
+        )
         if idea.original_input != request.input_text:
             raise ValueError("normalization must preserve exact original input")
         if idea.idea_id != request.idea_id or idea.context.temporal_cutoff != request.as_of:
@@ -333,9 +336,12 @@ async def run_vertical_slice(
             raise ValueError("search plan references another idea or unknown MCU")
         artifact_writer.write_json(record.assessment_id, "search_plan.json", plan)
         run.stage(AssessmentStage.SEARCH_PLANNED, plan.provenance, plan)
-        review = _checked(await components.plan_reviewer.review(plan), SearchPlanReview)
+        plan_hash = canonical_hash(plan)
+        review = _checked(
+            await components.plan_reviewer.review(plan.model_copy(deep=True)), SearchPlanReview
+        )
         artifact_writer.write_json(record.assessment_id, "search_plan_review.json", review)
-        if review.plan_hash != canonical_hash(plan) or not review.approved:
+        if review.plan_hash != plan_hash or not review.approved:
             raise ValueError("search plan review is unapproved or does not match the plan")
         run.stage(AssessmentStage.SEARCH_PLAN_REVIEWED, review.provenance, review)
         run.stage(
@@ -416,6 +422,14 @@ async def run_vertical_slice(
         }
         if any(finding.mcu_id not in mcu_ids for finding in adjudication.mcus):
             raise ValueError("adjudication references unknown MCU")
+        if len({finding.mcu_id for finding in adjudication.mcus}) != len(adjudication.mcus):
+            raise ValueError("adjudication contains duplicate MCU findings")
+        query_ids = {query.query_id for query in plan.queries}
+        for coverage in adjudication.coverage_matrix:
+            if coverage.mcu_id not in mcu_ids:
+                raise ValueError("coverage references unknown MCU")
+            if any(identity not in query_ids for identity in coverage.query_ids):
+                raise ValueError("coverage references unknown query")
         if any(
             identity not in supported_ids
             for finding in adjudication.mcus

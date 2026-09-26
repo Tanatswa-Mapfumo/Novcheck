@@ -38,6 +38,12 @@ do not judge sufficiency, equivalence or verdict permission. Unexpected componen
 or provider failures record FAILED plus an explicit failure event and propagate;
 there is no silent fallback or invented partial judgment.
 
+The retained request and persisted search plan are authoritative snapshots;
+normalization and plan review receive independent deep copies. Approval binds to
+the pre-review persisted plan hash, and that same plan is executed. Before freeze,
+MCU findings must be unique and coverage MCU/query references must exist in the
+run graph/plan. These are structural integrity rules, not semantic coverage gates.
+
 ## Consequences
 
 This is deterministic transport plumbing, not Phase 2-7 intelligence. Later
