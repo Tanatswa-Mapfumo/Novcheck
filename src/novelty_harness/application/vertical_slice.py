@@ -6,12 +6,17 @@ from pathlib import Path
 from pydantic import BaseModel, JsonValue
 
 from novelty_harness.application.models import AssessmentSummary, VerticalSliceComponents
+from novelty_harness.application.understanding import (
+    UnderstandingArtifactSource,
+    UnderstandingUpdate,
+)
 from novelty_harness.domain.adjudication import FrozenAdjudication
 from novelty_harness.domain.assessment import AssessmentRecord, AssessmentRequest
 from novelty_harness.domain.base import ContractModel, utc_now
 from novelty_harness.domain.enums import (
     AssessmentStage,
     AssessmentStatus,
+    SufficiencyState,
     SupportVerificationState,
     TraceStatus,
 )
@@ -69,6 +74,28 @@ class _Run:
     sink: TraceSink
     local_sink: JsonlTraceSink
     clock: Callable[[], datetime]
+
+    def collect_understanding(self, component: object) -> UnderstandingUpdate:
+        if not isinstance(component, UnderstandingArtifactSource):
+            return UnderstandingUpdate()
+        update = component.drain_understanding_update()
+        for name, artifact in update.artifacts:
+            self.writer.write_json(self.record.assessment_id, name, artifact)
+        for audit in update.calls:
+            self.emit(
+                reason="SEMANTIC_CALL",
+                call=audit.call,
+                output=audit,
+                status=TraceStatus.SUCCESS
+                if audit.validation_state == "VALIDATED"
+                else TraceStatus.FAILURE,
+                data={
+                    "audit": audit.model_dump(mode="json"),
+                    "execution": "implemented",
+                    "semantics_implemented": True,
+                },
+            )
+        return update
 
     def emit(
         self,
@@ -297,6 +324,7 @@ async def run_vertical_slice(
             await components.normalizer.normalize(request.model_copy(deep=True)),
             CanonicalIdeaRepresentation,
         )
+        run.collect_understanding(components.normalizer)
         if idea.original_input != request.input_text:
             raise ValueError("normalization must preserve exact original input")
         if idea.idea_id != request.idea_id or idea.context.temporal_cutoff != request.as_of:
@@ -306,6 +334,7 @@ async def run_vertical_slice(
         sufficiency = _checked(
             await components.sufficiency_analyzer.analyze(idea), SufficiencyAssessment
         )
+        run.collect_understanding(components.sufficiency_analyzer)
         if sufficiency.idea_id != idea.idea_id:
             raise ValueError("sufficiency references another idea")
         artifact_writer.write_json(record.assessment_id, "sufficiency.json", sufficiency)
@@ -313,6 +342,7 @@ async def run_vertical_slice(
         candidates = tuple(
             _checked(mcu, MCU) for mcu in await components.decomposer.decompose(idea)
         )
+        run.collect_understanding(components.decomposer)
         origin = (
             candidates[0].provenance
             if candidates
@@ -320,6 +350,7 @@ async def run_vertical_slice(
         )
         run.stage(AssessmentStage.MCU_DECOMPOSED, origin)
         graph = _checked(await components.reconciler.reconcile(idea, candidates), MCUGraph)
+        understanding_update = run.collect_understanding(components.reconciler)
         mcu_ids = {mcu.mcu_id for mcu in graph.mcus}
         if graph.idea_id != idea.idea_id or len(mcu_ids) != len(graph.mcus):
             raise ValueError("MCU graph has invalid identity bindings")
@@ -327,6 +358,48 @@ async def run_vertical_slice(
             identity not in mcu_ids for combo in graph.combinations for identity in combo.member_ids
         ):
             raise ValueError("combination references unknown MCU")
+        if understanding_update.finalized_idea is not None:
+            finalized = _checked(understanding_update.finalized_idea, CanonicalIdeaRepresentation)
+            if (
+                finalized.original_input != idea.original_input
+                or finalized.idea_id != idea.idea_id
+                or finalized.context != idea.context
+                or set(finalized.mcu_ids) != mcu_ids
+                or set(finalized.combination_ids) != {c.combination_id for c in graph.combinations}
+            ):
+                raise ValueError("final understanding CIR binding mismatch")
+            idea = finalized
+            artifact_writer.write_json(record.assessment_id, "canonical_idea.json", idea)
+            run.emit(
+                reason="MCU_GRAPH_BOUND",
+                output=idea,
+                data={"execution": "implemented", "semantics_implemented": True},
+            )
+        ceiling = understanding_update.assessment_ceiling
+        if ceiling is not None and list(SufficiencyState).index(ceiling) < list(
+            SufficiencyState
+        ).index(sufficiency.state):
+            sufficiency = SufficiencyAssessment.model_validate(
+                {
+                    **sufficiency.model_dump(),
+                    "state": ceiling,
+                    "consequences": (
+                        *sufficiency.consequences,
+                        "MCU_DECOMPOSITION_INSTABILITY: see mcu_reconciliation.json "
+                        "for affected MCUs",
+                    ),
+                }
+            )
+            artifact_writer.write_json(record.assessment_id, "sufficiency.json", sufficiency)
+            run.emit(
+                reason="MCU_DECOMPOSITION_INSTABILITY",
+                output=sufficiency,
+                data={
+                    "assessment_ceiling": ceiling.value,
+                    "execution": "implemented",
+                    "semantics_implemented": True,
+                },
+            )
         artifact_writer.write_json(record.assessment_id, "mcu_graph.json", graph)
         run.stage(AssessmentStage.MCU_RECONCILED, graph.provenance, graph)
         plan = _checked(await components.planner.plan(idea, graph), SearchPlan)
@@ -505,6 +578,13 @@ async def run_vertical_slice(
         run.record = final_record
         return VerticalSliceResult(final_record, directory, adjudication, report, summary)
     except Exception as error:
+        for component in (
+            components.normalizer,
+            components.sufficiency_analyzer,
+            components.decomposer,
+            components.reconciler,
+        ):
+            run.collect_understanding(component)
         run.record, failure = change_status(
             run.record,
             AssessmentStatus.FAILED,

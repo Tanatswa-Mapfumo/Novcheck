@@ -49,6 +49,66 @@ class RecordedLLM(MockLLMProvider):
         return self.result(self.responses[task])
 
 
+def understanding_responses():
+    control = "A temperature sensor controls a relay"
+    status = "a separate status indicator reduces operator checks."
+    a = candidate(statement=control)
+    b = candidate("mcu_status", status)
+    b["mcu"]["features"] = [
+        {"feature_id": "F1", "concept": "indicator"},
+        {"feature_id": "F2", "concept": "checks"},
+    ]
+    b["mcu"]["relationships"] = [{"subject": "F1", "relation": "REDUCES", "object": "F2"}]
+    norm = normalization_draft(
+        problem=status,
+        mechanism=control,
+        advantage_statements=[status],
+        source_attributions=[
+            {"field_path": "problem", "supporting_excerpt": status},
+            {"field_path": "mechanism", "supporting_excerpt": control},
+            {"field_path": "advantage_statements.0", "supporting_excerpt": status},
+        ],
+    )
+    suff = {
+        "proposed_state": "HIGH_RESOLUTION",
+        "assessable_dimensions": ["mechanism"],
+        "unassessable_dimensions": ["demonstrated_value"],
+        "missing_information": [],
+        "consequences": [],
+        "prompt_version": "sufficiency-v1",
+        "signals": {
+            "problem_defined": True,
+            "contribution_identifiable": True,
+            "mechanism_described": True,
+            "relationship_structure_described": True,
+            "comparison_scope_identifiable": True,
+            "critical_unknowns": [],
+        },
+        "source_attributions": [
+            {"field_path": name, "supporting_excerpt": control}
+            for name in (
+                "problem_defined",
+                "contribution_identifiable",
+                "mechanism_described",
+                "relationship_structure_described",
+                "comparison_scope_identifiable",
+            )
+        ],
+    }
+    critic = reconciliation_proposal(
+        [a, b], left_ids=("mcu_control", "mcu_status"), right_ids=("mcu_control", "mcu_status")
+    )
+    for test in critic["structural_tests"]:
+        test["source_support"] = [control, status]
+    return {
+        "normalize_idea": norm,
+        "assess_sufficiency": suff,
+        "decompose_a": decomposition("INDEPENDENCE_FOCUSED", [a, b]),
+        "decompose_b": decomposition("RELATIONSHIP_FOCUSED", [a, b]),
+        "criticize_mcus": critic,
+    }
+
+
 def normalization_draft(**updates):
     return {
         "problem": None,
