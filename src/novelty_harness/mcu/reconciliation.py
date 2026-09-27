@@ -7,7 +7,7 @@ from novelty_harness.domain.enums import SufficiencyState
 from novelty_harness.domain.idea import CanonicalIdeaRepresentation, NonBlankText
 from novelty_harness.domain.ids import MCUId
 from novelty_harness.domain.mcu import MCU, MCUCombination
-from novelty_harness.mcu.alignment import DecompositionAlignment
+from novelty_harness.mcu.alignment import DecompositionAlignment, normalized
 from novelty_harness.mcu.critic import (
     CandidateResolution,
     StructuralTestResult,
@@ -55,6 +55,34 @@ async def reconcile_decompositions(
             )
             affected.update(resolutions[(left.strategy, pair.left_mcu_id)])
             affected.update(resolutions[(right.strategy, pair.right_mcu_id)])
+
+    def combination_graphs(
+        decomposition: MCUDecomposition,
+    ) -> dict[frozenset[str], set[frozenset[tuple[str, str, str]]]]:
+        groups: dict[frozenset[str], set[frozenset[tuple[str, str, str]]]] = {}
+        for candidate in decomposition.combinations:
+            combination = candidate.combination
+            members = frozenset(
+                target
+                for member in combination.member_ids
+                for target in resolutions[(decomposition.strategy, member)]
+            )
+            links = frozenset(
+                (subject, normalized(r.relation), obj)
+                for r in combination.relationships
+                for subject in resolutions[(decomposition.strategy, r.subject)]
+                for obj in resolutions[(decomposition.strategy, r.object)]
+            )
+            groups.setdefault(members, set()).add(links)
+        return groups
+
+    left_combinations, right_combinations = combination_graphs(left), combination_graphs(right)
+    for members in left_combinations.keys() & right_combinations.keys():
+        if left_combinations[members] != right_combinations[members]:
+            unresolved.append(
+                "combination directed interpretations disagree: " + ", ".join(sorted(members))
+            )
+            affected.update(members)
     for test in proposal.structural_tests:
         if test.passed is not True:
             unresolved.append(f"{test.test_name}: {test.explanation}")

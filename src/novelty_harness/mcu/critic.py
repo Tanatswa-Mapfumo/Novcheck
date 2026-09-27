@@ -5,7 +5,7 @@ from pydantic import ConfigDict
 from novelty_harness.domain.base import ContractModel
 from novelty_harness.domain.idea import CanonicalIdeaRepresentation, NonBlankText
 from novelty_harness.domain.ids import MCUId
-from novelty_harness.mcu.alignment import DecompositionAlignment, signature
+from novelty_harness.mcu.alignment import DecompositionAlignment, normalized, signature
 from novelty_harness.mcu.decomposition import validate_decomposition
 from novelty_harness.mcu.models import CombinationCandidate, MCUCandidate, MCUDecomposition
 from novelty_harness.mcu.prompts import CRITIC_INSTRUCTION, CRITIC_VERSION
@@ -107,6 +107,23 @@ def validate_criticism(
         )
         if not signature(original.mcu) <= represented_links:
             raise ValueError("reconciliation loses contribution-bearing relationship")
+        material_fields = (
+            "statement",
+            "mechanism",
+            "purpose",
+            "object_or_target",
+            "intended_effect",
+            "context",
+        )
+        target_texts = tuple(
+            " ".join(normalized(getattr(outputs[target].mcu, field)) for target in targets)
+            for field in material_fields
+        )
+        # Split/merge resolutions may distribute text, but cannot silently broaden its scope.
+        for field in material_fields:
+            value = getattr(original.mcu, field)
+            if value and not any(normalized(value) in text for text in target_texts):
+                raise ValueError("reconciliation loses material statement or qualifier")
         for feature in original.mcu.features:
             if not any(
                 feature.concept.casefold() == f.concept.casefold()

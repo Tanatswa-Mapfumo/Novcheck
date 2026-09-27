@@ -23,10 +23,16 @@ def attack_responses(
 ):
     norm = normalization_draft(
         problem=text,
+        mechanism=text if mechanism and not withheld else None,
         advantage_statements=list(advantages),
         ambiguities=list(ambiguity),
         explicit_unknowns=["Core mechanism withheld"] if withheld else [],
         source_attributions=[{"field_path": "problem", "supporting_excerpt": text}]
+        + (
+            [{"field_path": "mechanism", "supporting_excerpt": text}]
+            if mechanism and not withheld
+            else []
+        )
         + [
             {"field_path": f"advantage_statements.{i}", "supporting_excerpt": value}
             for i, value in enumerate(advantages)

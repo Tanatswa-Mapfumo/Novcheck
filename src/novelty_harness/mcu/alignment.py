@@ -153,6 +153,22 @@ async def align_decompositions(
         for b in right.candidates
         if (pair := _compare(a, b)) is not None
     ]
+    a_by_id = {c.mcu.mcu_id: c for c in left.candidates}
+    b_by_id = {c.mcu.mcu_id: c for c in right.candidates}
+    exact_matches = tuple(p for p in pairs if p.relation == "EQUIVALENT")
+
+    def unrelated_cross_pair(pair: MCUAlignmentPair) -> bool:
+        a, b = a_by_id[pair.left_mcu_id].mcu, b_by_id[pair.right_mcu_id].mcu
+        return (
+            pair.relation == "UNRESOLVED"
+            and not {normalized(f.concept) for f in a.features}
+            & {normalized(f.concept) for f in b.features}
+            and sum(p.left_mcu_id == pair.left_mcu_id for p in exact_matches) == 1
+            and sum(p.right_mcu_id == pair.right_mcu_id for p in exact_matches) == 1
+        )
+
+    # Shared citations are not competing meanings when both units have clear counterparts.
+    pairs = [p for p in pairs if not unrelated_cross_pair(p)]
     if runner is not None and any(p.relation == "UNRESOLVED" for p in pairs):
         proposal = await runner.run(
             SemanticTaskSpec("align_mcus", ALIGNMENT_VERSION, AlignmentProposal),
@@ -171,8 +187,6 @@ async def align_decompositions(
             (p.left_mcu_id, p.right_mcu_id) for p in pairs if p.relation == "UNRESOLVED"
         }:
             raise ValueError("invalid semantic alignment references")
-        a_by_id = {c.mcu.mcu_id: c for c in left.candidates}
-        b_by_id = {c.mcu.mcu_id: c for c in right.candidates}
         for index, pair in enumerate(pairs):
             mapping = mappings.get((pair.left_mcu_id, pair.right_mcu_id))
             if mapping is not None and _consistent_mapping(

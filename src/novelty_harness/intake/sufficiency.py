@@ -8,7 +8,7 @@ from novelty_harness.domain.idea import (
     NonBlankText,
     SufficiencyAssessment,
 )
-from novelty_harness.intake.models import InputSpanAttribution
+from novelty_harness.intake.models import InputSpanAttribution, NormalizationResult
 from novelty_harness.intake.prompts import SUFFICIENCY_INSTRUCTION, SUFFICIENCY_VERSION
 from novelty_harness.ports.models import ContextBlock
 from novelty_harness.runtime.semantic.structured import SemanticRunner, SemanticTaskSpec
@@ -52,7 +52,11 @@ class SufficiencyReasoning(ContractModel):
 def apply_sufficiency_ceiling(
     reasoning: SufficiencyReasoning,
     cir: CanonicalIdeaRepresentation,
+    *,
+    normalization: NormalizationResult | None = None,
 ) -> SufficiencyAssessment:
+    if normalization is not None and normalization.cir != cir:
+        raise ValueError("normalization blocker belongs to another CIR")
     attrs = {a.field_path: a.supporting_excerpt for a in reasoning.source_attributions}
     if len(attrs) != len(reasoning.source_attributions):
         raise ValueError("duplicate sufficiency attribution")
@@ -66,6 +70,7 @@ def apply_sufficiency_ceiling(
     mechanism = (
         grounded("mechanism_described", signals.mechanism_described)
         and not signals.withheld_mechanism
+        and (normalization is None or normalization.mechanism is not None)
     )
     scope = grounded("comparison_scope_identifiable", signals.comparison_scope_identifiable)
     relationship = grounded(
@@ -95,6 +100,8 @@ def apply_sufficiency_ceiling(
         unassessable.append("comparison_scope")
         missing.append("Comparison scope")
     missing.extend(signals.critical_unknowns)
+    if normalization is not None and normalization.mechanism is None:
+        missing.extend(normalization.explicit_unknowns)
     if signals.contradictory_specification:
         missing.append("Resolve contradictory specification")
     state = lower_resolution(reasoning.proposed_state, ceiling)
@@ -117,8 +124,11 @@ def apply_sufficiency_ceiling(
 
 
 class StructuralSufficiencyAnalyzer:
-    def __init__(self, runner: SemanticRunner) -> None:
+    def __init__(
+        self, runner: SemanticRunner, *, normalization: NormalizationResult | None = None
+    ) -> None:
         self.runner = runner
+        self.normalization = normalization
 
     async def analyze_reasoning(self, idea: CanonicalIdeaRepresentation) -> SufficiencyReasoning:
         result = await self.runner.run(
@@ -131,4 +141,6 @@ class StructuralSufficiencyAnalyzer:
         return result
 
     async def analyze(self, idea: CanonicalIdeaRepresentation) -> SufficiencyAssessment:
-        return apply_sufficiency_ceiling(await self.analyze_reasoning(idea), idea)
+        return apply_sufficiency_ceiling(
+            await self.analyze_reasoning(idea), idea, normalization=self.normalization
+        )

@@ -1,3 +1,5 @@
+import re
+
 from novelty_harness.domain.idea import ArtifactProvenance, CanonicalIdeaRepresentation
 from novelty_harness.domain.mcu import MCU, MCUCombination
 from novelty_harness.intake.normalization import GroundingError
@@ -56,6 +58,47 @@ def validate_candidate(candidate: MCUCandidate, original: str) -> None:
         if not any(feature.concept.casefold() in excerpt.casefold() for excerpt in support):
             raise GroundingError("unsupported feature concept")
     validate_graph((mcu,), ())
+    concepts = {f.feature_id: (f.concept,) for f in mcu.features}
+    for relationship in mcu.relationships:
+        if not _relationship_supported(
+            relationship.relation,
+            concepts[relationship.subject],
+            concepts[relationship.object],
+            support,
+        ):
+            raise GroundingError("relationship predicate lacks input support")
+
+
+def _relationship_supported(
+    predicate: str,
+    subjects: tuple[str, ...],
+    objects: tuple[str, ...],
+    support: tuple[str, ...],
+) -> bool:
+    words = re.findall(r"\w+", predicate.casefold())
+    if not words:
+        return False
+    # Surface inflections permit active/passive wording, never inferred synonym predicates.
+    last = words[-1]
+    base = last[:-1] if len(last) > 1 and last.endswith("s") and not last.endswith("ss") else last
+    forms = {last, base, base + "s", base + "ed", base + "ing"}
+    forms.update((base + base[-1] + "ed", base + base[-1] + "ing"))
+    if base.endswith("e"):
+        forms.update((base + "d", base[:-1] + "ing"))
+    predicates = {tuple((*words[:-1], form)) for form in forms}
+    for excerpt in support:
+        lowered = excerpt.casefold()
+        if not any(s.casefold() in lowered for s in subjects) or not any(
+            o.casefold() in lowered for o in objects
+        ):
+            continue
+        tokens = re.findall(r"\w+", lowered)
+        if any(
+            tuple(tokens[i : i + len(words)]) in predicates
+            for i in range(len(tokens) - len(words) + 1)
+        ):
+            return True
+    return False
 
 
 def validate_decomposition(result: MCUDecomposition, original: str) -> None:
@@ -69,6 +112,18 @@ def validate_decomposition(result: MCUDecomposition, original: str) -> None:
     validate_graph(
         tuple(c.mcu for c in result.candidates), tuple(c.combination for c in result.combinations)
     )
+    by_id = {c.mcu.mcu_id: c.mcu for c in result.candidates}
+    for item in result.combinations:
+        for relationship in item.combination.relationships:
+            subject = by_id[relationship.subject]
+            obj = by_id[relationship.object]
+            if not _relationship_supported(
+                relationship.relation,
+                tuple(f.concept for f in subject.features) or (subject.statement,),
+                tuple(f.concept for f in obj.features) or (obj.statement,),
+                item.source_support,
+            ):
+                raise GroundingError("combination relationship predicate lacks input support")
 
 
 class IndependenceFocusedDecomposer:

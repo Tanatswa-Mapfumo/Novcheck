@@ -82,17 +82,28 @@ class MCUPayload(ContractModel):
     mcu: MCU
 
 
-class RemovePayload(ContractModel):
+class GraphEditPayload(ContractModel):
+    payload_version: Literal["0.1", "0.2"] = "0.1"
+    combination_retirements: tuple[NonBlankText, ...] = ()
+
+    @model_validator(mode="after")
+    def explicit_retirement_version(self) -> Self:
+        if self.combination_retirements and self.payload_version != "0.2":
+            raise ValueError("combination retirement requires payload version 0.2")
+        return self
+
+
+class RemovePayload(GraphEditPayload):
     mcu_id: MCUId
 
 
-class MergePayload(ContractModel):
+class MergePayload(GraphEditPayload):
     mcu_ids: tuple[MCUId, ...] = Field(min_length=2)
     mcu: MCU
     combination_updates: tuple[MCUCombination, ...] = ()
 
 
-class SplitPayload(ContractModel):
+class SplitPayload(GraphEditPayload):
     mcu_id: MCUId
     mcus: tuple[MCU, ...] = Field(min_length=2)
     combination_updates: tuple[MCUCombination, ...] = ()
@@ -178,6 +189,16 @@ def apply_override(parent: MCUVersion, operation: MCUOverrideOperation) -> MCUVe
             raise ValueError("duplicate MCU ID")
         mcus[mcu.mcu_id] = mcu
 
+    def retire(ids: tuple[str, ...], updates: tuple[MCUCombination, ...] = ()) -> None:
+        if len(set(ids)) != len(ids):
+            raise ValueError("duplicate combination retirement")
+        if not set(ids) <= set(combinations):
+            raise ValueError("unknown combination retirement")
+        if set(ids) & {c.combination_id for c in updates}:
+            raise ValueError("combination cannot be retired and updated")
+        for combination_id in ids:
+            del combinations[combination_id]
+
     raw = canonical_json(op.payload)
     if op.kind in ("ADD_MCU", "EDIT_MCU"):
         item = MCUPayload.model_validate_json(raw, strict=True).mcu
@@ -187,8 +208,10 @@ def apply_override(parent: MCUVersion, operation: MCUOverrideOperation) -> MCUVe
             require(item.mcu_id)
             mcus[item.mcu_id] = item
     elif op.kind == "REMOVE_MCU":
-        item_id = RemovePayload.model_validate_json(raw, strict=True).mcu_id
+        remove = RemovePayload.model_validate_json(raw, strict=True)
+        item_id = remove.mcu_id
         require(item_id)
+        retire(remove.combination_retirements)
         del mcus[item_id]
     elif op.kind in ("MERGE_MCUS", "SPLIT_MCU"):
         if op.kind == "MERGE_MCUS":
@@ -196,9 +219,11 @@ def apply_override(parent: MCUVersion, operation: MCUOverrideOperation) -> MCUVe
             if len(set(merge.mcu_ids)) != len(merge.mcu_ids):
                 raise ValueError("duplicate merge input")
             removed, added, updates = merge.mcu_ids, (merge.mcu,), merge.combination_updates
+            retirements = merge.combination_retirements
         else:
             split = SplitPayload.model_validate_json(raw, strict=True)
             removed, added, updates = (split.mcu_id,), split.mcus, split.combination_updates
+            retirements = split.combination_retirements
         for mcu_id in removed:
             require(mcu_id)
         for mcu_id in removed:
@@ -207,6 +232,7 @@ def apply_override(parent: MCUVersion, operation: MCUOverrideOperation) -> MCUVe
             insert(mcu)
         if len({c.combination_id for c in updates}) != len(updates):
             raise ValueError("duplicate combination update")
+        retire(retirements, updates)
         for combination in updates:
             combinations[combination.combination_id] = combination
     elif op.kind in ("ADD_RELATIONSHIP", "REMOVE_RELATIONSHIP"):

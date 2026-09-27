@@ -98,7 +98,9 @@ class UnderstandingComponents:
         reasoning = await analyzer.analyze_reasoning(idea)
         from novelty_harness.intake.sufficiency import apply_sufficiency_ceiling
 
-        self.sufficiency = apply_sufficiency_ceiling(reasoning, idea)
+        self.sufficiency = apply_sufficiency_ceiling(
+            reasoning, idea, normalization=self.normalization
+        )
         self._pending.extend(
             (
                 ("sufficiency_reasoning.json", reasoning),
