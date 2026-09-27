@@ -1,0 +1,64 @@
+phase: 5
+scope: Canonical source normalization, version/provenance lineage, passage substrate, separated quality/relevance and evidence-graph persistence only
+requirements:
+  - ids: [FR-SRC-001]
+    sections: [23]
+    status: Version-aware sources; arXiv versions, preprint/journal and repository releases linked with explicit predecessor and uncertainty-preserving chronology
+    modules: [evidence/normalization/versions.py, evidence/normalization/source_normalizer.py, evidence/pipeline.py]
+    tests: [tests/unit/evidence/normalization/test_versions.py, tests/adversarial/test_phase5_provenance_attacks.py]
+  - ids: [FR-SRC-002]
+    sections: [23, 25]
+    status: Deterministic Unicode/newline-normalized content hashes; changed content creates a new version/hash, never a silent overwrite
+    modules: [evidence/passages/hashing.py, evidence/normalization/versions.py]
+    tests: [tests/unit/evidence/normalization/test_versions.py, tests/unit/evidence/test_phase5_contracts.py]
+  - ids: [FR-PROV-001, INV-07]
+    sections: [25]
+    status: Confirmed dependency lineage collapses to independent roots; citation-only and possible relations never collapse; raw source count is never used as the independence count
+    modules: [evidence/provenance/clustering.py, evidence/provenance/models.py, evidence/pipeline.py]
+    tests: [tests/unit/evidence/provenance/test_clustering.py, tests/adversarial/test_phase5_provenance_attacks.py, tests/unit/test_phase5_architecture_guards.py]
+  - ids: [FR-PROV-002]
+    sections: [25]
+    status: Circular dependency/derivation detected with MATERIAL severity; mutual citation stays INFO and non-dependency; possible dependency loops stay WARNING
+    modules: [evidence/provenance/circularity.py, evidence/provenance/_components.py]
+    tests: [tests/unit/evidence/provenance/test_circularity.py]
+  - sections: [24]
+    status: Relevance and evidentiary quality are disjoint contracts; tiers respect access/primaryness/specificity without source-type shortcuts, and high relevance cannot raise quality
+    modules: [evidence/quality/models.py, evidence/quality/assessment.py]
+    tests: [tests/unit/evidence/quality/test_assessment.py, tests/unit/evidence/test_phase5_contracts.py]
+  - ids: [INV-08, INV-14]
+    sections: [24, 27]
+    status: Marketing/author claims are discovery-only structural signals, never decisive; passages are exact source-derived hashed slices so a decisive citation can only reference actual content; support adjudication remains Phase 6
+    modules: [evidence/quality/assessment.py, evidence/passages/extraction.py, evidence/passages/models.py]
+    tests: [tests/unit/evidence/quality/test_assessment.py, tests/unit/evidence/passages/test_extraction.py]
+  - sections: [26, 44]
+    status: Storage-independent graph domain and repository protocol; SQLAlchemy 2.x + SQLite first implementation with foreign keys, schema versioning, transactional idempotent batch upserts and domain-model returns; append-only identity integrity
+    modules: [evidence/graph/models.py, evidence/graph/repository.py, evidence/graph/sqlalchemy_models.py, evidence/graph/sqlalchemy_repository.py, evidence/graph/migrations.py]
+    tests: [tests/unit/evidence/graph/test_models.py, tests/unit/evidence/graph/test_sqlalchemy_repository.py]
+  - sections: [26, 60 Phase 5]
+    status: Retrieval/query/search-run discovery provenance survives normalization and deduplication; canonical source nodes retain every discovery path; identical repeated paths collapse by deterministic identity
+    modules: [evidence/graph/retrieval_mapping.py, evidence/normalization/models.py]
+    tests: [tests/unit/evidence/graph/test_retrieval_mapping.py]
+  - sections: [60 Phase 5, 61, 62]
+    status: Real Phase 2-5 vertical slice; Phase 5 pipeline persists phase5/ artifacts and the evidence graph; Phase 6+ mapping/verification/adjudication remain explicitly fixture-backed
+    modules: [evidence/pipeline.py, application/evidence_phase5.py, application/vertical_slice.py]
+    tests: [tests/integration/test_phase5_evidence_pipeline.py, tests/integration/test_phase4_slice_with_phase5_evidence.py]
+  - sections: [46, 54]
+    status: Honest access states distinguish full text, abstract-only, metadata-only and blocked; resolution failures are recorded as access limitations; trace events cover normalization, graph persistence and lineage without hidden fallbacks
+    modules: [evidence/normalization/models.py, evidence/pipeline.py]
+    tests: [tests/unit/evidence/test_phase5_contracts.py, tests/adversarial/test_phase5_provenance_attacks.py]
+  - sections: [49, 60 Phase 5]
+    status: Deterministic unit/contract/integration/adversarial tests with no live network; all 18 mandatory adversarial provenance cases plus a reserved-edge guard
+    modules: [tests/adversarial/test_phase5_provenance_attacks.py, tests/unit/test_phase5_architecture_guards.py]
+    tests: [tests/adversarial/test_phase5_provenance_attacks.py, tests/unit/test_phase5_architecture_guards.py]
+deferred:
+  - Phase 6 source-to-MCU evidence mapping, equivalence dimensions and chronology validation
+  - Phase 6 independent support verification (SUPPORTED/PARTIALLY_SUPPORTED/NOT_SUPPORTED/INSUFFICIENT_CONTEXT/CONTRADICTED)
+  - DIRECT_PRECEDENT / STRONG_PARTIAL_PRECEDENT / COMPONENT_PRECEDENT / ANALOGOUS adjudicated findings and CONTRADICTS/CHALLENGES/SUPPORTS edges
+  - Phase 7 prosecutor/defender, adjudication gates, verdict permission matrix and abstention
+  - Phase 8 narrative report compiler; the accepted nine-question compiler remains frozen-copy only
+  - Physical search-run IDs from providers; Phase 5 uses deterministic logical run identities until providers expose real run identifiers
+  - Patent-family providers/adapters; family edges exist and are tested but no patent provider populates them yet
+review_regressions:
+  artifact: docs/phase-5-completion.md
+  tests: tests/adversarial/test_phase5_provenance_attacks.py
+  scope: Evidence-count inflation, over-aggressive dedup, provenance collapse, quality/relevance conflation and passage overreach

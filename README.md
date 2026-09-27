@@ -7,7 +7,8 @@ Implementation follows [the Phase 0 plan](docs/superpowers/plans/2026-09-26-phas
 [the Phase 1 plan](docs/superpowers/plans/2026-09-26-phase-1-deterministic-thin-vertical-slice-implementation-plan.md)
 and [the Phase 2 plan](docs/superpowers/plans/2026-09-26-phase-2-intake-sufficiency-robust-mcu-engine-implementation-plan.md),
 followed by [the Phase 3 plan](docs/superpowers/plans/2026-09-27-phase-3-research-planner-provider-infrastructure-implementation-plan.md),
-and [the Phase 4 plan](docs/superpowers/plans/2026-09-27-phase-4-multi-strategy-retrieval-adaptive-research-implementation-plan.md),
+[the Phase 4 plan](docs/superpowers/plans/2026-09-27-phase-4-multi-strategy-retrieval-adaptive-research-implementation-plan.md),
+and [the Phase 5 plan](docs/superpowers/plans/2026-09-27-phase-5-source-normalization-provenance-evidence-graph-implementation-plan.md),
 with [AGENTS.md](AGENTS.md).
 
 Phase 0 provides versioned Pydantic contracts, canonical enums and opaque IDs,
@@ -214,8 +215,69 @@ See [Phase 4 completion](docs/phase-4-completion.md),
 and [known-item baseline](tests/fixtures/known_items/baseline.json).
 No Phase 5 source/provenance/evidence engine or later novelty intelligence is implemented.
 
+## Phase 5: Source normalization, provenance and evidence graph
+
+Phase 5 turns retrieved candidates into an auditable evidence substrate. It is
+not Phase 6 equivalence/support reasoning and creates no adjudicated findings.
+
+Canonical identity is derived from normalized stable identifiers with a fixed
+ranking (DOI, patent number, GitHub repository, arXiv base id, OpenAlex,
+Semantic Scholar, other, canonical URL, then a conservative discovery
+fallback). Titles never establish identity. Same DOI across providers becomes
+one source while every provider/query/strategy/seed discovery path is retained.
+Disagreeing identifiers, titles, authors and dates are recorded as conflicts
+and unresolved fields instead of guessed.
+
+Versions are linked rather than counted: arXiv `vN`, preprint/journal and
+repository releases carry deterministic content hashes; changed content creates
+a new version with an explicit predecessor, never a silent overwrite. Passages
+are exact, normalized, hashed slices of resolved content or abstracts with
+structured locators; metadata, titles and search snippets cannot become
+passage evidence. Access stays explicitly full-text, abstract-only,
+metadata-only or blocked.
+
+Provenance relations (`CITES`, `DERIVES_FROM`, `REPOSTS`, `VERSION_OF`,
+`PATENT_FAMILY_OF`, `IMPLEMENTS`, `DOCUMENTS`, `FOUND_BY`) carry their evidence
+and a categorical `CONFIRMED`/`POSSIBLE` lineage level. Only confirmed
+dependency relations collapse lineage; citation and discovery never do. Lineage
+clusters count independent roots, so a press release plus fifty confirmed
+derivatives is one root, patent-family members do not inflate independence, and
+circular dependencies keep clusters ambiguous and conservative. Quality and
+relevance remain separate contracts; source type alone never decides a tier and
+relevance can never raise quality.
+
+`run_evidence_normalization` consumes the real `ResearchResult`, an optional
+injected content resolver and an evidence-graph repository. It persists
+`phase5/sources.jsonl`, `phase5/source_versions.jsonl`, `phase5/passages.jsonl`,
+`phase5/provenance_edges.jsonl`, `phase5/lineage_clusters.jsonl`,
+`phase5/source_quality.jsonl`, `phase5/source_relevance.jsonl`,
+`phase5/provenance_cycles.jsonl`, `phase5/evidence_normalization.json` and the
+SQLAlchemy/SQLite `phase5/evidence_graph.sqlite3`. Domain graph models stay
+Pydantic and storage-independent; the repository returns domain models only;
+batch writes are transactional with foreign keys and versioned schema.
+
+```bash
+uv run pytest tests/integration/test_phase4_slice_with_phase5_evidence.py -v
+uv run pytest tests/adversarial/test_phase5_provenance_attacks.py -v
+```
+
+The slice reaches REPORTED/COMPLETED with real Phase 2-5 code; Phase 6+
+mapping, support verification and adjudication stay visibly fixture-backed over
+the real Phase 5 sources and passages. Phase 5 reserves but never creates
+`SUPPORTS`, `CHALLENGES`, `DIRECT_PRECEDENT`, `STRONG_PARTIAL_PRECEDENT`,
+`COMPONENT_PRECEDENT`, `ANALOGOUS`, `NO_MATCH` or `CONTRADICTS` edges. There is
+no prosecutor/defender, novelty score or probability. See
+[Phase 5 completion](docs/phase-5-completion.md) and
+[traceability](docs/traceability/phase-5.yaml).
+
 See [Phase 0 traceability](docs/traceability/phase-0.yaml),
 [Phase 1 traceability](docs/traceability/phase-1.yaml),
 [Phase 2 traceability](docs/traceability/phase-2.yaml),
-[Phase 2 completion](docs/phase-2-completion.md) and
+[Phase 3 traceability](docs/traceability/phase-3.yaml),
+[Phase 4 traceability](docs/traceability/phase-4.yaml),
+[Phase 5 traceability](docs/traceability/phase-5.yaml),
+[Phase 2 completion](docs/phase-2-completion.md),
+[Phase 3 completion](docs/phase-3-completion.md),
+[Phase 4 completion](docs/phase-4-completion.md),
+[Phase 5 completion](docs/phase-5-completion.md) and
 [architecture decisions](docs/architecture/decisions/) for scope and decisions.
