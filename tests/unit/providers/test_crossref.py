@@ -108,3 +108,33 @@ async def test_unrepresentable_date_parts_are_explicit_chronology_limitations():
         assert "Invalid publication date; chronology unresolved" in provider.limitations(
             query().query_id
         )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "sensor AND(relay)",
+        "(sensor)OR(relay)",
+        "NOT(sensor)",
+        "sensor NEAR/3(relay)",
+        '"sensor relay"~3',
+    ],
+)
+def test_crossref_rejects_punctuation_delimited_search_operators(text):
+    intent = SearchIntent.model_validate(plan_data()["intents"][0]).model_copy(
+        update={"text": text}
+    )
+    with pytest.raises(ProviderError) as raised:
+        CrossrefCompiler().compile(intent, as_of=date(2026, 9, 26))
+    assert raised.value.failure.category.value == "CAPABILITY_MISMATCH"
+
+
+@pytest.mark.parametrize("text", ["CANDOR Android sensor", "sensor and relay", "normal relay"])
+def test_crossref_preserves_plain_bibliographic_words(text):
+    intent = SearchIntent.model_validate(plan_data()["intents"][0]).model_copy(
+        update={"text": text}
+    )
+    assert (
+        CrossrefCompiler().compile(intent, as_of=date(2026, 9, 26)).params["query.bibliographic"]
+        == text
+    )

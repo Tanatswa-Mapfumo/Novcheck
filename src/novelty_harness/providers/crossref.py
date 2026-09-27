@@ -1,3 +1,4 @@
+import re
 from datetime import date
 
 from pydantic import Field, FiniteFloat, JsonValue
@@ -18,7 +19,7 @@ class CrossrefCompiler:
         if (
             intent.evidence_family != EvidenceFamily.SCHOLARLY
             or intent.filters
-            or any(t in {"AND", "OR", "NOT"} or t.startswith("NEAR/") for t in intent.text.split())
+            or re.search(r'\b(?:AND|OR|NOT)\b|\bNEAR/|"\s*~\s*\d+', intent.text)
         ):
             raise provider_error(
                 "crossref",
