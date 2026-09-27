@@ -99,6 +99,17 @@ def deterministic_issues(
                     mcu,
                     a.evidence_family,
                 )
+            for query_family, category in (
+                (QueryFamily.HISTORICAL_TERMINOLOGY, Category.HISTORICAL_GAP),
+                (QueryFamily.ADJACENT_DOMAIN, Category.ADJACENT_DOMAIN_GAP),
+            ):
+                if query_family not in families | omitted:
+                    add(
+                        category,
+                        "Search this perspective or justify its omission",
+                        mcu,
+                        a.evidence_family,
+                    )
             if mcu.relationships and not any(
                 q.query_family == QueryFamily.RELATIONSHIP
                 and q.relationship_terms
