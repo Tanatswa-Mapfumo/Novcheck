@@ -9,7 +9,7 @@ from novelty_harness.providers.http import HTTPRuntime
 from novelty_harness.providers.openalex import OpenAlexProvider
 from novelty_harness.providers.registry import ProviderRegistry
 from novelty_harness.research.coverage import CoveragePolicy
-from novelty_harness.research.screening import ScreeningExecutor
+from novelty_harness.research.screening import ScreeningExecutor, ScreeningHit
 from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
 from tests.unit.providers.test_crossref import response as crossref_response
 from tests.unit.providers.test_github import response as github_response
@@ -115,3 +115,36 @@ async def test_malformed_external_headers_do_not_abort_unrelated_provider_branch
         for c in result.coverage
         if c.evidence_family.value == "SCHOLARLY"
     )
+
+
+async def test_provider_metadata_survives_screening_and_artifact_round_trip(tmp_path):
+    def respond(request):
+        if request.url.host == "api.openalex.org":
+            data = openalex_response()
+            data["results"][0]["publication_date"] = "2001-02-03"
+        elif request.url.host == "api.crossref.org":
+            data = crossref_response()
+            data["message"]["items"][0]["published"]["date-parts"] = [[2002, 3, 4]]
+        else:
+            data = github_response()
+        return httpx.Response(200, json=data)
+
+    plan = await prepared()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        result = await ScreeningExecutor(registry_for(client), CoveragePolicy.standard()).execute(
+            plan, writer=RunArtifactWriter(tmp_path)
+        )
+    stored = [
+        json.loads(line)
+        for line in (tmp_path / plan.assessment_id / "screening_hits.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    metadata = {h["provider_name"]: h.get("provider_metadata") for h in stored}
+    assert metadata["openalex"]["publication_date"] == "2001-02-03"
+    assert metadata["crossref"]["publication_date"] == "2002-03-04"
+    assert metadata["github"]["created_at"]
+    assert metadata["github"]["updated_at"]
+    assert metadata["github"]["topics"]
+    assert "license" in metadata["github"]
+    assert tuple(ScreeningHit.model_validate(h) for h in stored) == result.hits

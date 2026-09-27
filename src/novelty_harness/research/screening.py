@@ -1,8 +1,9 @@
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import datetime
 from typing import Literal
 
-from pydantic import ConfigDict, Field, FiniteFloat
+from pydantic import ConfigDict, Field, FiniteFloat, JsonValue
 
 from novelty_harness.domain.base import ContractModel, UTCDateTime, utc_now
 from novelty_harness.domain.enums import EvidenceFamily, TraceStatus
@@ -36,6 +37,7 @@ class ScreeningHit(ContractModel):
     source: SourceRef
     provider_rank: int = Field(ge=1)
     provider_score: FiniteFloat | None = None
+    provider_metadata: dict[str, JsonValue] = Field(default_factory=lambda: dict[str, JsonValue]())
     snippet: str | None = None
     retrieved_at: UTCDateTime
     call_metadata: ProviderCallMetadata
@@ -214,6 +216,7 @@ class ScreeningExecutor:
                             if isinstance(score, int | float) and not isinstance(score, bool)
                             else None,
                             snippet=hit.snippet,
+                            provider_metadata=deepcopy(hit.metadata),
                             retrieved_at=self.clock(),
                             call_metadata=page.call,
                         )
