@@ -18,7 +18,13 @@ Original checkout and accepted Phase 1 worktree remain untouched; no merge/push.
 | 7 | Immutable MCU versions and user overrides | e670460 |
 | 8 | Understanding pipeline and accepted-slice integration | 0c6c189 |
 | 9 | Adversarial/metamorphic suite and combination link regression | 3678099 |
-| 10 | Traceability, architecture guards and acceptance record | This record's commit |
+| 10 | Traceability, architecture guards and acceptance record | 959ec19 |
+
+Final review safeguards and 13 regression cases: 1d463ac. The independent review
+found six Important issues, all closed in one TDD fix pass; no Critical or Minor
+findings. Review evidence and exhaustive scope rulings are recorded in
+`docs/reviews/2026-09-27-phase-2-review.md`. This completion-record update follows
+that fix commit; no merge/push was performed.
 
 Tasks executed in order, with focused and full gates before commits/next tasks.
 New target tests were written before implementation and first failed collection
@@ -35,7 +41,9 @@ docs/architecture/decisions/ADR-008-phase2-semantic-prompt-versioning.md
 docs/architecture/decisions/ADR-009-mcu-version-and-override-model.md
 docs/architecture/decisions/ADR-010-phase2-grounding-and-assessment-ceilings.md
 docs/architecture/decisions/ADR-011-phase2-vertical-slice-artifact-handoff.md
+docs/architecture/decisions/ADR-012-phase2-review-safeguards-and-retirements.md
 docs/phase-2-completion.md
+docs/reviews/2026-09-27-phase-2-review.md
 docs/traceability/phase-2.yaml
 docs/superpowers/plans/2026-09-26-phase-2-intake-sufficiency-robust-mcu-engine-implementation-plan.md
 src/novelty_harness/application/understanding.py
@@ -58,6 +66,7 @@ src/novelty_harness/runtime/semantic/__init__.py
 src/novelty_harness/runtime/semantic/structured.py
 tests/fixtures/phase2.py
 tests/adversarial/test_phase2_mcu_attacks.py
+tests/adversarial/test_phase2_review_regressions.py
 tests/integration/test_phase1_slice_with_phase2_components.py
 tests/integration/test_phase2_understanding_pipeline.py
 tests/unit/intake/test_normalization.py
@@ -93,8 +102,9 @@ within the Phase 2 understanding/audit boundary. Sections 9-12, 44, 46-49, 60 Ph
 
 Baseline before Phase 2 edits: `uv sync --dev` and
 `uv run python scripts/verify.py` PASS at 6be737a, 657 tests.
-Latest Task 10 gate: 775 tests (118 additional cases), no warnings; Ruff lint clean,
-96 files formatted; strict Pyright zero errors/warnings. Required commands:
+Task 10 gate: 775 tests (118 additional cases). Final review-fix gate: 788 tests
+(131 additional cases), no warnings; Ruff lint clean, 97 files formatted; strict
+Pyright zero errors/warnings. Required commands:
 
 ```bash
 uv sync --dev
@@ -115,6 +125,7 @@ All exited zero. Focused task commands/results:
 | tests/unit/mcu/test_overrides.py -q | 15 passed |
 | tests/integration/test_phase2_understanding_pipeline.py tests/integration/test_phase1_slice_with_phase2_components.py -q | 6 passed |
 | tests/adversarial/test_phase2_mcu_attacks.py -v --tb=short | 15 passed |
+| tests/adversarial/test_phase2_review_regressions.py -q | 13 passed |
 | tests/unit/test_import_boundaries.py tests/unit/test_phase2_architecture_guards.py -q | 34 passed |
 
 Full per-task gate totals: 664, 676, 686, 692, 701, 721, 736, 742, 757, 775.
@@ -143,6 +154,8 @@ UTC dates and actor/reason. Strict payloads support all eight approved operation
 kinds. Audit retains canonical payload, previous graph and before/after hashes.
 Merge/split explicit combination updates are atomic within the new version;
 duplicate IDs, dangling endpoints/members and invalid payloads reject the operation.
+REMOVE/MERGE/SPLIT payload version 0.2 additionally supports explicit audited
+combination retirements; version 0.1 behavior is preserved without implicit deletion.
 Rollback selects a retained parent. Prior reconciliation and ceilings are not erased.
 
 ## Adversarial and metamorphic coverage
@@ -168,6 +181,10 @@ The six structural tests also have 12 false/unknown ceiling regressions.
   Cost: conservative aggregate ceiling can understate an assessable subset.
 - ADR-011: optional artifact/ceiling handoff without changing required Phase 1 ports
   or persisted schemas. Cost: request-scoped adapter, no general retry/resume.
+- ADR-012: conservative predicate/text safeguards, cross-stage normalization blockers,
+  mapped combination disagreement and explicit override payload version 0.2 retirement.
+  Cost: lexical/extractive checks can reject valid synonyms, and users must specify
+  retirements; these checks do not prove semantic entailment.
 - Inline execution with one final independent review instead of per-task agents.
   Cost: no fresh reviewer at each task. Tmp worktree avoids original-checkout churn;
   cost: Phase 2 files live outside the initial IDE root.
@@ -176,6 +193,12 @@ The six structural tests also have 12 false/unknown ceiling regressions.
   coverage arrives later than initial individual component tests.
 - Task 9 corrected the intended fixture mapping rather than relaxing a contract;
   cost: deterministic recordings still require human interpretation review.
+- New Phase 2 combination, candidate-resolution and affected-ID contracts extend
+  the understanding boundary without changing accepted Phase 1 schemas. Cost:
+  incompatible future changes require explicit schema migration.
+- Task 10 guards verified already-implemented behavior without manufacturing a
+  failing implementation change. Cost: AST guards cover enumerated boundaries,
+  not every possible indirect dependency.
 
 ## Remaining fixture-backed stages and limitations
 
@@ -225,5 +248,21 @@ requires new explicit authorization; successful gates do not authorize it.
 
 ## Final review and fresh checkout
 
-Final whole-branch review and fresh-checkout verification follow the Task 10 commit.
-Their outcomes and any fixes will be appended here before declaring completion.
+Fresh local checkout `/private/tmp/novcheck-phase2-fresh` at 959ec19 independently
+ran `uv sync --dev`, `uv run python scripts/verify.py` and `git diff --check`.
+All exited zero: Ruff clean, 96 files formatted, Pyright zero errors/warnings,
+775 tests passed. The repeated September 27 run passed all 775 tests in 1.48s.
+
+Final whole-branch review was interrupted by an agent usage limit and resumed
+September 27 against the unchanged implementation at 959ec19. Six Important findings
+were reproduced and closed in 1d463ac; see the review record for each RED/GREEN
+regression, scope rulings and residual limitations. No second review was dispatched.
+
+Both the isolated worktree and fresh local checkout at 1d463ac ran all three required
+commands after the fix: all exited zero, Ruff clean, 97 files formatted, Pyright zero
+errors/warnings, 788 tests passed in 1.70s. The final documentation snapshot is also
+subject to the same complete required gate before completion is reported.
+
+All 20 Phase 2 acceptance gates pass within their documented Phase 2 scope.
+Implementation and review-fix verification are complete; user acceptance/integration
+remain separate. The branch/worktree are retained, and Phase 3 has not started.

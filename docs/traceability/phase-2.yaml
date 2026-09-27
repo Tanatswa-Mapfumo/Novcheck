@@ -8,19 +8,19 @@ requirements:
   - ids: [FR-IN-003, FR-IN-004, FR-IN-005, FR-IN-006, INV-05, INV-12]
     status: Implemented structural resolution ceilings, partial dimensions and explicit unknowns
     modules: [intake/sufficiency.py, intake/pipeline.py]
-    tests: [tests/unit/intake/test_sufficiency.py, tests/adversarial/test_phase2_mcu_attacks.py]
+    tests: [tests/unit/intake/test_sufficiency.py, tests/adversarial/test_phase2_mcu_attacks.py, tests/adversarial/test_phase2_review_regressions.py]
   - ids: [FR-MCU-001, FR-MCU-002, FR-MCU-003, FR-MCU-004, FR-MCU-005, INV-03]
     status: Implemented model-assisted understanding plus deterministic grounding/structure safeguards
     modules: [mcu/decomposition.py, mcu/alignment.py, mcu/critic.py, mcu/reconciliation.py]
-    tests: [tests/unit/mcu, tests/adversarial/test_phase2_mcu_attacks.py]
+    tests: [tests/unit/mcu, tests/adversarial/test_phase2_mcu_attacks.py, tests/adversarial/test_phase2_review_regressions.py]
   - ids: [FR-MCU-006]
     status: Implemented affected IDs and structural sufficiency ceiling; verdict gate deferred to Phase 7
     modules: [mcu/reconciliation.py, intake/pipeline.py, application/vertical_slice.py]
-    tests: [tests/unit/mcu/test_critic.py, tests/integration/test_phase1_slice_with_phase2_components.py]
+    tests: [tests/unit/mcu/test_critic.py, tests/integration/test_phase1_slice_with_phase2_components.py, tests/adversarial/test_phase2_review_regressions.py]
   - ids: [FR-MCU-007, FR-AUD-001, FR-AUD-002]
     status: Implemented immutable version history, explicit operations and canonical hashes
     modules: [mcu/overrides.py]
-    tests: [tests/unit/mcu/test_overrides.py]
+    tests: [tests/unit/mcu/test_overrides.py, tests/adversarial/test_phase2_review_regressions.py]
   - ids: [FR-PROV-003, FR-OBS-002, FR-SEC-001]
     status: Implemented semantic call validation/version/hash audit and untrusted context delimiting
     modules: [runtime/semantic/structured.py, application/understanding.py]
