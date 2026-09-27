@@ -8,6 +8,7 @@ from novelty_harness.providers.errors import FailureCategory, ProviderError
 from novelty_harness.providers.http import HTTPRuntime, RetryPolicy
 from novelty_harness.providers.openalex_semantic import OpenAlexRetrievalProvider
 from novelty_harness.providers.registry import CredentialRef
+from novelty_harness.providers.semantic_scholar import SemanticScholarProvider
 from novelty_harness.research.models import SearchIntent
 from novelty_harness.research.retrieval.models import RetrievalBatch
 
@@ -19,7 +20,8 @@ pytestmark = [
 ]
 
 
-async def test_live_openalex_native_semantic_contract():
+@pytest.mark.parametrize("name", ["openalex", "semantic_scholar"])
+async def test_live_phase4_native_retrieval_contract(name):
     intent = SearchIntent(
         query_id="qry_live_semantic",
         mcu_id="mcu_live",
@@ -30,12 +32,19 @@ async def test_live_openalex_native_semantic_contract():
         concepts=("temperature", "switching"),
     )
     async with httpx.AsyncClient() as client:
-        provider = OpenAlexRetrievalProvider(
-            HTTPRuntime(client, policy=RetryPolicy(max_attempts=1, timeout_seconds=5)),
-            credential=CredentialRef(env_name="OPENALEX_API_KEY"),
+        runtime = HTTPRuntime(client, policy=RetryPolicy(max_attempts=1, timeout_seconds=5))
+        provider = (
+            OpenAlexRetrievalProvider(
+                runtime, credential=CredentialRef(env_name="OPENALEX_API_KEY")
+            )
+            if name == "openalex"
+            else SemanticScholarProvider(
+                runtime, credential=CredentialRef(env_name="SEMANTIC_SCHOLAR_API_KEY")
+            )
         )
+        strategy = "SEMANTIC" if name == "openalex" else "LEXICAL"
         try:
-            batch = await provider.retrieve(intent=intent, strategy="SEMANTIC", as_of=date.today())
+            batch = await provider.retrieve(intent=intent, strategy=strategy, as_of=date.today())
         except ProviderError as error:
             if error.failure.category in {
                 FailureCategory.TIMEOUT,
@@ -46,7 +55,7 @@ async def test_live_openalex_native_semantic_contract():
                 FailureCategory.QUOTA_EXHAUSTED,
                 FailureCategory.SERVER_FAILURE,
             }:
-                pytest.skip("Live OpenAlex semantic unavailable: " + error.failure.category.value)
+                pytest.skip("Live " + name + " unavailable: " + error.failure.category.value)
             raise
     assert RetrievalBatch.model_validate_json(batch.model_dump_json()) == batch
-    assert batch.strategy.value == "SEMANTIC" and len(batch.candidates) <= 50
+    assert batch.strategy.value == strategy and len(batch.candidates) <= 50

@@ -18,7 +18,16 @@ from novelty_harness.providers.errors import FailureCategory as Failure
 from novelty_harness.providers.errors import provider_error
 from novelty_harness.runtime.tracing.hashing import canonical_hash
 
-SENSITIVE = {"api_key", "authorization", "token", "access_token", "mailto", "email", "password"}
+SENSITIVE = {
+    "api_key",
+    "x-api-key",
+    "authorization",
+    "token",
+    "access_token",
+    "mailto",
+    "email",
+    "password",
+}
 
 
 class RetryPolicy(ContractModel):
