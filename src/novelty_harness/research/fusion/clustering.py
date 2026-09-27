@@ -39,7 +39,9 @@ def _doi(value: object) -> str | None:
 
 def _dois(candidate: RetrievalCandidate) -> set[str]:
     external = candidate.raw_metadata.get("externalIds")
-    values = [candidate.raw_metadata.get("doi"), candidate.source.provider_source_id]
+    values = [candidate.raw_metadata.get("doi")]
+    if candidate.provider_name == "crossref":
+        values.append(candidate.source.provider_source_id)
     if isinstance(external, dict):
         values.append(external.get("DOI"))
     return {d for v in values if (d := _doi(v)) is not None}

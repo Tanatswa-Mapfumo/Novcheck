@@ -45,3 +45,7 @@ deferred:
   - Phase 8 full narrative reporting; accepted nine-question compiler copies frozen fixture findings
   - Automated multilingual deepening, patent/web/archive/standards/regulatory provider adapters
   - Live empirical retrieval calibration and model robustness; synthetic benchmark is not live quality
+review_regressions:
+  artifact: docs/reviews/phase-4-review.md
+  tests: tests/adversarial/test_phase4_review_regressions.py
+  scope: Required/deferred exploration, last admitted round, bounded elapsed waits and requests, hostile dates, explicit DOI identity, native ID validation, hydration binding and wire-rank spans

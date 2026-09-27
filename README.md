@@ -184,6 +184,9 @@ Coverage records actual depth and distinct SATURATED/BUDGET_STOPPED/ACCESS_BLOCK
 states. Saturation requires configured real provider/mechanism diversity and all
 convergence gates; zero results, access gaps or budget stops never establish it.
 Operational settings are not novelty or probability thresholds.
+Depth-deferred major neighborhoods remain unresolved, not explored. Elapsed budgets
+bound cooldown waits and in-flight requests. Missing citation targets retain wire
+rank gaps and explicit incomplete-access records.
 
 ```bash
 uv run pytest tests/integration/test_phase3_slice_with_phase4_research.py -v

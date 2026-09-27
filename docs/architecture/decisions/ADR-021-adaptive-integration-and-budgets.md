@@ -24,6 +24,14 @@ providers without this hook. Remaining document budgets clamp declared page size
 an untrusted provider ignoring that size is recorded truthfully and prevents
 further work rather than silently discarding discovery records.
 
+Logical deep rounds are admitted and charged once, separately from physical
+attempts within that round. The last admitted round can execute without being
+charged twice. Remaining elapsed budgets bound pacing/cooldown waits and in-flight
+requests; cancelled attempts remain safely audited as budget-stopped. Continuation
+uses consumed provider rank spans, not surviving candidate counts, so missing graph
+targets do not inflate subsequent ranks. These are pre-release Phase 4 v1 contract
+corrections; optional rank_span preserves older mock/native batch compatibility.
+
 Routing counts retrieval candidates as provisional relevance proxies, never as
 verified relevant evidence. No novelty inference or calibrated information-value
 probability is introduced. Successful complete requests, actual cross-mechanism

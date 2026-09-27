@@ -17,6 +17,10 @@ All four native adapters expose safe compiled-request/physical-attempt audit and
 per-wire budget hooks. Requests are paced and retries bounded by the existing
 runtime and research budget. Caps, malformed records, unsupported capabilities and
 partial failures remain explicit; no adapter guarantees corpus completeness.
+Remaining elapsed budgets cap provider cooldown waits and in-flight requests.
+Native work/paper identifiers are validated before candidate admission; backward
+and related hydration must match requested work IDs. Missing graph targets retain
+their original rank positions and explicit incomplete-access records.
 No other provider is implemented. The accepted Phase 3 snapshot below retains its
 historical limitations; its original one-page screening entry point still works.
 

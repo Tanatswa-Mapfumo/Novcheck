@@ -34,6 +34,12 @@ class NativeRequests(HTTPSearchAdapter):
     def set_document_limit(self, limit: Callable[[], int | None] | None) -> None:
         self._document_limit = limit
 
+    def set_time_limit(self, limit: Callable[[], float | None] | None) -> None:
+        if limit is None:
+            self.runtime.time_limits.pop(self.name, None)
+        else:
+            self.runtime.time_limits[self.name] = limit
+
     def retrieval_request_events(self) -> tuple[RetrievalRequestEvent, ...]:
         return tuple(getattr(self, "_request_events", []))
 
@@ -167,6 +173,7 @@ class NativeRequests(HTTPSearchAdapter):
         compiled: tuple[CompiledProviderQuery, ...],
         limitations: tuple[str, ...] = (),
         next_cursor: str | None = None,
+        rank_span: int | None = None,
     ) -> RetrievalBatch:
         try:
             if page.call.status != TraceStatus.SUCCESS or rank_offset < 0:
@@ -213,6 +220,9 @@ class NativeRequests(HTTPSearchAdapter):
                     for r, q in zip(calls, compiled, strict=True)
                 ),
                 had_failed_attempts=any(a.failure is not None for r in calls for a in r.attempts),
+                rank_span=rank_span
+                if rank_span is not None
+                else max((h.rank for h in page.results), default=0),
                 complete=not any(
                     n == "Incomplete provider result set" or "window capped" in n
                     for n in limitations

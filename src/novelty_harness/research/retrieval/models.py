@@ -98,6 +98,7 @@ class RetrievalBatch(ContractModel):
     compiled_queries: tuple[CompiledProviderQuery, ...] = ()
     had_failed_attempts: bool = False
     complete: bool = True
+    rank_span: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def consistent_batch(self) -> Self:

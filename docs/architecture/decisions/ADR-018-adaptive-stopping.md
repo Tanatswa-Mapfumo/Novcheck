@@ -17,6 +17,11 @@ nonempty stable strongest clusters; observed cross-mechanism overlap; exploratio
 of major candidates; and, when required, diminishing citation yield. An empty
 field alone never supplies convergence evidence.
 
+Required, completed and depth-deferred neighborhoods are tracked separately.
+Suppressing an action at the configured depth limit is not exploration. A major
+candidate's required neighborhood remains an unresolved gate until actually
+completed; the controller does not silently increase the approved depth.
+
 Budget preventing the next reasonable action has precedence and yields
 BUDGET_STOPPED. Material unresolved access gaps yield ACCESS_BLOCKED and block
 saturation, including unavailable applicable families. Remaining reasonable work

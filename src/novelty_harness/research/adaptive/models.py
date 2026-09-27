@@ -24,6 +24,7 @@ class BranchState(ContractModel):
     unresolved: bool = True
     access_failures: tuple[NonBlankText, ...] = ()
     budget_stopped: bool = False
+    deferred_neighborhoods: tuple[NonBlankText, ...] = ()
 
 
 class ResearchAction(ContractModel):

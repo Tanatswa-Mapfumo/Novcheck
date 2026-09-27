@@ -14,6 +14,7 @@ from pydantic import ConfigDict, Field, JsonValue, TypeAdapter
 from novelty_harness.domain.base import ContractModel
 from novelty_harness.domain.enums import TraceStatus
 from novelty_harness.ports.models import ProviderCallMetadata
+from novelty_harness.ports.retrieval_audit import BudgetExhausted
 from novelty_harness.providers.errors import FailureCategory as Failure
 from novelty_harness.providers.errors import provider_error
 from novelty_harness.runtime.tracing.hashing import canonical_hash
@@ -157,6 +158,7 @@ class HTTPRuntime:
         self._next_request: dict[str, float] = {}
         self._lock = asyncio.Lock()
         self.request_guards: dict[str, Callable[[], None]] = {}
+        self.time_limits: dict[str, Callable[[], float | None]] = {}
 
     @property
     def attempts(self) -> tuple[HTTPAttempt, ...]:
@@ -215,6 +217,13 @@ class HTTPRuntime:
         async with self._lock:
             for number in range(1, self.policy.max_attempts + 1):
                 pace = max(0, self._next_request.get(provider, 0) - self.clock().timestamp())
+                deadline = self.time_limits.get(provider)
+                remaining = deadline() if deadline else None
+                if remaining is not None and remaining <= 0:
+                    raise BudgetExhausted("Research deadline exhausted")
+                if remaining is not None and pace >= remaining:
+                    await self.sleeper(remaining)
+                    raise BudgetExhausted("Research deadline prevents provider cooldown wait")
                 if pace:
                     await self.sleeper(pace)
                 now = self.clock()
@@ -222,16 +231,24 @@ class HTTPRuntime:
                     guard()
                 response: httpx.Response | None = None
                 failure: Failure | None = None
+                deadline_expired = False
+                remaining = deadline() if deadline else None
                 try:
-                    response = await self.client.request(
-                        method,
-                        endpoint,
-                        params=params,
-                        headers=headers,
-                        timeout=self.policy.timeout_seconds,
-                        follow_redirects=False,
-                    )
+                    async with asyncio.timeout(remaining):
+                        response = await self.client.request(
+                            method,
+                            endpoint,
+                            params=params,
+                            headers=headers,
+                            timeout=min(self.policy.timeout_seconds, remaining)
+                            if remaining is not None
+                            else self.policy.timeout_seconds,
+                            follow_redirects=False,
+                        )
                     failure = classify(response, provider)
+                except TimeoutError:
+                    failure = Failure.TIMEOUT
+                    deadline_expired = True
                 except httpx.TimeoutException:
                     failure = Failure.TIMEOUT
                 except httpx.RequestError:
@@ -292,6 +309,8 @@ class HTTPRuntime:
                 )
                 attempts.append(attempt)
                 self._attempts.append(attempt)
+                if deadline_expired:
+                    raise BudgetExhausted("Research deadline expired during wire request")
                 call = ProviderCallMetadata(
                     provider_name=provider,
                     provider_version="http-v1",

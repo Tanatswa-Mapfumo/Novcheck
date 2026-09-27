@@ -164,6 +164,12 @@ async def run_adaptive_research(
     top_history: dict[tuple[str, EvidenceFamily], list[tuple[str, ...]]] = {}
     citation_yield: dict[tuple[str, EvidenceFamily], list[int]] = {}
     successful: dict[tuple[str, EvidenceFamily], list[RetrievalBatch]] = {}
+    required_neighborhoods: dict[
+        tuple[str, EvidenceFamily], set[tuple[str, str, RetrievalStrategy]]
+    ] = {}
+    explored_neighborhoods: dict[
+        tuple[str, EvidenceFamily], set[tuple[str, str, RetrievalStrategy]]
+    ] = {}
     outcomes: dict[tuple[str, str], QueryScreeningOutcome] = {}
     names = {
         f: tuple(p.descriptor.name for p in provider_registry.providers_for(f))
@@ -195,7 +201,8 @@ async def run_adaptive_research(
     def guard() -> None:
         nonlocal usage
         elapsed()
-        decision = budget_controller.permit(usage, budget_limits, BudgetUsage(provider_calls=1))
+        wire_limits = budget_limits.model_copy(update={"max_deep_search_rounds": None})
+        decision = budget_controller.permit(usage, wire_limits, BudgetUsage(provider_calls=1))
         if not decision.allowed:
             raise BudgetExhausted("Hard research budget prevents another wire attempt")
         usage = usage.model_copy(update={"provider_calls": usage.provider_calls + 1})
@@ -203,6 +210,11 @@ async def run_adaptive_research(
     def documents_remaining() -> int | None:
         limit = budget_limits.max_retrieved_documents
         return None if limit is None else max(0, limit - usage.retrieved_documents)
+
+    def seconds_remaining() -> float | None:
+        elapsed()
+        limit = budget_limits.max_elapsed_seconds
+        return None if limit is None else max(0, limit - usage.elapsed_seconds)
 
     def emit(
         reason: str,
@@ -265,6 +277,10 @@ async def run_adaptive_research(
             for a in expansions
         )
         cell = next(c for c in coverage() if (c.mcu_id, c.evidence_family) == key)
+        required = {
+            item for item in required_neighborhoods.get(key, set()) if item[:2] in major_sources
+        }
+        fully_explored = required <= explored_neighborhoods.get(key, set())
         return ConvergenceSignals(
             successful_providers=frozenset(b.provider_name for b in active),
             successful_strategies=frozenset(b.strategy for b in active),
@@ -272,6 +288,7 @@ async def run_adaptive_research(
             top_cluster_history=tuple(top_history.get(key, [])),
             overlap_observed=overlap,
             major_candidates_explored=bool(major_sources)
+            and fully_explored
             and not unexpanded
             and not failed_expansion,
             citation_yield=tuple(citation_yield.get(key, [])),
@@ -354,7 +371,15 @@ async def run_adaptive_research(
                     update={
                         "action_type": "EXPAND" if action.action_type == "EXPAND" else "PAGE",
                         "cursor": batch.next_cursor,
-                        "rank_offset": action.rank_offset + len(batch.candidates),
+                        "rank_offset": action.rank_offset
+                        + (
+                            batch.rank_span
+                            if batch.rank_span is not None
+                            else max(
+                                (c.local_rank - action.rank_offset for c in batch.candidates),
+                                default=0,
+                            )
+                        ),
                     }
                 )
                 prior = [
@@ -391,6 +416,17 @@ async def run_adaptive_research(
             for event in auditor.retrieval_request_events()[request_start:] if auditor else ():
                 emit("RETRIEVAL_REQUEST", event, state, event.failure_code is not None)
         completed.add(action_key(action))
+        if (
+            action.action_type == "EXPAND"
+            and action.seed_source is not None
+            and batch is not None
+            and batch.complete
+            and not batch.had_failed_attempts
+            and batch.next_cursor is None
+        ):
+            explored_neighborhoods.setdefault(key, set()).add(
+                (action.provider_name, action.seed_source.provider_source_id, action.strategy)
+            )
         if screening and action.query_id is not None:
             outcomes[(action.query_id, action.provider_name)] = QueryScreeningOutcome(
                 query_id=action.query_id,
@@ -429,9 +465,24 @@ async def run_adaptive_research(
                 if cap is None:
                     continue
                 depth = action.expansion_depth + 1 if c.seed_source is not None else 1
-                if depth > max_expansion_depth:
-                    continue
                 for kind in sorted(cap.strategies & EXPANSION_KINDS):
+                    neighborhood = (c.provider_name, c.source.provider_source_id, kind)
+                    required_neighborhoods.setdefault(key, set()).add(neighborhood)
+                    if depth > max_expansion_depth:
+                        deferred = ":".join(
+                            (c.provider_name, c.source.provider_source_id, kind.value)
+                        )
+                        if neighborhood not in explored_neighborhoods.get(key, set()):
+                            states[key] = states[key].model_copy(
+                                update={
+                                    "deferred_neighborhoods": tuple(
+                                        dict.fromkeys(
+                                            (*states[key].deferred_neighborhoods, deferred)
+                                        )
+                                    )
+                                }
+                            )
+                        continue
                     enqueue(
                         ResearchAction(
                             action_type="EXPAND",
@@ -464,6 +515,7 @@ async def run_adaptive_research(
                     p.set_request_guard(guard)
                     installed.append(p)
                     p.set_document_limit(documents_remaining)
+                    p.set_time_limit(seconds_remaining)
         for branch in plan.family_assessments:
             key = (branch.mcu_id, branch.evidence_family)
             cell = next(c for c in preflight if (c.mcu_id, c.evidence_family) == key)
@@ -637,3 +689,4 @@ async def run_adaptive_research(
         for p in installed:
             p.set_request_guard(None)
             p.set_document_limit(None)
+            p.set_time_limit(None)

@@ -68,7 +68,7 @@ class Author(WireModel):
 
 
 class Paper(WireModel):
-    paperId: NonBlankText
+    paperId: str = Field(pattern=r"^[a-fA-F0-9]{40}$")
     title: str | None = None
     url: str | None = None
     externalIds: dict[str, JsonValue] = Field(default_factory=lambda: dict[str, JsonValue]())
@@ -170,11 +170,19 @@ class SemanticScholarProvider(NativeRequests):
         return self.paper_page(page, result, cutoff, relevance=True)
 
     def paper_page(
-        self, page: PaperPage, result: HTTPResult, cutoff: date, *, relevance: bool = False
+        self,
+        page: PaperPage,
+        result: HTTPResult,
+        cutoff: date,
+        *,
+        relevance: bool = False,
+        wire_ranks: tuple[int, ...] | None = None,
     ) -> tuple[SearchPage, tuple[str, ...]]:
         hits: list[SearchResult] = []
         notes: list[str] = []
         for rank, paper in enumerate(page.data, 1):
+            if wire_ranks is not None:
+                rank = wire_ranks[rank - 1]
             published = None
             if paper.publicationDate:
                 try:
@@ -388,18 +396,26 @@ class SemanticScholarProvider(NativeRequests):
         calls.append(result)
         compiled.append(request)
         data = self.runtime.parse_json(result, provider=self.name, query_id=qid)
+        wire_ranks = None
+        missing_edges = False
         if strategy == RetrievalStrategy.ENTITY_LINEAGE:
             wire = validate_wire(PaperPage, data, provider=self.name, query_id=qid, result=result)
+            rank_span = len(wire.data)
         else:
             edges = validate_wire(EdgePage, data, provider=self.name, query_id=qid, result=result)
             papers = [
                 e.citedPaper if strategy == RetrievalStrategy.CITATION_BACKWARD else e.citingPaper
                 for e in edges.data
             ]
+            rank_span = len(papers)
+            wire_ranks = tuple(i for i, paper in enumerate(papers, 1) if paper is not None)
+            missing_edges = any(paper is None for paper in papers)
             wire = PaperPage(
                 offset=edges.offset, next=edges.next, data=[p for p in papers if p is not None]
             )
-        page, notes = self.paper_page(wire, result, date.max)
+        page, notes = self.paper_page(wire, result, date.max, wire_ranks=wire_ranks)
+        if missing_edges:
+            notes = (*notes, "Incomplete provider result set", "Unavailable citation edges")
         next_cursor = page.next_cursor
         if strategy == RetrievalStrategy.ENTITY_LINEAGE:
             next_cursor = (
@@ -421,6 +437,7 @@ class SemanticScholarProvider(NativeRequests):
             calls=tuple(calls),
             compiled=tuple(compiled),
             next_cursor=next_cursor,
+            rank_span=rank_span,
             limitations=(
                 *notes,
                 "Matched graph only; missing/deleted paper edges remain an access limitation",

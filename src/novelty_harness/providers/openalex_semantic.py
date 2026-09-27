@@ -6,11 +6,11 @@ from pydantic import Field, JsonValue
 from novelty_harness.domain.enums import EvidenceFamily
 from novelty_harness.domain.ids import MCUId
 from novelty_harness.ports.models import SearchPage, SearchQuery, SourceRef
-from novelty_harness.providers._base import validate_wire
+from novelty_harness.providers._base import WireModel, validate_wire
 from novelty_harness.providers._retrieval import NativeRequests
 from novelty_harness.providers.errors import FailureCategory, provider_error
 from novelty_harness.providers.http import HTTPResult
-from novelty_harness.providers.openalex import OpenAlexProvider, Work
+from novelty_harness.providers.openalex import OpenAlexProvider, Work, WorksMeta
 from novelty_harness.providers.registry import ProviderDescriptor
 from novelty_harness.research.models import SearchIntent
 from novelty_harness.research.provider_queries import CompiledProviderQuery
@@ -23,8 +23,14 @@ from novelty_harness.runtime.tracing.hashing import canonical_hash
 
 
 class ExpansionWork(Work):
+    id: str = Field(pattern=r"^(?:https://openalex\.org/)?W[0-9]+$")
     referenced_works: list[str] = Field(default_factory=list[str])
     related_works: list[str] = Field(default_factory=list[str])
+
+
+class NativeWorksResponse(WireModel):
+    meta: WorksMeta
+    results: list[ExpansionWork]
 
 
 def work_id(source: SourceRef) -> str:
@@ -53,6 +59,14 @@ class OpenAlexRetrievalProvider(OpenAlexProvider, NativeRequests):
             ),
         }
     )
+
+    def parse(
+        self, data: JsonValue, result: HTTPResult, query: SearchQuery, cutoff: date
+    ) -> tuple[SearchPage, tuple[str, ...]]:
+        validate_wire(
+            NativeWorksResponse, data, provider=self.name, query_id=query.query_id, result=result
+        )
+        return super().parse(data, result, query, cutoff)
 
     async def retrieval_capabilities(self) -> RetrievalCapabilities:
         return RetrievalCapabilities(
@@ -173,6 +187,7 @@ class OpenAlexRetrievalProvider(OpenAlexProvider, NativeRequests):
         qid = "qry_expand_" + canonical_hash([identity, strategy, mcu_id])[:20]
         compiled: list[CompiledProviderQuery] = []
         calls: list[HTTPResult] = []
+        selected: list[str] = []
         next_cursor = None
         if strategy == RetrievalStrategy.CITATION_FORWARD:
             params: dict[str, JsonValue] = {
@@ -265,6 +280,14 @@ class OpenAlexRetrievalProvider(OpenAlexProvider, NativeRequests):
         )
         if strategy == RetrievalStrategy.CITATION_FORWARD:
             next_cursor = page.next_cursor if page.results else None
+        elif any(work_id(hit.source) not in selected for hit in page.results):
+            raise provider_error(
+                self.name,
+                FailureCategory.PARSE_FAILURE,
+                "Hydrated work is outside the requested reference/related set",
+                qid,
+                result.call,
+            )
         return self.native_batch(
             page=page,
             strategy=strategy,
