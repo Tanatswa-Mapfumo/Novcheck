@@ -1,0 +1,14 @@
+{
+  "kind": "synthetic-phase4-retrieval-baseline-v1",
+  "k": 10,
+  "cases": [
+    {"attack_type":"CANONICAL","recall_at_k":1.0,"reciprocal_rank":1.0,"path_count":9},
+    {"attack_type":"PARAPHRASE","recall_at_k":1.0,"reciprocal_rank":1.0,"path_count":1},
+    {"attack_type":"RENAMED_CONCEPT","recall_at_k":1.0,"reciprocal_rank":1.0,"path_count":9},
+    {"attack_type":"ABSTRACT_MECHANISM","recall_at_k":1.0,"reciprocal_rank":0.5,"path_count":1},
+    {"attack_type":"CROSS_DOMAIN","recall_at_k":1.0,"reciprocal_rank":1.0,"path_count":1},
+    {"attack_type":"TRANSLATED_HOOK","recall_at_k":1.0,"reciprocal_rank":1.0,"path_count":2}
+  ],
+  "mean_recall_at_k":1.0,
+  "mean_reciprocal_rank":0.9166666666666666
+}
