@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -126,3 +126,107 @@ async def test_malformed_numeric_rate_headers_become_recorded_parse_failures(val
         assert raised.value.failure.category.value == "PARSE_FAILURE"
         assert len(runtime.attempts) == 1
         assert runtime.attempts[0].failure.value == "PARSE_FAILURE"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Retry-After": "60"},
+        {"Retry-After": "Sat, 26 Sep 2026 12:01:00 GMT"},
+        {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1790424060"},
+    ],
+)
+async def test_exhausted_request_retains_cooldown_for_next_logical_query(headers):
+    now = datetime(2026, 9, 26, 12, tzinfo=UTC)
+    sleeps, calls = [], []
+
+    async def sleep(seconds):
+        nonlocal now
+        sleeps.append(seconds)
+        now += timedelta(seconds=seconds)
+
+    def respond(request):
+        calls.append(now)
+        return httpx.Response(429, headers=headers) if len(calls) == 1 else httpx.Response(200)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        runtime = HTTPRuntime(
+            client, policy=RetryPolicy(max_attempts=1), clock=lambda: now, sleeper=sleep
+        )
+        with pytest.raises(ProviderError):
+            await runtime.request(
+                provider="github",
+                query_id="qry_first",
+                method="GET",
+                endpoint="https://api.github.com/search/repositories",
+                min_interval=6,
+            )
+        await runtime.request(
+            provider="github",
+            query_id="qry_second",
+            method="GET",
+            endpoint="https://api.github.com/search/repositories",
+            min_interval=6,
+        )
+    assert sleeps == [60]
+    assert (calls[1] - calls[0]).total_seconds() == 60
+    assert runtime.attempts[0].cooldown_seconds == 60
+    assert runtime.attempts[0].retry_delay_seconds == 0
+    assert runtime.attempts[1].pacing_delay_seconds == 60
+
+
+@pytest.mark.parametrize("value", ["inf", "NaN", "1e999", "-1", "1e100", "not-a-date"])
+async def test_invalid_retry_after_is_a_safe_recorded_parse_failure(value):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(429, headers={"Retry-After": value})
+        )
+    ) as client:
+        runtime = HTTPRuntime(client, policy=RetryPolicy(max_attempts=1))
+        with pytest.raises(ProviderError) as raised:
+            await runtime.request(
+                provider="github",
+                query_id="qry_bad_retry",
+                method="GET",
+                endpoint="https://api.github.com/search/repositories",
+            )
+    assert raised.value.failure.category.value == "PARSE_FAILURE"
+    assert len(runtime.attempts) == 1
+
+
+async def test_retry_cooldown_is_provider_scoped_and_not_slept_twice():
+    now = datetime(2026, 9, 26, 12, tzinfo=UTC)
+    sleeps, calls = [], []
+
+    async def sleep(seconds):
+        nonlocal now
+        sleeps.append(seconds)
+        now += timedelta(seconds=seconds)
+
+    def respond(request):
+        calls.append(request)
+        return (
+            httpx.Response(429, headers={"Retry-After": "60"})
+            if len(calls) == 1
+            else httpx.Response(200)
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        runtime = HTTPRuntime(
+            client, policy=RetryPolicy(max_attempts=2), clock=lambda: now, sleeper=sleep
+        )
+        result = await runtime.request(
+            provider="github",
+            query_id="qry_retry",
+            method="GET",
+            endpoint="https://api.github.com/search/repositories",
+        )
+        await runtime.request(
+            provider="crossref",
+            query_id="qry_other",
+            method="GET",
+            endpoint="https://api.crossref.org/works",
+        )
+    assert sleeps == [60]
+    assert result.attempts[0].retry_delay_seconds == 60
+    assert result.attempts[1].pacing_delay_seconds == 60

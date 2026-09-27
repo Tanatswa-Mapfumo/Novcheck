@@ -49,6 +49,7 @@ class HTTPAttempt(ContractModel):
     failure: Failure | None
     retry_delay_seconds: float = 0
     pacing_delay_seconds: float = 0
+    cooldown_seconds: float = 0
     rate_limit: RateLimitSnapshot
 
 
@@ -89,6 +90,22 @@ def rate_snapshot(response: httpx.Response, provider: str, now: datetime) -> Rat
         concurrency=int(concurrency) if concurrency is not None else None,
         resource=headers.get("x-ratelimit-resource") if provider == "github" else None,
     )
+
+
+def retry_after_seconds(response: httpx.Response, now: datetime) -> float:
+    raw = response.headers.get("retry-after")
+    if raw is None:
+        return 0
+    try:
+        seconds = float(raw)
+    except ValueError:
+        try:
+            seconds = max(0, (parsedate_to_datetime(raw) - now).total_seconds())
+        except (ValueError, TypeError, OverflowError):
+            raise ValueError("Invalid retry metadata") from None
+    if not math.isfinite(seconds) or not 0 <= seconds <= sys.maxsize:
+        raise ValueError("Unrepresentable retry metadata")
+    return seconds
 
 
 def classify(response: httpx.Response, provider: str) -> Failure | None:
@@ -210,14 +227,17 @@ class HTTPRuntime:
                     rate = (
                         rate_snapshot(response, provider, now) if response else RateLimitSnapshot()
                     )
+                    cooldown = retry_after_seconds(response, self.clock()) if response else 0
+                    if rate.remaining == 0 and rate.reset_seconds is not None:
+                        cooldown = max(cooldown, rate.reset_seconds)
                 except (ValueError, OverflowError):
                     rate = RateLimitSnapshot()
+                    cooldown = 0
                     failure = Failure.PARSE_FAILURE
                 rate = RateLimitSnapshot.model_validate(self.redact(rate.model_dump(mode="json")))
                 interval = min_interval
                 if rate.interval_seconds is not None and rate.limit:
                     interval = max(interval, rate.interval_seconds / rate.limit)
-                self._next_request[provider] = self.clock().timestamp() + interval
                 retryable = failure in {
                     Failure.RATE_LIMITED,
                     Failure.TIMEOUT,
@@ -229,22 +249,12 @@ class HTTPRuntime:
                     and method in {"GET", "HEAD", "OPTIONS"}
                     and number < self.policy.max_attempts
                 )
-                delay = self.policy.backoff_seconds * 2 ** (number - 1) if retry else 0
-                if retry and response is not None:
-                    raw = response.headers.get("retry-after")
-                    if raw:
-                        try:
-                            delay = max(delay, float(raw))
-                        except ValueError:
-                            try:
-                                delay = max(
-                                    delay,
-                                    (parsedate_to_datetime(raw) - self.clock()).total_seconds(),
-                                )
-                            except (ValueError, TypeError, OverflowError):
-                                pass
-                    if rate.remaining == 0 and rate.reset_seconds is not None:
-                        delay = max(delay, rate.reset_seconds)
+                delay = (
+                    max(self.policy.backoff_seconds * 2 ** (number - 1), cooldown) if retry else 0
+                )
+                self._next_request[provider] = self.clock().timestamp() + max(
+                    interval, cooldown, delay
+                )
                 attempt = HTTPAttempt(
                     provider_name=provider,
                     query_id=query_id,
@@ -255,6 +265,7 @@ class HTTPRuntime:
                     failure=failure,
                     retry_delay_seconds=delay,
                     pacing_delay_seconds=pace,
+                    cooldown_seconds=cooldown,
                     rate_limit=rate,
                 )
                 attempts.append(attempt)
@@ -279,7 +290,6 @@ class HTTPRuntime:
                         query_id,
                         call,
                     )
-                await self.sleeper(delay)
         raise AssertionError("bounded HTTP attempts must terminate")
 
     def parse_json(self, result: HTTPResult, *, provider: str, query_id: str) -> JsonValue:
