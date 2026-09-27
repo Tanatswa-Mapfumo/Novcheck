@@ -109,3 +109,22 @@ def test_github_repository_search_cannot_pretend_to_be_code_search():
             intent.model_copy(update={"filters": {"code_search": True}}), as_of=date(2026, 9, 26)
         )
     assert raised.value.failure.category.value == "CAPABILITY_MISMATCH"
+
+
+async def test_resolved_credential_echo_is_redacted_from_rate_diagnostics(monkeypatch):
+    monkeypatch.setenv("NOVCHECK_TEST_TOKEN", "review-fake-secret")
+
+    def handle(request):
+        return httpx.Response(
+            200, json=response(), headers={"X-RateLimit-Resource": "review-fake-secret"}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        provider = GitHubProvider(
+            HTTPRuntime(client, sleeper=no_sleep),
+            credential=CredentialRef(env_name="NOVCHECK_TEST_TOKEN"),
+        )
+        await provider.search(query())
+        diagnostics = provider.screening_diagnostics(query().query_id)
+        assert "review-fake-secret" not in diagnostics.model_dump_json()
+        assert diagnostics.attempts[0]["rate_limit"]["resource"] == "[REDACTED]"

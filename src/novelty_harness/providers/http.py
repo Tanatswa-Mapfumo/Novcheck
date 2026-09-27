@@ -202,6 +202,7 @@ class HTTPRuntime:
                 except httpx.RequestError:
                     failure = Failure.TRANSPORT_FAILURE
                 rate = rate_snapshot(response, provider, now) if response else RateLimitSnapshot()
+                rate = RateLimitSnapshot.model_validate(self.redact(rate.model_dump(mode="json")))
                 interval = min_interval
                 if rate.interval_seconds is not None and rate.limit:
                     interval = max(interval, rate.interval_seconds / rate.limit)
