@@ -30,7 +30,7 @@ authorization for Phase 6.
 | 12 | Retrieval/query/search-run discovery provenance mapping | `f90d8d4` |
 | 13 | Phase 5 pipeline and real slice integration | `4298ecb` |
 | 14 | Mandatory 18-case adversarial suite | `0982f8d` |
-| 15 | Guards, traceability, README and this record | final commit |
+| 15 | Guards, traceability, README and this record | `3947129` |
 | fix | Reserved `confidence` name kept banned from production code | `1043f70` |
 
 Tasks 3 and 4 share commit `ca73058` because the normalizer needs version
@@ -41,12 +41,12 @@ been green since.
 ## 2. Commits created
 
 `b445b27`, `b7a3f11`, `55eed25`, `ca73058`, `a73175a`, `27f163d`, `1043f70`,
-`1321d80`, `f90d8d4`, `4298ecb`, `0982f8d`, plus the Task 15 commit recorded
-by `git log` on `phase-5-evidence-graph`.
+`1321d80`, `f90d8d4`, `4298ecb`, `0982f8d`, `3947129`, plus the finalization
+commit recorded by `git log` on `phase-5-evidence-graph`.
 
 ## 3-4. Files and requirements
 
-59 paths differ from `ba92895`. New production packages:
+63 paths differ from `ba92895`. New production packages:
 `evidence/normalization/{models,identifiers,versions,source_normalizer}.py`,
 `evidence/passages/{models,hashing,extraction}.py`,
 `evidence/provenance/{models,lineage,clustering,circularity,_components}.py`,
@@ -79,9 +79,11 @@ uv run python scripts/verify.py
 git diff --check               PASS; no whitespace errors
 ```
 
-Baseline before changes was 1090 deterministic tests; Phase 5 adds 169. A
-fresh-checkout verification of the final commit is recorded below once the
-final commit exists.
+Baseline before changes was 1090 deterministic tests; Phase 5 adds 169. The
+final commit was also verified from a fresh local clone
+(`/private/tmp/novcheck-phase5-fresh`, `git clone --branch phase-5-evidence-graph`):
+`uv sync --dev` and `uv run python scripts/verify.py` both passed with 1259
+tests and clean Ruff/format/Pyright, and `git diff --check` was clean.
 
 ## 6. Adversarial tests and results
 
