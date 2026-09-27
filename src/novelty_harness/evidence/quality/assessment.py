@@ -14,6 +14,7 @@ from novelty_harness.domain.ids import MCUId, SourceId
 from novelty_harness.evidence.normalization.models import (
     SourceAccessState,
     SourceRecord,
+    SourceType,
 )
 from novelty_harness.evidence.quality.models import (
     AssessmentLevel,
@@ -256,4 +257,48 @@ def unassessed_relevance(
         ),
         limitations=("No Phase 5 relevance verdict; Phase 6 performs supported mapping",),
         assessed_at=assessed_at,
+    )
+
+
+def signals_from_source_structure(source: SourceRecord) -> EvidenceQualitySignals:
+    """Conservative structural signals; no semantic or relevance inference.
+
+    A resolved scholarly/technical artifact is its own primary evidence. Being
+    a paper does not assert peer review, and missing signals stay ``UNKNOWN``.
+    """
+
+    primary_types = {
+        SourceType.PAPER,
+        SourceType.PREPRINT,
+        SourceType.PATENT,
+        SourceType.REPOSITORY,
+        SourceType.DATASET,
+        SourceType.STANDARD,
+        SourceType.GOVERNMENT,
+    }
+    secondary_types = {SourceType.REPORT, SourceType.WEB}
+    complete_date = (
+        source.dates.publication_date
+        or source.dates.first_public_version
+        or source.dates.patent_publication_date
+        or source.dates.product_launch_date
+    )
+    return EvidenceQualitySignals(
+        primary_artifact=source.source_type in primary_types,
+        secondary_analysis=source.source_type in secondary_types,
+        official=source.source_type in {SourceType.STANDARD, SourceType.GOVERNMENT},
+        technical_specificity=(
+            AssessmentLevel.MEDIUM
+            if source.access_state == SourceAccessState.FULL_TEXT
+            else AssessmentLevel.UNKNOWN
+        ),
+        date_certainty=(
+            AssessmentLevel.MEDIUM if complete_date is not None else AssessmentLevel.UNKNOWN
+        ),
+        reproducibility=(
+            AssessmentLevel.MEDIUM
+            if source.source_type in {SourceType.REPOSITORY, SourceType.DATASET}
+            and source.access_state == SourceAccessState.FULL_TEXT
+            else AssessmentLevel.UNKNOWN
+        ),
     )

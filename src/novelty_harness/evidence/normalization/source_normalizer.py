@@ -334,35 +334,49 @@ def _version_kind(source_type: SourceType) -> VersionKind:
     }.get(source_type, VersionKind.GENERIC)
 
 
-def _discovery_paths(ordered: Sequence[RetrievalCandidate]) -> tuple[DiscoveryPath, ...]:
-    paths: dict[tuple[str, ...], DiscoveryPath] = {}
-    for candidate in ordered:
-        path = DiscoveryPath(
-            provider_name=candidate.provider_name,
-            provider_source_id=candidate.source.provider_source_id,
-            strategy=candidate.strategy,
-            mechanism=mechanism_for(candidate.strategy),
-            evidence_family=candidate.evidence_family,
-            query_id=candidate.query_id,
-            search_run_id=None,
-            seed_source=candidate.seed_source,
-            mcu_id=candidate.mcu_id,
-            local_rank=candidate.local_rank,
-            discovered_at=candidate.discovered_at,
-        )
+def merge_paths(paths: Sequence[DiscoveryPath]) -> tuple[DiscoveryPath, ...]:
+    """Collapse identical retrieval paths while retaining rank/time best values."""
+
+    merged: dict[tuple[str, ...], DiscoveryPath] = {}
+    for path in paths:
         key = path.path_key()
-        previous = paths.get(key)
+        previous = merged.get(key)
         if previous is None:
-            paths[key] = path
+            merged[key] = path
             continue
         ranks = [rank for rank in (previous.local_rank, path.local_rank) if rank is not None]
-        paths[key] = previous.model_copy(
+        merged[key] = previous.model_copy(
             update={
                 "local_rank": min(ranks) if ranks else None,
                 "discovered_at": min(previous.discovered_at, path.discovered_at),
             }
         )
-    return tuple(paths[key] for key in sorted(paths))
+    return tuple(merged[key] for key in sorted(merged))
+
+
+def merge_discovery_paths(
+    candidates: Sequence[RetrievalCandidate],
+) -> tuple[DiscoveryPath, ...]:
+    """Collapse identical retrieval paths while retaining rank/time best values."""
+
+    return merge_paths(
+        [
+            DiscoveryPath(
+                provider_name=candidate.provider_name,
+                provider_source_id=candidate.source.provider_source_id,
+                strategy=candidate.strategy,
+                mechanism=mechanism_for(candidate.strategy),
+                evidence_family=candidate.evidence_family,
+                query_id=candidate.query_id,
+                search_run_id=None,
+                seed_source=candidate.seed_source,
+                mcu_id=candidate.mcu_id,
+                local_rank=candidate.local_rank,
+                discovered_at=candidate.discovered_at,
+            )
+            for candidate in candidates
+        ]
+    )
 
 
 def _ordered_unique(values: Sequence[str]) -> tuple[str, ...]:
@@ -512,7 +526,7 @@ async def normalize_candidate_cluster(
         evidence_families=tuple(EvidenceFamily(value) for value in families),
         content_hash=content_hash,
         discovery_queries=tuple(queries),
-        discovery_paths=_discovery_paths(ordered),
+        discovery_paths=merge_discovery_paths(ordered),
         limitations=tuple(dict.fromkeys(limitations)),
         provenance=provenance,
     )

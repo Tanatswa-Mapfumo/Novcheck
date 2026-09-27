@@ -2,7 +2,7 @@
 
 from datetime import UTC, date, datetime
 
-from novelty_harness.domain.enums import EvidenceFamily
+from novelty_harness.domain.enums import EvidenceFamily, TraceStatus
 from novelty_harness.domain.evidence import SourceDates
 from novelty_harness.domain.idea import ArtifactProvenance
 from novelty_harness.evidence.normalization.models import (
@@ -25,9 +25,56 @@ from novelty_harness.evidence.provenance.models import (
     ProvenanceEdge,
     ProvenanceRelation,
 )
+from novelty_harness.ports.models import (
+    Passage,
+    ProviderCallMetadata,
+    SourceContent,
+    SourceRef,
+)
 from novelty_harness.research.retrieval.models import RetrievalMechanism, RetrievalStrategy
 
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
+
+
+class SyntheticContentResolver:
+    """Deterministic content resolver over already-retrieved references."""
+
+    def __init__(self, *, blocked: frozenset[tuple[str, str]] = frozenset()) -> None:
+        self.name = "synthetic-content"
+        self.blocked = blocked
+
+    def text_for(self, source_ref: SourceRef) -> str:
+        return (
+            f"Resolved full text for {source_ref.provider_name}:"
+            f"{source_ref.provider_source_id}.\n\n"
+            "Second paragraph with technical detail and exact wording."
+        )
+
+    async def resolve(self, source_ref: SourceRef) -> SourceContent:
+        if (source_ref.provider_name, source_ref.provider_source_id) in self.blocked:
+            raise RuntimeError("synthetic access denied")
+        text = self.text_for(source_ref)
+        return SourceContent(
+            source=source_ref,
+            text=text,
+            content_type="text/plain",
+            call=ProviderCallMetadata(
+                provider_name=self.name,
+                provider_version="fixture-1",
+                started_at=NOW,
+                finished_at=NOW,
+                request_hash=text_hash(str(source_ref)),
+                status=TraceStatus.SUCCESS,
+            ),
+        )
+
+    async def resolve_passage(self, source_ref: SourceRef, locator: str) -> Passage:
+        return Passage(
+            passage_id="pass_synthetic",
+            source=source_ref,
+            text=self.text_for(source_ref),
+            locator=locator,
+        )
 
 
 def phase5_provenance(component: str = "phase5-fixture") -> ArtifactProvenance:

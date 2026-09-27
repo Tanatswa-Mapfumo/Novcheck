@@ -5,6 +5,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, JsonValue
 
+from novelty_harness.application.evidence_phase5 import (
+    Phase5EvidenceComponents,
+    Phase6FixtureContinuation,
+)
 from novelty_harness.application.models import AssessmentSummary, VerticalSliceComponents
 from novelty_harness.application.research import (
     DeferredFixtureContinuation,
@@ -340,12 +344,29 @@ async def run_vertical_slice(
     fixture_continuation: DeferredFixtureContinuation | None = None,
     adaptive_research: Phase4ResearchComponents | None = None,
     adaptive_fixture_continuation: Phase5FixtureContinuation | None = None,
+    evidence: Phase5EvidenceComponents | None = None,
+    evidence_fixture_continuation: Phase6FixtureContinuation | None = None,
 ) -> VerticalSliceResult:
+    if (evidence is None) != (evidence_fixture_continuation is None):
+        raise ValueError(
+            "Phase 5 evidence normalization and its explicit Phase 6 fixture continuation "
+            "are required together"
+        )
+    if evidence is not None and adaptive_research is None:
+        raise ValueError("Phase 5 evidence normalization requires Phase 4 adaptive research")
+    if evidence is not None and adaptive_fixture_continuation is not None:
+        raise ValueError(
+            "Choose either the Phase 5 fixture continuation or real Phase 5 normalization"
+        )
     if (
-        (adaptive_research is None) != (adaptive_fixture_continuation is None)
-        or (research is None) != (fixture_continuation is None and adaptive_research is None)
-        or fixture_continuation is not None
-        and adaptive_research is not None
+        (research is None) != (fixture_continuation is None and adaptive_research is None)
+        or (fixture_continuation is not None and adaptive_research is not None)
+        or (
+            adaptive_research is not None
+            and adaptive_fixture_continuation is None
+            and evidence is None
+        )
+        or (adaptive_research is None and adaptive_fixture_continuation is not None)
     ):
         raise ValueError(
             "Phase 3 research and explicit deferred fixture continuation are required together"
@@ -492,6 +513,7 @@ async def run_vertical_slice(
                 "Execute injected provider queries; no coverage or saturation inferred.",
             ),
         )
+        evidence_origin: ArtifactProvenance | None = None
         if research and preparation and adaptive_research and adaptive_fixture_continuation:
             adaptive_result = await adaptive_research.execute(
                 assessment=run.record,
@@ -527,6 +549,74 @@ async def run_vertical_slice(
             passages = tuple(_checked(p, SourcePassage) for p in passages)
             if any(s.provenance.kind != "fixture" for s in (*sources, *passages)):
                 raise ValueError("Phase 5+ continuation must be visibly fixture-backed")
+        elif (
+            research
+            and preparation
+            and adaptive_research
+            and evidence
+            and evidence_fixture_continuation
+        ):
+            adaptive_result = await adaptive_research.execute(
+                assessment=run.record,
+                mcus=graph.mcus,
+                plan=preparation.plan,
+                trace_sink=_ResearchTraceSink(run),
+                writer=artifact_writer,
+                clock=clock,
+            )
+            run.stage(
+                AssessmentStage.ADAPTIVE_RESEARCH,
+                _origin(
+                    "implemented",
+                    "Real diversified retrieval and explicit adaptive stopping; "
+                    "source/evidence semantics normalized by Phase 5",
+                ),
+                adaptive_result,
+            )
+            evidence_result = await evidence.execute(
+                assessment=run.record,
+                research=adaptive_result,
+                resolver=content_resolver,
+                writer=artifact_writer,
+                trace_sink=_ResearchTraceSink(run),
+                clock=clock,
+            )
+            evidence_origin = _origin(
+                "implemented",
+                "Canonical source/version/passage normalization, provenance, lineage "
+                "and separated quality/relevance; no Phase 6 adjudication.",
+            )
+            run.stage(
+                AssessmentStage.EVIDENCE_NORMALIZED,
+                evidence_origin,
+                {
+                    "graph_ref": evidence_result.graph_ref,
+                    "source_count": len(evidence_result.sources),
+                    "version_count": len(evidence_result.versions),
+                    "passage_count": len(evidence_result.passages),
+                    "independent_evidence_count": sum(
+                        cluster.independent_roots for cluster in evidence_result.lineage_clusters
+                    ),
+                    "cycle_count": len(evidence_result.cycles),
+                },
+            )
+            run.emit(
+                reason="PHASE6_FIXTURE_BOUNDARY",
+                output=adaptive_result,
+                data={
+                    "execution": "fixture",
+                    "semantics_implemented": False,
+                    "detail": "Phase 5 evidence normalization completed; "
+                    "Phase 6+ mapping/adjudication remain fixture-backed",
+                },
+            )
+            sources, passages = await evidence_fixture_continuation.materialize(
+                evidence_result, graph
+            )
+            sources = tuple(_checked(s, SourceRecord) for s in sources)
+            passages = tuple(_checked(p, SourcePassage) for p in passages)
+            if any(s.provenance.kind != "fixture" for s in (*sources, *passages)):
+                raise ValueError("Phase 6+ continuation must be visibly fixture-backed")
         elif research and preparation and fixture_continuation:
             screening = await research.executor.execute(preparation.plan)
             write_screening_artifacts(
@@ -572,14 +662,15 @@ async def run_vertical_slice(
             )
         artifact_writer.write_jsonl(record.assessment_id, "sources.jsonl", sources)
         artifact_writer.write_jsonl(record.assessment_id, "passages.jsonl", passages)
-        run.stage(
-            AssessmentStage.EVIDENCE_NORMALIZED,
-            _origin(
-                "deferred",
-                "Transport records and hashes only; "
-                "semantic normalization and provenance reasoning deferred.",
-            ),
-        )
+        if evidence_origin is None:
+            run.stage(
+                AssessmentStage.EVIDENCE_NORMALIZED,
+                _origin(
+                    "deferred",
+                    "Transport records and hashes only; "
+                    "semantic normalization and provenance reasoning deferred.",
+                ),
+            )
         mapped = tuple(
             _checked(edge, EvidenceEdge)
             for edge in await components.mapper.map(graph.mcus, sources, passages)
