@@ -8,6 +8,7 @@ from novelty_harness.domain.enums import EvidenceFamily
 from novelty_harness.domain.idea import NonBlankText
 from novelty_harness.domain.ids import MCUId, QueryId
 from novelty_harness.ports.models import ProviderCallMetadata, SourceRef
+from novelty_harness.research.provider_queries import CompiledProviderQuery
 
 
 class RetrievalStrategy(StrEnum):
@@ -93,6 +94,8 @@ class RetrievalBatch(ContractModel):
     exhausted: bool = False
     call: ProviderCallMetadata
     limitations: tuple[NonBlankText, ...] = ()
+    calls: tuple[ProviderCallMetadata, ...] = ()
+    compiled_queries: tuple[CompiledProviderQuery, ...] = ()
 
     @model_validator(mode="after")
     def consistent_batch(self) -> Self:
@@ -106,4 +109,21 @@ class RetrievalBatch(ContractModel):
             raise ValueError("Batch provider/strategy must match every candidate and call")
         if self.exhausted and self.next_cursor is not None:
             raise ValueError("Exhausted batch cannot advertise continuation")
+        return self
+
+
+class RetrievalCapabilities(ContractModel):
+    model_config = ConfigDict(frozen=True)
+    contract_kind: Literal["retrieval-capabilities-v1"] = "retrieval-capabilities-v1"
+    strategies: frozenset[RetrievalStrategy]
+    paginated_strategies: frozenset[RetrievalStrategy] = frozenset()
+    semantic_query_chars: int | None = Field(default=None, ge=1)
+    semantic_max_results: int | None = Field(default=None, ge=1)
+    limitations: tuple[NonBlankText, ...] = ()
+    max_requests_per_action: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def consistent(self) -> Self:
+        if not self.paginated_strategies <= self.strategies:
+            raise ValueError("Paginated strategies must be supported")
         return self
