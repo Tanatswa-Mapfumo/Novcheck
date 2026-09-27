@@ -240,6 +240,15 @@ class HTTPRuntime:
                     cooldown = retry_after_seconds(response, self.clock()) if response else 0
                     if rate.remaining == 0 and rate.reset_seconds is not None:
                         cooldown = max(cooldown, rate.reset_seconds)
+                    if (
+                        provider == "github"
+                        and failure == Failure.RATE_LIMITED
+                        and response is not None
+                        and "retry-after" not in response.headers
+                        and rate.remaining != 0
+                        and "secondary rate limit" in response.text.casefold()
+                    ):
+                        cooldown = max(cooldown, 60)
                 except (ValueError, OverflowError):
                     rate = RateLimitSnapshot()
                     cooldown = 0

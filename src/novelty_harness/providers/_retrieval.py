@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import date
 
 from pydantic import ValidationError
 
@@ -8,7 +9,9 @@ from novelty_harness.ports.models import SearchPage, SourceRef
 from novelty_harness.providers._base import HTTPSearchAdapter
 from novelty_harness.providers.errors import FailureCategory, provider_error
 from novelty_harness.providers.http import HTTPResult
+from novelty_harness.research.models import SearchIntent
 from novelty_harness.research.provider_queries import CompiledProviderQuery
+from novelty_harness.research.retrieval.executor import strategy_for
 from novelty_harness.research.retrieval.models import (
     RetrievalBatch,
     RetrievalCandidate,
@@ -18,6 +21,66 @@ from novelty_harness.runtime.tracing.hashing import canonical_hash
 
 
 class NativeRequests(HTTPSearchAdapter):
+    async def text_retrieve(
+        self,
+        *,
+        intent: SearchIntent,
+        strategy: RetrievalStrategy,
+        as_of: date,
+        cursor: str | None = None,
+        rank_offset: int = 0,
+    ) -> RetrievalBatch:
+        from novelty_harness.ports.models import SearchQuery
+
+        strategy = RetrievalStrategy(strategy)
+        if strategy != strategy_for(intent):
+            raise provider_error(
+                self.name,
+                FailureCategory.CAPABILITY_MISMATCH,
+                "Text request cannot pretend to use another mechanism",
+                intent.query_id,
+            )
+        compiled = self.compiler.compile(intent, as_of=as_of)
+        params: dict[str, str | int | float | bool] = {}
+        for key, value in compiled.params.items():
+            if not isinstance(value, str | int | float | bool):
+                raise provider_error(
+                    self.name,
+                    FailureCategory.BAD_REQUEST,
+                    "Non-scalar request parameter",
+                    intent.query_id,
+                )
+            params[key] = value
+        self.apply_cursor(params, cursor)
+        compiled = CompiledProviderQuery.model_validate({**compiled.model_dump(), "params": params})
+        result = await self.native_request(compiled)
+        data = self.runtime.parse_json(result, provider=self.name, query_id=intent.query_id)
+        page, notes = self.parse(
+            data,
+            result,
+            SearchQuery(
+                query_id=intent.query_id,
+                text=intent.text,
+                purpose=intent.rationale,
+                evidence_family=intent.evidence_family,
+            ),
+            date.max,
+        )
+        return self.native_batch(
+            page=page,
+            strategy=strategy,
+            family=intent.evidence_family,
+            mcu_id=intent.mcu_id,
+            query_id=intent.query_id,
+            seed=None,
+            cursor=cursor,
+            rank_offset=rank_offset,
+            calls=(result,),
+            compiled=(compiled,),
+            next_cursor=page.next_cursor,
+            limitations=(*compiled.compilation_notes, *notes),
+        )
+
     async def native_request(
         self, compiled: CompiledProviderQuery, *, interval: float | None = None
     ) -> HTTPResult:
