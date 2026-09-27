@@ -21,7 +21,7 @@ def plan_data():
         ],
         "intents": [
             {
-                "query_id": "query_control",
+                "query_id": "qry_control",
                 "mcu_id": "mcu_control",
                 "evidence_family": "SCHOLARLY",
                 "query_family": "RELATIONSHIP",
@@ -60,7 +60,7 @@ def test_invalid_plan_references_duplicates_or_unbound_review_reject(mutation):
     elif mutation in ("id", "text"):
         duplicate = deepcopy(data["intents"][0])
         if mutation == "text":
-            duplicate.update(query_id="query_second", text=" SENSOR   controls relay ")
+            duplicate.update(query_id="qry_second", text=" SENSOR   controls relay ")
         data["intents"].append(duplicate)
     elif mutation == "review":
         data.update(reviewed=True, review_id="review_fake")
