@@ -76,6 +76,11 @@ class HTTPSearchAdapter(ABC):
     def min_interval(self) -> float:
         return 0.1
 
+    def request_params(
+        self, params: dict[str, str | int | float | bool]
+    ) -> dict[str, str | int | float | bool]:
+        return params
+
     async def search(self, query: SearchQuery, cursor: str | None = None) -> SearchPage:
         raw = query.filters.get("as_of")
         if not isinstance(raw, str):
@@ -117,7 +122,7 @@ class HTTPSearchAdapter(ABC):
             query_id=query.query_id,
             method=compiled.method,
             endpoint=compiled.endpoint,
-            params=params,
+            params=self.request_params(params),
             headers=self.headers(),
             min_interval=self.min_interval(),
         )
