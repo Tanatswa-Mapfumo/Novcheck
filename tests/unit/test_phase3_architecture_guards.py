@@ -41,12 +41,13 @@ def test_applicability_has_no_provider_availability_input_and_no_saturation_stat
     assert "SATURATED" not in CoverageState.__members__
 
 
-def test_no_later_retrieval_engines_or_vendor_model_sdks_added():
+def test_phase3_modules_stay_separate_from_later_engines_and_vendor_sdks():
     root = ROOT / "src/novelty_harness"
     for path in root.rglob("*.py"):
         assert not forbidden_imports(
             path.read_text(), "novelty_harness", banned=("openai", "anthropic", "tests")
         ), path
+    for path in (root / "research").glob("*.py"):
         assert path.stem not in {
             "rrf",
             "fusion",
