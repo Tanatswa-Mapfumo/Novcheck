@@ -52,7 +52,7 @@ def test_blog_derives_from_press_release_stays_possible_by_default() -> None:
         evidence=("structured:basedOn",),
         observed_at=NOW,
         provenance=ORIGIN,
-        confidence=LineageConfidence.CONFIRMED,
+        lineage_confidence=LineageConfidence.CONFIRMED,
     )
     assert explicit.lineage_confidence == LineageConfidence.CONFIRMED
 
@@ -122,7 +122,7 @@ def test_edges_are_deterministic_and_evidence_bound() -> None:
         related_source_id="src_b",
         relation=ProvenanceRelation.DERIVES_FROM,
         evidence=("a", "b"),
-        confidence=LineageConfidence.POSSIBLE,
+        lineage_confidence=LineageConfidence.POSSIBLE,
         observed_at=NOW,
         provenance=ORIGIN,
     )
@@ -131,7 +131,7 @@ def test_edges_are_deterministic_and_evidence_bound() -> None:
         related_source_id="src_b",
         relation=ProvenanceRelation.DERIVES_FROM,
         evidence=("b", "a"),
-        confidence=LineageConfidence.POSSIBLE,
+        lineage_confidence=LineageConfidence.POSSIBLE,
         observed_at=NOW,
         provenance=ORIGIN,
     )
@@ -141,7 +141,7 @@ def test_edges_are_deterministic_and_evidence_bound() -> None:
         related_source_id="src_b",
         relation=ProvenanceRelation.DERIVES_FROM,
         evidence=("a", "c"),
-        confidence=LineageConfidence.POSSIBLE,
+        lineage_confidence=LineageConfidence.POSSIBLE,
         observed_at=NOW,
         provenance=ORIGIN,
     )

@@ -30,7 +30,7 @@ def provenance_edge(
     related_source_id: SourceId,
     relation: ProvenanceRelation,
     evidence: Sequence[str],
-    confidence: LineageConfidence,
+    lineage_confidence: LineageConfidence,
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
     limitations: Sequence[str] = (),
@@ -49,7 +49,7 @@ def provenance_edge(
         source_id=source_id,
         related_source_id=related_source_id,
         relation=relation,
-        lineage_confidence=confidence,
+        lineage_confidence=lineage_confidence,
         evidence=tuple(dict.fromkeys(evidence)),
         observed_at=observed_at,
         provenance=provenance,
@@ -64,7 +64,7 @@ def citation_edge(
     evidence: Sequence[str],
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
-    confidence: LineageConfidence = LineageConfidence.CONFIRMED,
+    lineage_confidence: LineageConfidence = LineageConfidence.CONFIRMED,
     limitations: Sequence[str] = (),
 ) -> ProvenanceEdge:
     """``citing CITES cited`` from a structured reference list."""
@@ -74,7 +74,7 @@ def citation_edge(
         related_source_id=cited,
         relation=ProvenanceRelation.CITES,
         evidence=evidence,
-        confidence=confidence,
+        lineage_confidence=lineage_confidence,
         observed_at=observed_at,
         provenance=provenance,
         limitations=limitations,
@@ -88,7 +88,7 @@ def derivation_edge(
     evidence: Sequence[str],
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
-    confidence: LineageConfidence = LineageConfidence.POSSIBLE,
+    lineage_confidence: LineageConfidence = LineageConfidence.POSSIBLE,
     limitations: Sequence[str] = (),
 ) -> ProvenanceEdge:
     """``derivative DERIVES_FROM origin``; textual hints stay POSSIBLE."""
@@ -98,7 +98,7 @@ def derivation_edge(
         related_source_id=origin,
         relation=ProvenanceRelation.DERIVES_FROM,
         evidence=evidence,
-        confidence=confidence,
+        lineage_confidence=lineage_confidence,
         observed_at=observed_at,
         provenance=provenance,
         limitations=limitations,
@@ -112,7 +112,7 @@ def repost_edge(
     evidence: Sequence[str],
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
-    confidence: LineageConfidence = LineageConfidence.POSSIBLE,
+    lineage_confidence: LineageConfidence = LineageConfidence.POSSIBLE,
     limitations: Sequence[str] = (),
 ) -> ProvenanceEdge:
     """``repost REPOSTS original`` for mirrors and syndicated copies."""
@@ -122,7 +122,7 @@ def repost_edge(
         related_source_id=original,
         relation=ProvenanceRelation.REPOSTS,
         evidence=evidence,
-        confidence=confidence,
+        lineage_confidence=lineage_confidence,
         observed_at=observed_at,
         provenance=provenance,
         limitations=limitations,
@@ -136,7 +136,7 @@ def version_edge(
     evidence: Sequence[str],
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
-    confidence: LineageConfidence = LineageConfidence.CONFIRMED,
+    lineage_confidence: LineageConfidence = LineageConfidence.CONFIRMED,
     limitations: Sequence[str] = (),
 ) -> ProvenanceEdge:
     """``version VERSION_OF version_of`` from explicit version metadata."""
@@ -146,7 +146,7 @@ def version_edge(
         related_source_id=version_of,
         relation=ProvenanceRelation.VERSION_OF,
         evidence=evidence,
-        confidence=confidence,
+        lineage_confidence=lineage_confidence,
         observed_at=observed_at,
         provenance=provenance,
         limitations=limitations,
@@ -160,7 +160,7 @@ def patent_family_edge(
     evidence: Sequence[str],
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
-    confidence: LineageConfidence = LineageConfidence.CONFIRMED,
+    lineage_confidence: LineageConfidence = LineageConfidence.CONFIRMED,
     limitations: Sequence[str] = (),
 ) -> ProvenanceEdge:
     """``member PATENT_FAMILY_OF family_primary`` from family metadata."""
@@ -170,7 +170,7 @@ def patent_family_edge(
         related_source_id=family_primary,
         relation=ProvenanceRelation.PATENT_FAMILY_OF,
         evidence=evidence,
-        confidence=confidence,
+        lineage_confidence=lineage_confidence,
         observed_at=observed_at,
         provenance=provenance,
         limitations=limitations,
@@ -184,7 +184,7 @@ def implementation_edge(
     evidence: Sequence[str],
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
-    confidence: LineageConfidence = LineageConfidence.POSSIBLE,
+    lineage_confidence: LineageConfidence = LineageConfidence.POSSIBLE,
     limitations: Sequence[str] = (),
 ) -> ProvenanceEdge:
     """``implementation IMPLEMENTS specification``."""
@@ -194,7 +194,7 @@ def implementation_edge(
         related_source_id=specification,
         relation=ProvenanceRelation.IMPLEMENTS,
         evidence=evidence,
-        confidence=confidence,
+        lineage_confidence=lineage_confidence,
         observed_at=observed_at,
         provenance=provenance,
         limitations=limitations,
@@ -208,7 +208,7 @@ def documentation_edge(
     evidence: Sequence[str],
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
-    confidence: LineageConfidence = LineageConfidence.POSSIBLE,
+    lineage_confidence: LineageConfidence = LineageConfidence.POSSIBLE,
     limitations: Sequence[str] = (),
 ) -> ProvenanceEdge:
     """``documentation DOCUMENTS artifact``."""
@@ -218,7 +218,7 @@ def documentation_edge(
         related_source_id=artifact,
         relation=ProvenanceRelation.DOCUMENTS,
         evidence=evidence,
-        confidence=confidence,
+        lineage_confidence=lineage_confidence,
         observed_at=observed_at,
         provenance=provenance,
         limitations=limitations,
@@ -232,7 +232,7 @@ def found_by_edge(
     evidence: Sequence[str],
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
-    confidence: LineageConfidence = LineageConfidence.CONFIRMED,
+    lineage_confidence: LineageConfidence = LineageConfidence.CONFIRMED,
     limitations: Sequence[str] = (),
 ) -> ProvenanceEdge:
     """``found FOUND_BY seed``: the retrieval record of an expansion path."""
@@ -242,7 +242,7 @@ def found_by_edge(
         related_source_id=seed,
         relation=ProvenanceRelation.FOUND_BY,
         evidence=evidence,
-        confidence=confidence,
+        lineage_confidence=lineage_confidence,
         observed_at=observed_at,
         provenance=provenance,
         limitations=limitations,
