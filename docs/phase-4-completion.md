@@ -4,9 +4,11 @@ Scope: Multi-Strategy Retrieval and Adaptive Research only. Accepted baseline:
 `da34f36`. Worktree: `/private/tmp/novcheck-phase4.WORKTREE`, branch
 `phase-4-adaptive-retrieval`. Phase 5 has not started. No merge or push performed.
 
-Status: implementation Tasks 1-16 are present; final whole-branch review, live
-smokes and independent-checkout verification are pending at this checkpoint.
-This checkpoint is not a final Phase 4 acceptance claim.
+Status: Tasks 1-16 and all 31 Phase 4 acceptance gates pass. The independent
+review's seven Important findings are closed by regression-tested fixes.
+No Critical or Minor findings were reported. The review and author rulings are
+recorded in [the Phase 4 review](reviews/phase-4-review.md). The branch remains
+isolated and unmerged for the user; this is not authorization for Phase 5.
 
 ## Tasks and commits
 
@@ -27,7 +29,12 @@ This checkpoint is not a final Phase 4 acceptance claim.
 | 13 | 29fb7ca | Native budgeted screening/adaptive pipeline and real slice, ADR-021 |
 | 14 | 17ce0a3 | Actual-engine known-item benchmark and observed baseline |
 | 15 | d1ca90d | Mandatory 18 attacks plus Crossref partial-date regression |
-| 16 | See branch log | Architecture guards, README, provider matrix, traceability, this report |
+| 16 | a8d48a3 | Architecture guards, README, provider matrix, traceability, this report |
+
+Post-task corrections: `7e09d7c` fixes deployed OpenAlex semantic-filter syntax
+without relaxing local historical eligibility; `7d845a4` closes all seven
+independent review findings, with 11 review regression cases and a committed
+review record. This completion record is committed separately after verification.
 
 ## Files and requirements
 
@@ -47,7 +54,8 @@ tests; `test_phase4_retrieval_pipeline.py`, `test_phase3_slice_with_phase4_resea
 fixtures. Existing Phase 3 architecture guard is scoped to its accepted modules
 while preserving global SDK/fixture bans and its no-SATURATED screening contract.
 Documentation: ADR-016 through ADR-021, approved Phase 4 plan copy, README, provider
-matrix, `docs/traceability/phase-4.yaml`, this completion record.
+matrix, `docs/traceability/phase-4.yaml`, independent review record, this completion
+record. In total, 71 paths differ from accepted baseline `da34f36`.
 
 Requirement mapping: FR-RET-001..003, FR-ARC-001/003, FR-EXP-001..003;
 sections 18-22, 42, 45-47, 50, 54 and 60 Phase 4. INV-01/06/10/12/13 are guarded
@@ -61,9 +69,26 @@ Accepted baseline before changes: `uv sync --dev`,
 `uv run python scripts/verify.py`, `git diff --check`: PASS,
 936 deterministic tests, 3 live cases deselected; Ruff/format/Pyright clean.
 Each task had focused tests and a full verification gate before its commit.
-Latest pre-acceptance full gate: 1,072 deterministic tests, 5 network cases
-deselected; Ruff lint/format and strict Pyright pass; diff whitespace clean.
-Final commands/count and fresh-checkout results will be recorded after final review.
+After the final code/review corrections, both the isolated implementation
+worktree and an independent local clone at `7d845a4` passed:
+
+```text
+uv sync --dev                 PASS; 25 packages resolved, 24 checked
+uv run python scripts/verify.py
+  Ruff check                PASS
+  Ruff format --check       PASS; 190 files formatted
+  Pyright                   PASS; 0 errors, 0 warnings, 0 informations
+  Pytest                    PASS; 1,090 passed, 5 opt-in network cases deselected
+git diff --check            PASS; no whitespace errors
+```
+
+Default unit/contract/integration/benchmark/adversarial tests remained fully
+network-isolated. The 18 mandatory Phase 4 adversarial cases, one additional
+Crossref partial-date case and 11 independent-review regression cases all pass.
+The review cases cover depth-deferred top neighborhoods, final-round wire work,
+elapsed cooldown/in-flight limits, overflow dates, opaque DOI-like IDs, malformed
+native IDs, both OpenAlex hydration directions and missing S2 edge rank spans.
+The actual-engine six-case benchmark also passes in both worktrees.
 
 ## Benchmark baseline
 
@@ -100,8 +125,10 @@ exclusions. Provider registry presence remains separate from applicability.
 HTTP uses injected httpx, serial pacing, response-derived limits/cooldowns,
 bounded exponential retries only for idempotent transient failures, safe attempt
 records, known-value/key redaction and explicit failures. GitHub secondary throttles
-without timing headers wait at least 60 seconds. Guards run after pacing and before
-each physical request, so retries and partial hydration obey call/elapsed budgets.
+without timing headers wait at least 60 seconds. Guards run after bounded pacing
+and before each physical request, so retries and partial hydration obey budgets.
+In-flight requests have remaining-deadline timeouts. Logical deep-search rounds
+are charged once; per-wire guards still enforce every other physical budget.
 Returned documents are counted separately; page-size parameters are clamped to
 remaining budget. No credentials/error body/raw transport exception is persisted.
 Fallback is never automatic or silent. Default deterministic tests block sockets.
@@ -140,6 +167,9 @@ saturation. Budget preventing the next reasonable action yields BUDGET_STOPPED
 with precedence; access gaps yield ACCESS_BLOCKED. Remaining unresolved work is
 CONTINUE, not fabricated saturation. Retrieval candidates are routing proxies,
 not verified relevant evidence or authority for later positive novelty conclusions.
+Required, completed and depth-deferred major neighborhoods are tracked separately;
+the configured depth cap cannot turn skipped exploration into SATURATED. Provider
+rank spans include missing graph targets, which remain incomplete access gaps.
 
 ## Decisions, deviations and limitations
 
@@ -167,12 +197,59 @@ is the accepted minimal frozen-findings compiler, not later narrative intelligen
 All source/evidence/adjudication continuation artifacts are synthetic Phase 5+
 fixtures. Retrieval never promotes a source to verified evidence by itself.
 
+## Live smoke checkpoint
+
+Executed only through the marked, explicitly enabled network suite:
+`NOVCHECK_LIVE_SMOKE=1 uv run pytest tests/network -m network --force-enable-socket -v -rs`.
+Initial result: 3 passed, 1 failed (OpenAlex semantic BAD_REQUEST), 1 skipped
+(Semantic Scholar RATE_LIMITED). Root cause was isolated with bounded anonymous
+opt-in diagnostics: semantic `to_publication_date` is unsupported by the deployed
+API, while `publication_year:<2027` succeeded. Commit `7e09d7c` fixes that syntax
+and records its coarse-year limitation; a RED-to-GREEN regression retains a
+same-year post-cutoff candidate as ineligible. Exact local `as_of` is not weakened.
+Re-run: 4 passed, 1 skipped, exit 0. OpenAlex text/semantic, Crossref and GitHub
+passed; Semantic Scholar live availability was rate-limited, not claimed verified.
+All deterministic Semantic Scholar contracts remain required and passed.
+After review corrections, the same opt-in command again exited 0: 4 passed
+(OpenAlex text and native, Crossref, GitHub), 1 skipped (Semantic Scholar
+RATE_LIMITED). This does not claim live S2 availability. The final deterministic
+and fresh-clone count is 1,090 passed with 5 network cases deselected.
+
+## Rulings and costs
+
+- Inline sequential execution with TDD/full task gates and one independent final
+  reviewer preserves the critical path; cost: no fresh reviewer per task.
+- Temporary isolated worktree preserves the original/accepted checkouts; cost:
+  implementation is outside the IDE's original checkout.
+- Existing concrete-provider ownership stays in `providers/`; cost: some optional
+  plan file-map paths differ, without changing domain interfaces.
+- Keep Phase 3 coverage semantics unchanged and add Phase 4 sidecars; cost: a
+  separate adaptive coverage artifact.
+- Inherit reviewer model under tool restrictions; cost: inherited model expense,
+  rather than an explicitly selected model override.
+- Rich reviewed ResearchPlan, versioned Pydantic ResearchResult, native screening
+  and neutral wire-budget/audit hooks follow ADR-021; cost: new optional boundary
+  and artifact types while legacy entry points remain supported.
+- Creation/priority are not silently public disclosure and full dates alone
+  establish provisional eligibility (ADR-020); cost: conservative unknown dates
+  until later source verification.
+- Supported semantic year filter plus exact local cutoff (ADR-020) corrects a live
+  API contract mismatch; cost: same-year later context is retained but ineligible,
+  and the coarse provider-side filter is explicitly traced.
+- Seven Important review findings were accepted and corrected without broadening
+  Phase 4 into source truth, evidence support or adjudication. Exact rulings,
+  consequences and declined-to-judge costs are in `docs/reviews/phase-4-review.md`.
+- A safety guard rejected temporarily disabling the in-flight deadline solely
+  to reproduce the new timeout regression's RED phase. The safeguard remained
+  intact; its passing test and the earlier reproduced cooldown RED case cover
+  this deadline boundary. No broader implementation was blocked.
+
 ## Acceptance gates
 
 | Gate | Evidence | Checkpoint result |
 | --- | --- | --- |
 | 1 | Accepted baseline 936 deterministic tests | PASS |
-| 2 | Final full verification after final changes | PENDING |
+| 2 | Full verification after review fixes, implementation and independent local clone: 1,090 pass | PASS |
 | 3 | Retrieval model/path/rank/score tests | PASS |
 | 4 | Nine labels and four mechanisms | PASS |
 | 5 | OpenAlex native recorded/provider contracts | PASS |
@@ -200,5 +277,81 @@ fixtures. Retrieval never promotes a source to verified evidence by itself.
 | 27 | No equivalence/support evidence engine | PASS |
 | 28 | No prosecutor/defender/adjudication engine | PASS |
 | 29 | Rank/benchmark metrics never novelty probabilities | PASS |
-| 30 | README, provider matrix and traceability | PENDING FINAL REVIEW |
+| 30 | README, provider matrix, traceability and committed independent review | PASS |
 | 31 | No Phase 5 implementation | PASS |
+
+## Exact changed paths
+
+```text
+README.md
+docs/architecture/decisions/ADR-016-retrieval-strategy-taxonomy.md
+docs/architecture/decisions/ADR-017-rank-fusion.md
+docs/architecture/decisions/ADR-018-adaptive-stopping.md
+docs/architecture/decisions/ADR-019-semantic-scholar-provider.md
+docs/architecture/decisions/ADR-020-provisional-chronology.md
+docs/architecture/decisions/ADR-021-adaptive-integration-and-budgets.md
+docs/phase-4-completion.md
+docs/providers/provider-matrix.md
+docs/reviews/phase-4-review.md
+docs/superpowers/plans/2026-09-27-phase-4-multi-strategy-retrieval-adaptive-research-implementation-plan.md
+docs/traceability/phase-4.yaml
+src/novelty_harness/application/research_phase4.py
+src/novelty_harness/application/vertical_slice.py
+src/novelty_harness/evaluation/__init__.py
+src/novelty_harness/evaluation/known_item.py
+src/novelty_harness/ports/retrieval.py
+src/novelty_harness/ports/retrieval_audit.py
+src/novelty_harness/providers/_retrieval.py
+src/novelty_harness/providers/crossref_pagination.py
+src/novelty_harness/providers/github_expansion.py
+src/novelty_harness/providers/http.py
+src/novelty_harness/providers/openalex_semantic.py
+src/novelty_harness/providers/semantic_scholar.py
+src/novelty_harness/research/adaptive/__init__.py
+src/novelty_harness/research/adaptive/controller.py
+src/novelty_harness/research/adaptive/escalation.py
+src/novelty_harness/research/adaptive/models.py
+src/novelty_harness/research/adaptive/pipeline.py
+src/novelty_harness/research/adaptive/stopping.py
+src/novelty_harness/research/expansion/__init__.py
+src/novelty_harness/research/expansion/chronology.py
+src/novelty_harness/research/expansion/citations.py
+src/novelty_harness/research/expansion/entities.py
+src/novelty_harness/research/fusion/__init__.py
+src/novelty_harness/research/fusion/clustering.py
+src/novelty_harness/research/fusion/rrf.py
+src/novelty_harness/research/retrieval/__init__.py
+src/novelty_harness/research/retrieval/executor.py
+src/novelty_harness/research/retrieval/models.py
+src/novelty_harness/runtime/budgets/__init__.py
+src/novelty_harness/runtime/budgets/controller.py
+tests/adversarial/test_phase4_retrieval_attacks.py
+tests/adversarial/test_phase4_review_regressions.py
+tests/benchmarks/test_known_item_retrieval.py
+tests/fixtures/known_items/README.md
+tests/fixtures/known_items/__init__.py
+tests/fixtures/known_items/baseline.json
+tests/fixtures/known_items/cases.json
+tests/fixtures/phase4.py
+tests/fixtures/provider_responses/semantic_scholar/search.json
+tests/integration/test_phase3_slice_with_phase4_research.py
+tests/integration/test_phase4_retrieval_pipeline.py
+tests/network/test_phase4_live_provider_smoke.py
+tests/unit/providers/test_deep_pagination.py
+tests/unit/providers/test_openalex_retrieval.py
+tests/unit/providers/test_semantic_scholar.py
+tests/unit/research/adaptive/__init__.py
+tests/unit/research/adaptive/test_controller.py
+tests/unit/research/adaptive/test_stopping.py
+tests/unit/research/expansion/test_chronology.py
+tests/unit/research/expansion/test_controller.py
+tests/unit/research/fusion/test_clustering.py
+tests/unit/research/fusion/test_rrf.py
+tests/unit/research/retrieval/test_executor.py
+tests/unit/research/retrieval/test_models.py
+tests/unit/runtime/__init__.py
+tests/unit/runtime/budgets/__init__.py
+tests/unit/runtime/budgets/test_controller.py
+tests/unit/test_phase3_architecture_guards.py
+tests/unit/test_phase4_architecture_guards.py
+```
