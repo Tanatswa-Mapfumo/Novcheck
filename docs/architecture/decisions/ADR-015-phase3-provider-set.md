@@ -1,6 +1,13 @@
-# ADR-015: Screening ends at an explicit fixture continuation
+# ADR-015: Phase 3 provider set and explicit screening boundary
 
 Status: Accepted for Phase 3 implementation
+
+Initial implemented adapters are OpenAlex and Crossref (SCHOLARLY) and GitHub
+repository search (SOFTWARE). Their independent compilation limitations remain
+visible; they are not universal interchangeable search engines. Semantic Scholar,
+EPO OPS, general web/Brave, standards, regulatory and archive providers are planned
+only. Missing ecosystems stay blocked in coverage; registry lookup cannot exclude
+families. No vendor model provider is added. httpx is the only new direct dependency.
 
 Phase 3 performs real planning, independent criticism and bounded first-page
 screening. The application accepts an optional Phase3ResearchComponents bundle

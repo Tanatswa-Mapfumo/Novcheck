@@ -38,12 +38,12 @@ venv = ".venv"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--strict-markers --strict-config --disable-socket --allow-unix-socket"
+addopts = "--strict-markers --strict-config --disable-socket --allow-unix-socket -m 'not network'"
 markers = [
     "unit: deterministic unit tests",
     "contract: provider transport contract tests",
     "integration: local contract integration tests",
-    "network: future explicitly opt-in live network tests",
+    "network: explicitly opt-in live provider contract smoke tests",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

@@ -1,0 +1,38 @@
+phase: 3
+scope: Research planner and bounded screening provider infrastructure only
+requirements:
+  - ids: [FR-EV-001, FR-EV-002]
+    status: All nine families per MCU; explicit exclusions and blocked/degraded coverage, not provider-based irrelevance
+    modules: [research/applicability.py, research/coverage.py]
+    tests: [tests/unit/research/test_applicability.py, tests/unit/research/test_coverage_floor.py]
+  - ids: [FR-EV-003]
+    status: Family/context contracts allow later activation; discovery-driven escalation deferred to Phase 4
+    modules: [research/models.py, providers/registry.py]
+    tests: [tests/unit/research/test_search_planning.py, tests/unit/providers/test_registry.py]
+  - ids: [FR-SRCH-001, FR-SRCH-002, FR-SRCH-003]
+    status: Eleven query families, neutral multi-query strategy, relationships and structured omissions; no positive novelty conclusions
+    modules: [research/query_taxonomy.py, research/planning.py, research/provider_queries.py]
+    tests: [tests/unit/research/test_strategist.py, tests/adversarial/test_phase3_search_strategy_attacks.py]
+  - ids: [FR-SRCH-004]
+    status: Independent complete critic checklist, deterministic blocking, bounded revisions and hash-bound PASS before screening
+    modules: [research/critique.py, research/revision.py, research/screening.py]
+    tests: [tests/unit/research/test_search_critique.py, tests/integration/test_phase3_screening_pipeline.py]
+  - ids: [FR-PROV-003, FR-PROV-004, FR-OBS-001, FR-OBS-002]
+    status: Safe attempt/call/query metadata, explicit failure/fallback records and partial branch degradation
+    modules: [providers/http.py, providers/errors.py, providers/registry.py, ports/search_audit.py, research/screening.py]
+    tests: [tests/unit/providers, tests/integration/test_phase3_screening_pipeline.py]
+  - ids: [FR-SEC-001, FR-SEC-002, FR-SEC-003, FR-SEC-004]
+    status: Schema-validated untrusted context/responses, no retrieved instruction execution, external credentials and deterministic network isolation
+    modules: [runtime/semantic/structured.py, providers/_base.py, providers/http.py]
+    tests: [tests/adversarial/test_phase3_search_strategy_attacks.py, tests/unit/providers, tests/unit/test_phase3_architecture_guards.py]
+  - sections: [13, 14, 15, 16, 17, 42, 45, 46, 47, 54, 55, 56, 60 Phase 3, 61, 62]
+    status: Phase 3 subset only; screening matrix/artifacts, real Phase 2 integration and explicit later fixture boundary
+    modules: [application/research.py, application/vertical_slice.py]
+    tests: [tests/integration/test_phase2_slice_with_phase3_planner.py, tests/network/test_phase3_live_provider_smoke.py]
+deferred:
+  - Phase 4 fusion/RRF/vector retrieval, adaptive allocation, citation/entity expansion, multilingual deepening and saturation
+  - Phase 5 canonical source/provenance/independent evidence reasoning
+  - Phase 6 prior-art equivalence and decisive evidence support reasoning
+  - Phase 7 prosecutor/defender, novelty adjudication, scores or probabilities
+  - Phase 8 full report compiler; accepted nine-question frozen-findings compiler remains
+  - Production LLM provider and planned provider adapters listed in docs/providers/provider-matrix.md

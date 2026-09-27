@@ -6,6 +6,7 @@ The authoritative behavior is in [the master specification](docs/specs/master-de
 Implementation follows [the Phase 0 plan](docs/superpowers/plans/2026-09-26-phase-0-repository-governance-contracts.md)
 [the Phase 1 plan](docs/superpowers/plans/2026-09-26-phase-1-deterministic-thin-vertical-slice-implementation-plan.md)
 and [the Phase 2 plan](docs/superpowers/plans/2026-09-26-phase-2-intake-sufficiency-robust-mcu-engine-implementation-plan.md),
+followed by [the Phase 3 plan](docs/superpowers/plans/2026-09-27-phase-3-research-planner-provider-infrastructure-implementation-plan.md),
 with [AGENTS.md](AGENTS.md).
 
 Phase 0 provides versioned Pydantic contracts, canonical enums and opaque IDs,
@@ -23,7 +24,7 @@ uv run python scripts/verify.py
 The gate runs Ruff lint, Ruff format checks, strict Pyright application checks,
 and pytest. Unit, contract, and integration tests block IPv4/IPv6 sockets; local
 Unix sockets are allowed for asyncio wakeups. The `network` marker alone does not
-enable network access. There are no live providers or live provider tests.
+enable network access. Opt-in provider smoke tests are described in Phase 3 below.
 
 ## Phase 1: Deterministic thin vertical slice
 
@@ -109,7 +110,54 @@ Old structural ceilings are not erased by an override.
 
 Span/schema checks do not prove semantic entailment or deployed model robustness.
 Fixtures prove safeguards and architectural flow, not general model intelligence.
-No real novelty assessment is possible yet. Phase 3 has not started.
+No real novelty assessment is possible yet. Phase 3 extends research as below.
+
+## Phase 3: Research planner and provider infrastructure
+
+Real provider-independent family applicability, multi-query strategy, independent
+criticism and bounded revision now feed configurable screening coverage. All nine
+families are assessed per MCU; unsupported exclusions remain unresolved. Missing
+providers block coverage, never semantic applicability. Eleven query families
+include functional, mechanistic, relational, historical, adjacent-domain and
+separate combination intent. Every omission is available to the critic.
+
+OpenAlex Works, Crossref bibliographic matching and GitHub repository search have
+deterministic compilers and async HTTP adapters. Unsupported features fail explicitly;
+Crossref is not an OpenAlex Boolean/full-text engine. HTTP attempts, delays, rate
+metadata and failures are recorded without request credentials. No cross-provider
+score comparison, deduplication/independence inference or saturation is performed.
+Screening is bounded to one page per planned query/provider; zero hits are not novelty.
+
+```bash
+uv run pytest tests/integration/test_phase2_slice_with_phase3_planner.py -v
+uv run pytest tests/adversarial/test_phase3_search_strategy_attacks.py -v
+```
+
+The first command runs real Phase 2 understanding and Phase 3 planning/screening
+with recorded semantic outputs and MockTransport, without network access. The
+accepted slice preserves its legacy artifacts; richer research artifacts live in
+phase3/. An explicit fixture continuation receives screening hits. Source/passages,
+evidence verification and adjudication remain synthetic, traced as fixture-backed.
+The lifecycle still reaches REPORTED/COMPLETED and the report only copies frozen findings.
+
+Default verification deselects all network tests and blocks sockets. Optional live
+smokes issue one bounded request per implemented provider, validate contracts only,
+and skip with a safe reason if credentials, network or quota are unavailable:
+
+```bash
+NOVCHECK_LIVE_SMOKE=1 uv run pytest tests/network -m network --force-enable-socket -v -rs
+```
+
+Optional environment references: OPENALEX_API_KEY, CROSSREF_MAILTO, GITHUB_TOKEN.
+Do not place values in configuration/artifacts or command arguments. See the
+[provider matrix](docs/providers/provider-matrix.md),
+[Phase 3 traceability](docs/traceability/phase-3.yaml) and
+[Phase 3 completion report](docs/phase-3-completion.md).
+
+No Phase 4 fusion, adaptive research, citation/entity expansion or saturation has
+started. No real evidence equivalence, adversarial reasoning, novelty adjudication,
+scores or probabilities are implemented. Production still requires an injected
+abstract LLMProvider; no vendor-specific model integration is supplied.
 
 See [Phase 0 traceability](docs/traceability/phase-0.yaml),
 [Phase 1 traceability](docs/traceability/phase-1.yaml),
