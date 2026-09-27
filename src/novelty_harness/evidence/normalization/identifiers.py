@@ -10,11 +10,13 @@ from collections.abc import Sequence
 from typing import Literal, Self
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, JsonValue, model_validator
 
 from novelty_harness.domain.base import ContractModel
 from novelty_harness.domain.idea import NonBlankText
+from novelty_harness.domain.ids import SourceId
 from novelty_harness.evidence.normalization.models import CanonicalIdentifiers
+from novelty_harness.runtime.tracing.hashing import canonical_hash
 
 _DOI_PREFIXES = (
     "https://doi.org/",
@@ -28,7 +30,7 @@ _OPENALEX = re.compile(r"^W\d+$")
 _SEMANTIC_SCHOLAR = re.compile(r"^[0-9a-f]{40}$")
 _ARXIV_NEW = re.compile(r"^(\d{4}\.\d{4,5})(?:v(\d+))?$")
 _ARXIV_OLD = re.compile(r"^([A-Za-z][A-Za-z0-9-]*(?:\.[A-Za-z]{2})?/\d{7})(?:v(\d+))?$")
-_REPOSITORY = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,38})/[A-Za-z0-9._-]{1,100}$")
+_REPOSITORY = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$")
 _PATENT = re.compile(r"^[A-Z]{2}\d{5,}(?:[A-Z]\d?)?$")
 _TRACKING_PARAMETERS = frozenset(
     {"fbclid", "gclid", "igshid", "mc_cid", "mc_eid", "ref", "ref_src", "source"}
@@ -73,6 +75,118 @@ class IdentifierMerge(ContractModel):
         if not {conflict.field for conflict in self.conflicts} <= set(self.unresolved):
             raise ValueError("Every conflict must leave its field unresolved")
         return self
+
+
+IdentityLevel = Literal[
+    "doi",
+    "patent",
+    "repository",
+    "arxiv",
+    "openalex",
+    "semantic_scholar",
+    "other",
+    "url",
+    "discovery",
+]
+
+
+class SourceIdentity(ContractModel):
+    """The deterministic identity chosen for a canonical source."""
+
+    model_config = ConfigDict(frozen=True)
+    contract_kind: Literal["source-identity-v1"] = "source-identity-v1"
+
+    source_id: SourceId
+    level: IdentityLevel
+    value: NonBlankText
+    stable: bool
+
+
+def _hash_identity(level: str, value: JsonValue) -> str:
+    return "src_" + canonical_hash({"identity_level": level, "identity": value})
+
+
+def canonical_source_identity(
+    identifiers: CanonicalIdentifiers,
+    *,
+    urls: Sequence[str] = (),
+    discovery_ids: Sequence[tuple[str, str]] = (),
+) -> SourceIdentity:
+    """Choose canonical identity by the ADR-023 ranking.
+
+    Stable identifiers (DOI, patent, repository, arXiv, corpus IDs, other)
+    always outrank URLs, which outrank the conservative discovery fallback.
+    The discovery fallback is explicitly not globally stable.
+    """
+
+    if identifiers.doi:
+        return SourceIdentity(
+            source_id=_hash_identity("doi", identifiers.doi),
+            level="doi",
+            value=identifiers.doi,
+            stable=True,
+        )
+    if identifiers.patent_numbers:
+        value = tuple(sorted(identifiers.patent_numbers))
+        return SourceIdentity(
+            source_id=_hash_identity("patent", list(value)),
+            level="patent",
+            value="+".join(value),
+            stable=True,
+        )
+    if identifiers.repository:
+        return SourceIdentity(
+            source_id=_hash_identity("repository", identifiers.repository),
+            level="repository",
+            value=identifiers.repository,
+            stable=True,
+        )
+    if identifiers.arxiv_id:
+        return SourceIdentity(
+            source_id=_hash_identity("arxiv", identifiers.arxiv_id),
+            level="arxiv",
+            value=identifiers.arxiv_id,
+            stable=True,
+        )
+    if identifiers.openalex_id:
+        return SourceIdentity(
+            source_id=_hash_identity("openalex", identifiers.openalex_id),
+            level="openalex",
+            value=identifiers.openalex_id,
+            stable=True,
+        )
+    if identifiers.semantic_scholar_id:
+        return SourceIdentity(
+            source_id=_hash_identity("semantic_scholar", identifiers.semantic_scholar_id),
+            level="semantic_scholar",
+            value=identifiers.semantic_scholar_id,
+            stable=True,
+        )
+    if identifiers.other:
+        value = tuple(sorted(identifiers.other.items()))
+        return SourceIdentity(
+            source_id=_hash_identity("other", [[key, item] for key, item in value]),
+            level="other",
+            value=" ".join(f"{key}:{item}" for key, item in value),
+            stable=True,
+        )
+    normalized_urls = tuple(sorted({url for url in urls if url}))
+    if normalized_urls:
+        return SourceIdentity(
+            source_id=_hash_identity("url", list(normalized_urls)),
+            level="url",
+            value=normalized_urls[0],
+            stable=False,
+        )
+    discovered = tuple(sorted(set(discovery_ids)))
+    if not discovered:
+        raise ValueError("Cannot derive source identity without any identifier, URL or discovery")
+    return SourceIdentity(
+        source_id=_hash_identity("discovery", [list(pair) for pair in discovered]),
+        level="discovery",
+        value=" ".join(f"{provider}:{identity}" for provider, identity in discovered),
+        stable=False,
+    )
 
 
 def _strip(value: str) -> str:
