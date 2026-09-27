@@ -14,6 +14,7 @@ from pydantic import ConfigDict, Field, JsonValue, model_validator
 from novelty_harness.domain.base import ContractModel, UTCDateTime
 from novelty_harness.domain.idea import ArtifactProvenance, NonBlankText
 from novelty_harness.domain.ids import GraphEdgeId
+from novelty_harness.runtime.tracing.hashing import canonical_hash
 
 
 class GraphNodeKind(StrEnum):
@@ -85,6 +86,24 @@ _NODE_ID_PREFIXES: dict[GraphNodeKind, str] = {
 
 def node_id_prefix(kind: GraphNodeKind) -> str:
     return _NODE_ID_PREFIXES[kind]
+
+
+def graph_edge_id_for(
+    kind: GraphEdgeKind,
+    source_node_id: str,
+    target_node_id: str,
+    key: JsonValue = None,
+) -> GraphEdgeId:
+    """Deterministic graph edge identity for content-addressed deduplication."""
+
+    return "gedge_" + canonical_hash(
+        {
+            "kind": kind.value,
+            "source_node_id": source_node_id,
+            "target_node_id": target_node_id,
+            "key": key,
+        }
+    )
 
 
 class GraphNode(ContractModel):
