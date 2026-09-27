@@ -8,6 +8,8 @@ inspection minima default to none. Every value is configurable through a complet
 CoveragePolicy JSON document. Two families is the architectural minimum for a
 multi-query strategy, not a novelty/confidence threshold. These engineering floors
 are subject to later calibration; they do not represent research saturation.
+Distinct case/whitespace-normalized query texts must also meet the configured family
+floor: relabelling the same canonical query cannot create research diversity.
 
 Screening executes a bounded first page for each planned query/provider pair.
 Coverage requires all those pairs to succeed; counts cannot replace diversity.

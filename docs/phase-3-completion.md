@@ -1,7 +1,8 @@
 # Phase 3 completion and verification record
 
-Status: Implementation verified; fresh-checkout verification and final independent
-review are pending. This report does not yet declare final phase acceptance.
+Status: Phase 3 implementation complete. All 30 acceptance gates pass, including
+independent fresh-checkout verification and closed independent review. User acceptance
+is separate; Phase 4 remains unauthorized and has not started.
 
 ## Scope and tasks
 
@@ -9,9 +10,9 @@ Base: accepted Phase 2 commit 558a22a. Isolated branch: phase-3-research-planner
 Implementation worktree: /private/tmp/novcheck-phase3.WORKTREE. Original checkout
 and accepted Phase 2 worktree were not modified. Phase 4 has not started.
 
-Tasks 1-13 are completed in plan order with focused tests and full verification.
-Task 14 provider documentation, architecture guards and opt-in smoke tests are
-implemented; final verification/review closure is pending. The supplied Phase 3
+Tasks 1-14 are completed in plan order with focused tests and full verification.
+Task 14 includes provider documentation, architecture guards, opt-in smoke tests
+and final verification/review closure. The supplied Phase 3
 plan was committed without content changes (cmp exit 0 against original).
 
 | Task | Commit | Implemented |
@@ -29,13 +30,21 @@ plan was committed without content changes (cmp exit 0 against original).
 | 11 | 6967c08 | Reviewed-plan execution, coverage and screening artifacts |
 | 12 | 97460ba | Real Phase 2/3 lifecycle with explicit later fixtures |
 | 13 | 35de5b3 | Fifteen mandatory adversarial cases |
-| 14 | Pending final closure | Provider matrix, traceability, opt-in smokes and final gates |
+| 14 | 84a28a2 + final closure | Provider matrix, traceability, opt-in smokes and final gates |
+
+Independent review found six Important issues, each reproduced with failing regression
+tests before correction. Review fixes: fa1c4f8 (credential echoes), 6b92cf7 (malformed
+metadata isolation), cd3ffdc (Crossref syntax), 24c447e (metadata retention), 4d490e9
+(persistent cooldowns), 6ada468 (actual query diversity). Follow-up review identified
+one additional credential-key echo, fixed in e64bbb8. Final review confirms all seven
+closed with no remaining Important/Critical blockers or material regressions.
+Details and regression evidence: docs/reviews/phase-3-final-review.md.
 
 ## Files
 
 Created research/: __init__.py, models.py, query_taxonomy.py, applicability.py,
 prompts.py, planning.py, critique.py, revision.py, coverage.py, provider_queries.py,
-screening.py. Created providers/: __init__.py, errors.py, http.py, registry.py,
+screening.py, query_validation.py. Created providers/: __init__.py, errors.py, http.py, registry.py,
 _base.py, openalex.py, crossref.py, github.py. Created application/research.py,
 ports/search_audit.py, runtime/config/search.py. Modified application/vertical_slice.py.
 No master specification or accepted domain/port contracts were changed.
@@ -54,7 +63,8 @@ integration/test_phase2_slice_with_phase3_planner.py,
 adversarial/test_phase3_search_strategy_attacks.py and network/test_phase3_live_provider_smoke.py.
 
 Created ADR-013, ADR-014, ADR-015-phase3-provider-set.md, docs/providers/provider-matrix.md,
-docs/traceability/phase-3.yaml, this report and the supplied Phase 3 plan.
+docs/traceability/phase-3.yaml, docs/reviews/phase-3-final-review.md, this report
+and the supplied Phase 3 plan.
 Modified README.md, pyproject.toml and uv.lock (httpx is the only new direct dependency).
 Paths above are relative to src/novelty_harness/, tests/ or docs/ as appropriate.
 
@@ -73,31 +83,45 @@ Accepted baseline before edits: uv sync --dev PASS; uv run python scripts/verify
 PASS (788 tests, Ruff clean, Pyright 0 errors); git diff --check PASS.
 
 Latest implementation verification: uv sync --dev PASS (25 resolved, 24 checked);
-uv run python scripts/verify.py PASS (137 formatted files, Ruff clean, Pyright 0
-errors/warnings, 901 passed / 3 live tests deselected); git diff --check PASS.
-904 total tests are collected. Task 13 adversarial suite: all 15 Phase 3 cases PASS;
+uv run python scripts/verify.py PASS (138 formatted files, Ruff clean, Pyright 0
+errors/warnings, 936 passed / 3 live tests deselected); git diff --check PASS.
+939 total tests are collected: 148 new deterministic cases above the accepted 788,
+plus 3 opt-in live cases. Task 13 adversarial suite: all 15 Phase 3 cases PASS;
 all Phase 2/3 adversarial tests: 43 PASS. Full integration suite reaches
 REPORTED/COMPLETED without network, with real Phase 2/3 components.
+Review closure adds 35 regression cases. Focused Phase 3 research/provider/adversarial/
+integration verification: 144 PASS (architecture guards add four more cases).
 
 Opt-in command only: NOVCHECK_LIVE_SMOKE=1 uv run pytest tests/network -m network
 --force-enable-socket -v -rs. Result: OpenAlex PASS, Crossref PASS, GitHub PASS;
-3 passed in 3.97s. No pagination/deep research or model API was used in these smokes.
+3 passed in 3.62s after the review fixes. No pagination/deep research or model API
+was used in these smokes.
 Live success does not establish corpus coverage; future unavailable credentials,
 quota or network produces explicit skips, never weaker deterministic assertions.
 
-Fresh checkout: pending. Final fresh-context independent review: pending.
+Fresh checkout: /private/tmp/novcheck-phase3.FRESH, independent local clone at
+e64bbb8, with a new environment originally installed at 84a28a2, then fast-forwarded
+to all review fixes. The final documentation closure is reverified in the same clone.
+uv sync --dev PASS (24 packages checked),
+uv run python scripts/verify.py PASS (936 passed, 3 deselected in 3.47s;
+Ruff clean, 138 formatted files, Pyright 0 errors), git diff --check PASS;
+git status --short empty. Final fresh-context independent review: PASS at e64bbb8.
 
 ## Architecture and safeguards
 
 The implemented adapters and capability limitations are detailed in provider-matrix.md.
 Neutral intent remains distinct from actual provider syntax. SearchProvider stays async
 and unchanged. Provider-local scores remain scoped; duplicate DOIs are not independent
-evidence. Known resolved credentials are removed from returned JSON and excluded from
+evidence. Provider metadata survives persisted hits without chronology adjudication.
+Known resolved credentials are removed from returned JSON/rate metadata, secret-bearing
+object keys are omitted recursively, and credentials are excluded from
 compiled requests and attempt records. External response schemas validate used fields
 strictly and ignore unknown provider metadata as documented interoperability policy.
 
 HTTP requests are serialized/paced; timeout defaults to 20s, retry limit to three,
-backoff to 1s exponential. Retry-After/reset metadata is honored. Only idempotent
+backoff to 1s exponential. Retry-After/reset cooldowns persist per provider even
+after retry exhaustion and are separately traced. Invalid numeric/date rate metadata
+is a recorded PARSE_FAILURE, never an uncaught conversion error. Only idempotent
 transient requests retry; 400/401/ordinary 403 are explicit terminal failures.
 Attempts and logical query IDs persist even when a retry eventually succeeds;
 such a run is DEGRADED. Fallback events require explicit primary/fallback/reason.
@@ -105,7 +129,10 @@ such a run is DEGRADED. Fallback events require explicit primary/fallback/reason
 The strategist and critic use separate versioned semantic task requests. Critic
 context is only CIR, MCUs, applicability and persisted plan, without strategist
 private context or call history. A complete checklist is required. Deterministic
-guards can overrule an optimistic model PASS. Revisions are bounded and re-reviewed;
+guards can overrule an optimistic model PASS. Distinct case/whitespace-normalized
+query texts are required as well as family labels; noun-only relations and unchanged
+historical terminology are rejected lexically, not treated as semantic proof.
+Revisions are bounded and re-reviewed;
 exhaustion is BLOCKED. Screening revalidates the hash-bound PASS artifact.
 
 Every MCU has nine applicability assessments independently of registry availability.
@@ -134,8 +161,8 @@ whole-phase final review rather than per-task subagents, per executing-plans wor
 | Gate | Result / evidence |
 | --- | --- |
 | 1 | PASS: accepted baseline verified before edits |
-| 2 | PASS: worktree verification 901 deterministic tests |
-| 3 | PENDING: fresh checkout |
+| 2 | PASS: worktree verification 936 deterministic tests |
+| 3 | PASS: independent fresh clone, new environment, 936 tests |
 | 4 | PASS: all nine families for every MCU |
 | 5 | PASS: assessor has no registry/provider availability input |
 | 6 | PASS: plausible branches screened or explicitly blocked/degraded |
@@ -167,7 +194,9 @@ whole-phase final review rather than per-task subagents, per executing-plans wor
 ## Remaining limitations
 
 Planning/applicability/criticism are model-assisted via an injected abstract LLMProvider;
-recordings prove deterministic safeguards, not deployed model robustness. No production
+recordings prove deterministic safeguards, not deployed model robustness. Metamorphic
+recordings reuse fixed responses: they test validator stability, not contextual generation
+quality. Lexical perspective guards do not prove semantic coverage. No production
 model adapter is supplied. No patent/general-web/standards/regulatory/archive provider
 exists yet. Metadata and repository timestamps are not verified chronology. Screening
 is deliberately first-page only and does not establish independent evidence or absence.

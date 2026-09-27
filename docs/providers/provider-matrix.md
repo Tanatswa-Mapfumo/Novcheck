@@ -25,11 +25,16 @@ failures appear in the coverage matrix; zero results never mean no prior art.
 
 HTTP configuration defaults to 20s timeout, three attempts and 1s exponential
 backoff. Only idempotent requests with transient failures retry. Retry-After (seconds
-or HTTP date) and provider reset metadata are honored. 400/401/ordinary 403 do not
+or HTTP date) and provider reset cooldowns are retained across logical requests,
+including after retry exhaustion. Malformed rate metadata becomes an explicit parse
+failure. 400/401/ordinary 403 do not
 retry. Serial execution stays below concurrency limits. Every attempt retains query
 identity, timestamp, safe request hash, response status, delays and rate snapshot.
 No headers, error body, credential-bearing URL or raw transport exception is persisted.
-Known resolved credential/email values are redacted from returned JSON before parsing.
+Known resolved credential/email values are redacted from returned JSON and retained
+rate header values before parsing/persistence. Provider-scoped metadata is retained
+with secret-bearing object keys omitted recursively,
+in screening hits, without cross-provider score comparison or chronology adjudication.
 Fallbacks require explicit registry events; the executor does not silently substitute.
 Health reports local configuration only, not an unperformed live probe.
 
@@ -42,7 +47,8 @@ No production LLM adapter, calibrated confidence or novelty judgment exists.
 ## Operational coverage profile
 
 standard-screening-v1 requires two distinct query families and one provider for each
-plausible family. Required query families and per-query inspection minima default
+plausible family, with at least as many distinct normalized query texts as the family
+floor. Required query families and per-query inspection minima default
 to none. Load a complete JSON CoveragePolicy with runtime/config/search.py; all floors
 are configurable within the multi-query contract. They are operational floors, not
 confidence thresholds. All planned query/provider pairs must succeed; retry failures
