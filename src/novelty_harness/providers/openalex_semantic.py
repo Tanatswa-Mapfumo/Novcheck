@@ -14,7 +14,6 @@ from novelty_harness.providers.openalex import OpenAlexProvider, Work
 from novelty_harness.providers.registry import ProviderDescriptor
 from novelty_harness.research.models import SearchIntent
 from novelty_harness.research.provider_queries import CompiledProviderQuery
-from novelty_harness.research.retrieval.executor import RetrievalExecutor
 from novelty_harness.research.retrieval.models import (
     RetrievalBatch,
     RetrievalCapabilities,
@@ -84,11 +83,9 @@ class OpenAlexRetrievalProvider(OpenAlexProvider, NativeRequests):
     ) -> RetrievalBatch:
         strategy = RetrievalStrategy(strategy)
         if strategy != RetrievalStrategy.SEMANTIC:
-            return await RetrievalExecutor(
-                as_of=as_of, compiler=self.compiler, clock=self.runtime.clock
-            ).execute_intent(
+            return await self.text_retrieve(
                 intent=intent,
-                provider=self,
+                as_of=as_of,
                 strategy=strategy,
                 cursor=cursor,
                 rank_offset=rank_offset,

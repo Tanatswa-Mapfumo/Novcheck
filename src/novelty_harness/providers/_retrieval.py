@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import date
 
@@ -6,8 +7,9 @@ from pydantic import ValidationError
 from novelty_harness.domain.enums import EvidenceFamily, TraceStatus
 from novelty_harness.domain.ids import MCUId, QueryId
 from novelty_harness.ports.models import SearchPage, SourceRef
+from novelty_harness.ports.retrieval_audit import BudgetExhausted, RetrievalRequestEvent
 from novelty_harness.providers._base import HTTPSearchAdapter
-from novelty_harness.providers.errors import FailureCategory, provider_error
+from novelty_harness.providers.errors import FailureCategory, ProviderError, provider_error
 from novelty_harness.providers.http import HTTPResult
 from novelty_harness.research.models import SearchIntent
 from novelty_harness.research.provider_queries import CompiledProviderQuery
@@ -21,6 +23,20 @@ from novelty_harness.runtime.tracing.hashing import canonical_hash
 
 
 class NativeRequests(HTTPSearchAdapter):
+    def set_request_guard(self, guard: Callable[[], None] | None) -> None:
+        if guard is None:
+            self.runtime.request_guards.pop(self.name, None)
+        elif self.name in self.runtime.request_guards:
+            raise ValueError("A provider already has an active budget guard")
+        else:
+            self.runtime.request_guards[self.name] = guard
+
+    def set_document_limit(self, limit: Callable[[], int | None] | None) -> None:
+        self._document_limit = limit
+
+    def retrieval_request_events(self) -> tuple[RetrievalRequestEvent, ...]:
+        return tuple(getattr(self, "_request_events", []))
+
     async def text_retrieve(
         self,
         *,
@@ -94,15 +110,47 @@ class NativeRequests(HTTPSearchAdapter):
                     compiled.query_id,
                 )
             params[key] = value
-        return await self.runtime.request(
-            provider=self.name,
-            query_id=compiled.query_id,
-            method=compiled.method,
-            endpoint=compiled.endpoint,
-            params=self.request_params(params),
-            headers=self.headers(),
-            min_interval=self.min_interval() if interval is None else interval,
-        )
+        limit_callback: Callable[[], int | None] | None = getattr(self, "_document_limit", None)
+        remaining = limit_callback() if limit_callback else None
+        if remaining is not None:
+            for key in ("per_page", "rows", "limit"):
+                if key in params:
+                    params[key] = min(int(params[key]), max(1, remaining))
+        actual = CompiledProviderQuery.model_validate({**compiled.model_dump(), "params": params})
+        start = len(self.runtime.attempts)
+        call = None
+        failure = None
+        try:
+            result = await self.runtime.request(
+                provider=self.name,
+                query_id=compiled.query_id,
+                method=compiled.method,
+                endpoint=compiled.endpoint,
+                params=self.request_params(params),
+                headers=self.headers(),
+                min_interval=self.min_interval() if interval is None else interval,
+            )
+            call = result.call
+            return result
+        except ProviderError as error:
+            call, failure = error.failure.call, error.failure.category.value
+            raise
+        except BudgetExhausted:
+            failure = "BUDGET_STOPPED"
+            raise
+        finally:
+            attempts = self.runtime.attempts[start:]
+            event = RetrievalRequestEvent(
+                compiled_query=CompiledProviderQuery.model_validate(
+                    self.runtime.redact(actual.model_dump(mode="json"))
+                ),
+                call=call,
+                attempts=tuple(a.model_dump(mode="json") for a in attempts),
+                failure_code=failure,
+            )
+            events: list[RetrievalRequestEvent] = getattr(self, "_request_events", [])
+            events.append(event)
+            self._request_events = events
 
     def native_batch(
         self,
@@ -153,7 +201,22 @@ class NativeRequests(HTTPSearchAdapter):
                 call=page.call,
                 limitations=limitations,
                 calls=tuple(r.call for r in calls),
-                compiled_queries=compiled,
+                compiled_queries=tuple(
+                    next(
+                        (
+                            e.compiled_query
+                            for e in reversed(self.retrieval_request_events())
+                            if e.call is not None and e.call.request_hash == r.call.request_hash
+                        ),
+                        q,
+                    )
+                    for r, q in zip(calls, compiled, strict=True)
+                ),
+                had_failed_attempts=any(a.failure is not None for r in calls for a in r.attempts),
+                complete=not any(
+                    n == "Incomplete provider result set" or "window capped" in n
+                    for n in limitations
+                ),
             )
         except (ValueError, ValidationError):
             raise provider_error(

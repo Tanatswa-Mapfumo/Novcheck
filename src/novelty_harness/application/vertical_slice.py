@@ -10,6 +10,10 @@ from novelty_harness.application.research import (
     DeferredFixtureContinuation,
     Phase3ResearchComponents,
 )
+from novelty_harness.application.research_phase4 import (
+    Phase4ResearchComponents,
+    Phase5FixtureContinuation,
+)
 from novelty_harness.application.understanding import (
     UnderstandingArtifactSource,
     UnderstandingUpdate,
@@ -192,6 +196,15 @@ class _Run:
             raise ValueError("provider returned an explicit unsuccessful call")
 
 
+@dataclass(frozen=True)
+class _ResearchTraceSink:
+    run: _Run
+
+    def emit(self, event: TraceEvent) -> None:
+        self.run.local_sink.emit(event)
+        self.run.sink.emit(event)
+
+
 async def _screen(
     run: _Run,
     plan: SearchPlan,
@@ -325,8 +338,15 @@ async def run_vertical_slice(
     clock: Callable[[], datetime] = utc_now,
     research: Phase3ResearchComponents | None = None,
     fixture_continuation: DeferredFixtureContinuation | None = None,
+    adaptive_research: Phase4ResearchComponents | None = None,
+    adaptive_fixture_continuation: Phase5FixtureContinuation | None = None,
 ) -> VerticalSliceResult:
-    if (research is None) != (fixture_continuation is None):
+    if (
+        (adaptive_research is None) != (adaptive_fixture_continuation is None)
+        or (research is None) != (fixture_continuation is None and adaptive_research is None)
+        or fixture_continuation is not None
+        and adaptive_research is not None
+    ):
         raise ValueError(
             "Phase 3 research and explicit deferred fixture continuation are required together"
         )
@@ -472,7 +492,42 @@ async def run_vertical_slice(
                 "Execute injected provider queries; no coverage or saturation inferred.",
             ),
         )
-        if research and preparation and fixture_continuation:
+        if research and preparation and adaptive_research and adaptive_fixture_continuation:
+            adaptive_result = await adaptive_research.execute(
+                assessment=run.record,
+                mcus=graph.mcus,
+                plan=preparation.plan,
+                trace_sink=_ResearchTraceSink(run),
+                writer=artifact_writer,
+                clock=clock,
+            )
+            run.stage(
+                AssessmentStage.ADAPTIVE_RESEARCH,
+                _origin(
+                    "implemented",
+                    "Real diversified retrieval and explicit adaptive stopping; "
+                    "evidence semantics deferred",
+                ),
+                adaptive_result,
+            )
+            run.emit(
+                reason="PHASE5_FIXTURE_BOUNDARY",
+                output=adaptive_result,
+                data={
+                    "execution": "fixture",
+                    "semantics_implemented": False,
+                    "detail": "Phase 4 candidate retrieval ended; "
+                    "Phase 5+ evidence/adjudication remain fixture-backed",
+                },
+            )
+            sources, passages = await adaptive_fixture_continuation.materialize(
+                adaptive_result, graph
+            )
+            sources = tuple(_checked(s, SourceRecord) for s in sources)
+            passages = tuple(_checked(p, SourcePassage) for p in passages)
+            if any(s.provenance.kind != "fixture" for s in (*sources, *passages)):
+                raise ValueError("Phase 5+ continuation must be visibly fixture-backed")
+        elif research and preparation and fixture_continuation:
             screening = await research.executor.execute(preparation.plan)
             write_screening_artifacts(
                 artifact_writer, preparation.plan, screening, prefix="phase3/"
@@ -508,10 +563,13 @@ async def run_vertical_slice(
                 raise ValueError("Phase 4+ continuation must be visibly fixture-backed")
         else:
             sources, passages = await _screen(run, plan, search_provider, content_resolver)
-        run.stage(
-            AssessmentStage.ADAPTIVE_RESEARCH,
-            _origin("deferred", "Adaptive research is not implemented."),
-        )
+        if adaptive_research is None:
+            run.stage(
+                AssessmentStage.ADAPTIVE_RESEARCH,
+                _origin(
+                    "deferred", "Adaptive research is not implemented in this compatibility path."
+                ),
+            )
         artifact_writer.write_jsonl(record.assessment_id, "sources.jsonl", sources)
         artifact_writer.write_jsonl(record.assessment_id, "passages.jsonl", passages)
         run.stage(

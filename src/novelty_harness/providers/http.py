@@ -156,6 +156,7 @@ class HTTPRuntime:
         self._secrets: set[str] = set()
         self._next_request: dict[str, float] = {}
         self._lock = asyncio.Lock()
+        self.request_guards: dict[str, Callable[[], None]] = {}
 
     @property
     def attempts(self) -> tuple[HTTPAttempt, ...]:
@@ -217,6 +218,8 @@ class HTTPRuntime:
                 if pace:
                     await self.sleeper(pace)
                 now = self.clock()
+                if guard := self.request_guards.get(provider):
+                    guard()
                 response: httpx.Response | None = None
                 failure: Failure | None = None
                 try:

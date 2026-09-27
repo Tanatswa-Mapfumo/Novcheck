@@ -96,6 +96,8 @@ class RetrievalBatch(ContractModel):
     limitations: tuple[NonBlankText, ...] = ()
     calls: tuple[ProviderCallMetadata, ...] = ()
     compiled_queries: tuple[CompiledProviderQuery, ...] = ()
+    had_failed_attempts: bool = False
+    complete: bool = True
 
     @model_validator(mode="after")
     def consistent_batch(self) -> Self:
