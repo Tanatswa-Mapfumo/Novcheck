@@ -1,12 +1,13 @@
 import pytest
 
 from novelty_harness.research.critique import SearchPlanCritic, bind_review
+from novelty_harness.research.models import SearchIntent
 from novelty_harness.research.revision import SearchPlanReviser, review_and_revise
 from novelty_harness.runtime.semantic.structured import SemanticRunner
 from tests.fixtures.phase1 import make_fixture
 from tests.fixtures.phase2 import RecordedLLM
 from tests.fixtures.phase3 import planning_response
-from tests.unit.research.test_strategist import build
+from tests.unit.research.test_strategist import build, disguised_canonical_response
 
 
 def critic_response():
@@ -103,3 +104,17 @@ async def test_unknown_issue_references_and_incomplete_checklist_reject():
     data["checked_categories"].pop()
     with pytest.raises(ValueError):
         await critique(plan, data)
+
+
+@pytest.mark.parametrize("mutation", ["collapse", "noun_relation", "unchanged_history"])
+async def test_optimistic_critic_cannot_pass_disguised_canonical_queries(mutation):
+    plan, _ = await build()
+    data = disguised_canonical_response(mutation)
+    plan = plan.model_copy(
+        update={"intents": tuple(SearchIntent.model_validate(q) for q in data["intents"])}
+    )
+    review, _ = await critique(plan)
+    assert review.status == "REVISE"
+    assert any(i.severity == "MATERIAL" for i in review.issues)
+    with pytest.raises(ValueError):
+        bind_review(plan, review)

@@ -18,6 +18,7 @@ from novelty_harness.research.models import (
     SearchPlanIssueCategory as Category,
 )
 from novelty_harness.research.query_taxonomy import QueryFamily
+from novelty_harness.research.query_validation import distinct_query_texts, terms_add_perspective
 from novelty_harness.runtime.semantic.structured import SemanticRunner, SemanticTaskSpec
 from novelty_harness.runtime.tracing.hashing import canonical_hash, canonical_json
 
@@ -92,7 +93,11 @@ def deterministic_issues(
                     mcu,
                     a.evidence_family,
                 )
-            if len(families) < 2 or families | omitted != set(QueryFamily):
+            if (
+                len(families) < 2
+                or len(distinct_query_texts(queries)) < 2
+                or families | omitted != set(QueryFamily)
+            ):
                 add(
                     Category.QUERY_FAMILY_GAP,
                     "Diversify queries and explain omissions",
@@ -110,10 +115,20 @@ def deterministic_issues(
                         mcu,
                         a.evidence_family,
                     )
+            canonical = [q for q in queries if q.query_family == QueryFamily.DIRECT_CANONICAL]
+            for q in queries:
+                if (
+                    q.query_family == QueryFamily.HISTORICAL_TERMINOLOGY
+                    and not terms_add_perspective(q, canonical)
+                ):
+                    add(
+                        Category.HISTORICAL_GAP,
+                        "Use changed historical terminology",
+                        mcu,
+                        a.evidence_family,
+                    )
             if mcu.relationships and not any(
-                q.query_family == QueryFamily.RELATIONSHIP
-                and q.relationship_terms
-                and all(t.casefold() in q.text.casefold() for t in q.relationship_terms)
+                q.query_family == QueryFamily.RELATIONSHIP and terms_add_perspective(q, canonical)
                 for q in queries
             ):
                 add(

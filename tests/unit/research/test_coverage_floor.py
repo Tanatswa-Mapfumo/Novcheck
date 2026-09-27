@@ -85,3 +85,23 @@ def test_policy_is_complete_configurable_and_never_saturated():
         CoverageFloor(min_distinct_query_families=0, min_configured_providers=1)
     policy = CoveragePolicy.standard()
     assert CoveragePolicy.model_validate_json(policy.model_dump_json()) == policy
+
+
+async def test_query_labels_do_not_satisfy_floor_with_identical_normalized_text():
+    plan = await prepared()
+    plan = plan.model_copy(
+        update={
+            "intents": tuple(
+                q.model_copy(update={"text": "ZetaFlow" if i % 2 else "  zetaflow  "})
+                for i, q in enumerate(plan.intents)
+            )
+        }
+    )
+    cells = evaluate_coverage(
+        plan, CoveragePolicy.standard(), {EvidenceFamily.SCHOLARLY: ("openalex",)}
+    )
+    assert all(
+        c.state == CoverageState.BLOCKED_PLAN_DEFECT
+        for c in cells
+        if c.evidence_family == EvidenceFamily.SCHOLARLY
+    )

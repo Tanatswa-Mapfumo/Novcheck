@@ -16,6 +16,7 @@ from novelty_harness.research.models import (
 )
 from novelty_harness.research.prompts import STRATEGIST, STRATEGIST_VERSION
 from novelty_harness.research.query_taxonomy import QueryFamily
+from novelty_harness.research.query_validation import distinct_query_texts, terms_add_perspective
 from novelty_harness.runtime.semantic.structured import SemanticRunner, SemanticTaskSpec
 from novelty_harness.runtime.tracing.hashing import canonical_json
 
@@ -42,19 +43,26 @@ def validate_strategy(plan: ResearchPlan, idea: CanonicalIdeaRepresentation) -> 
         ]
         queried = {q.query_family for q in queries}
         omitted = {o.query_family for o in omissions}
-        if len(queried) < 2 or queried & omitted or queried | omitted != set(QueryFamily):
+        if (
+            len(queried) < 2
+            or len(distinct_query_texts(queries)) < 2
+            or queried & omitted
+            or queried | omitted != set(QueryFamily)
+        ):
             raise ValueError("every plausible branch needs diverse queries and explicit omissions")
         if len(omitted) != len(omissions):
             raise ValueError("duplicate query-family omission")
     for q in plan.intents:
-        if q.query_family == QueryFamily.RELATIONSHIP and (
-            not q.relationship_terms
-            or not all(t.casefold() in q.text.casefold() for t in q.relationship_terms)
-        ):
+        canonical = [
+            c
+            for c in plan.intents
+            if c.query_family == QueryFamily.DIRECT_CANONICAL
+            and (c.mcu_id, c.evidence_family) == (q.mcu_id, q.evidence_family)
+        ]
+        if q.query_family == QueryFamily.RELATIONSHIP and not terms_add_perspective(q, canonical):
             raise ValueError("relationship search must include the relation, not only nouns")
-        if q.query_family == QueryFamily.HISTORICAL_TERMINOLOGY and (
-            not q.historical_terms
-            or not all(t.casefold() in q.text.casefold() for t in q.historical_terms)
+        if q.query_family == QueryFamily.HISTORICAL_TERMINOLOGY and not terms_add_perspective(
+            q, canonical
         ):
             raise ValueError("historical queries require changed terminology")
         if q.query_family == QueryFamily.COMBINATION and q.combination_id is None:

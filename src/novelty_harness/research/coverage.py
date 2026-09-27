@@ -10,6 +10,7 @@ from novelty_harness.domain.idea import NonBlankText
 from novelty_harness.domain.ids import MCUId, QueryId
 from novelty_harness.research.models import FamilyApplicability, ResearchPlan
 from novelty_harness.research.query_taxonomy import QueryFamily
+from novelty_harness.research.query_validation import distinct_query_texts
 
 
 class CoverageFloor(ContractModel):
@@ -118,6 +119,7 @@ def evaluate_coverage(
             notes.append("Insufficient configured providers; family remains semantically plausible")
         elif (
             len(families) < floor.min_distinct_query_families
+            or len(distinct_query_texts(queries)) < floor.min_distinct_query_families
             or not floor.required_query_families <= families
         ):
             state = CoverageState.BLOCKED_PLAN_DEFECT

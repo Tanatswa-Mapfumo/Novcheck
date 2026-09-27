@@ -65,3 +65,28 @@ async def test_invalid_plan_output_rejected(mutation):
         data["prompt_version"] = "made-up"
     with pytest.raises(ValueError):
         await build(data)
+
+
+def disguised_canonical_response(mutation):
+    data = planning_response()
+    if mutation == "collapse":
+        for q in data["intents"]:
+            q.update(
+                text="  ZetaFlow  ",
+                concepts=["zetaflow"],
+                relationship_terms=["ZetaFlow"] if q["relationship_terms"] else [],
+                historical_terms=["ZetaFlow"] if q["historical_terms"] else [],
+            )
+    elif mutation == "noun_relation":
+        q = next(q for q in data["intents"] if q["query_family"] == "RELATIONSHIP")
+        q.update(text="temperature relay", relationship_terms=["temperature", "relay"])
+    else:
+        q = next(q for q in data["intents"] if q["query_family"] == "HISTORICAL_TERMINOLOGY")
+        q.update(text="temperature relay historical search", historical_terms=["temperature"])
+    return data
+
+
+@pytest.mark.parametrize("mutation", ["collapse", "noun_relation", "unchanged_history"])
+async def test_family_labels_cannot_disguise_canonical_only_queries(mutation):
+    with pytest.raises(ValueError):
+        await build(disguised_canonical_response(mutation))
