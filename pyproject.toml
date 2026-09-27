@@ -6,7 +6,11 @@ build-backend = "hatchling.build"
 name = "novelty-assessment-harness"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["pydantic>=2,<3", "pydantic-settings>=2,<3"]
+dependencies = [
+    "httpx>=0.28,<1",
+    "pydantic>=2,<3",
+    "pydantic-settings>=2,<3",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/novelty_harness"]

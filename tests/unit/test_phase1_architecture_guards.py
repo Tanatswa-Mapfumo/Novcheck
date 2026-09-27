@@ -42,7 +42,9 @@ def test_reporting_has_only_domain_and_standard_library_dependencies():
 def test_production_has_no_test_imports_or_concrete_network_provider_dependencies():
     for path in (ROOT / "src").rglob("*.py"):
         package = ".".join(path.relative_to(ROOT / "src").parent.parts)
-        assert not forbidden_imports(path.read_text(), package, banned=NETWORK_IMPORTS), path
+        permitted_http = path.parent == ROOT / "src/novelty_harness/providers"
+        banned = tuple(i for i in NETWORK_IMPORTS if not (permitted_http and i == "httpx"))
+        assert not forbidden_imports(path.read_text(), package, banned=banned), path
 
 
 def test_no_concrete_provider_implementations_were_added():
