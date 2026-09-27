@@ -6,6 +6,10 @@ from pathlib import Path
 from pydantic import BaseModel, JsonValue
 
 from novelty_harness.application.models import AssessmentSummary, VerticalSliceComponents
+from novelty_harness.application.research import (
+    DeferredFixtureContinuation,
+    Phase3ResearchComponents,
+)
 from novelty_harness.application.understanding import (
     UnderstandingArtifactSource,
     UnderstandingUpdate,
@@ -40,6 +44,7 @@ from novelty_harness.ports.models import (
 )
 from novelty_harness.ports.search import SearchProvider
 from novelty_harness.reporting.minimal import compile_minimal_report
+from novelty_harness.research.screening import write_screening_artifacts
 from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
 from novelty_harness.runtime.tracing.hashing import canonical_hash
 from novelty_harness.runtime.tracing.models import TraceEvent
@@ -96,6 +101,22 @@ class _Run:
                 },
             )
         return update
+
+    def collect_research(self, research: Phase3ResearchComponents | None) -> None:
+        for audit in research.drain_research_audits() if research else ():
+            self.emit(
+                reason="SEMANTIC_CALL",
+                call=audit.call,
+                output=audit,
+                status=TraceStatus.SUCCESS
+                if audit.validation_state == "VALIDATED"
+                else TraceStatus.FAILURE,
+                data={
+                    "audit": audit.model_dump(mode="json"),
+                    "execution": "implemented",
+                    "semantics_implemented": True,
+                },
+            )
 
     def emit(
         self,
@@ -302,7 +323,13 @@ async def run_vertical_slice(
     trace_sink: TraceSink,
     artifact_writer: RunArtifactWriter,
     clock: Callable[[], datetime] = utc_now,
+    research: Phase3ResearchComponents | None = None,
+    fixture_continuation: DeferredFixtureContinuation | None = None,
 ) -> VerticalSliceResult:
+    if (research is None) != (fixture_continuation is None):
+        raise ValueError(
+            "Phase 3 research and explicit deferred fixture continuation are required together"
+        )
     request = _checked(request, AssessmentRequest)
     now = clock()
     record = AssessmentRecord(
@@ -402,7 +429,24 @@ async def run_vertical_slice(
             )
         artifact_writer.write_json(record.assessment_id, "mcu_graph.json", graph)
         run.stage(AssessmentStage.MCU_RECONCILED, graph.provenance, graph)
-        plan = _checked(await components.planner.plan(idea, graph), SearchPlan)
+        preparation = (
+            (
+                await research.prepare(
+                    assessment_id=record.assessment_id,
+                    idea=idea,
+                    graph=graph,
+                    writer=artifact_writer,
+                )
+            )
+            if research
+            else None
+        )
+        run.collect_research(research)
+        plan = (
+            preparation.legacy_plan
+            if preparation
+            else _checked(await components.planner.plan(idea, graph), SearchPlan)
+        )
         if plan.idea_id != idea.idea_id or any(
             query.mcu_id not in mcu_ids for query in plan.queries
         ):
@@ -410,8 +454,12 @@ async def run_vertical_slice(
         artifact_writer.write_json(record.assessment_id, "search_plan.json", plan)
         run.stage(AssessmentStage.SEARCH_PLANNED, plan.provenance, plan)
         plan_hash = canonical_hash(plan)
-        review = _checked(
-            await components.plan_reviewer.review(plan.model_copy(deep=True)), SearchPlanReview
+        review = (
+            preparation.legacy_review
+            if preparation
+            else _checked(
+                await components.plan_reviewer.review(plan.model_copy(deep=True)), SearchPlanReview
+            )
         )
         artifact_writer.write_json(record.assessment_id, "search_plan_review.json", review)
         if review.plan_hash != plan_hash or not review.approved:
@@ -424,7 +472,42 @@ async def run_vertical_slice(
                 "Execute injected provider queries; no coverage or saturation inferred.",
             ),
         )
-        sources, passages = await _screen(run, plan, search_provider, content_resolver)
+        if research and preparation and fixture_continuation:
+            screening = await research.executor.execute(preparation.plan)
+            write_screening_artifacts(
+                artifact_writer, preparation.plan, screening, prefix="phase3/"
+            )
+            for event in screening.events:
+                run.emit(
+                    reason="PHASE3_SCREENING",
+                    output=event,
+                    call=event.call,
+                    status=TraceStatus.FAILURE
+                    if event.state == "PROVIDER_FAILURE"
+                    else TraceStatus.SUCCESS,
+                    data={
+                        "execution": "implemented",
+                        "semantics_implemented": True,
+                        "screening": event.model_dump(mode="json"),
+                    },
+                )
+            run.emit(
+                reason="PHASE4_FIXTURE_BOUNDARY",
+                output=screening,
+                data={
+                    "execution": "fixture",
+                    "semantics_implemented": False,
+                    "detail": "Phase 3 screening ended; "
+                    "later research/evidence/adjudication remain fixture-backed",
+                },
+            )
+            sources, passages = await fixture_continuation.materialize(screening, graph)
+            sources = tuple(_checked(s, SourceRecord) for s in sources)
+            passages = tuple(_checked(p, SourcePassage) for p in passages)
+            if any(s.provenance.kind != "fixture" for s in (*sources, *passages)):
+                raise ValueError("Phase 4+ continuation must be visibly fixture-backed")
+        else:
+            sources, passages = await _screen(run, plan, search_provider, content_resolver)
         run.stage(
             AssessmentStage.ADAPTIVE_RESEARCH,
             _origin("deferred", "Adaptive research is not implemented."),
@@ -578,6 +661,7 @@ async def run_vertical_slice(
         run.record = final_record
         return VerticalSliceResult(final_record, directory, adjudication, report, summary)
     except Exception as error:
+        run.collect_research(research)
         for component in (
             components.normalizer,
             components.sufficiency_analyzer,

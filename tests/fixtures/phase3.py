@@ -31,16 +31,35 @@ def planning_response():
                     {**base, "rationale": "No combination or discovered named entities yet"}
                 )
             else:
+                text = texts[family.value]
+                if row["mcu_id"] == "mcu_status":
+                    text = {
+                        "DIRECT_CANONICAL": "separate status indicator operator checks",
+                        "SYNONYM_ACRONYM": "operating state display annunciator",
+                        "FUNCTIONAL": "display operating status to reduce operator checks",
+                        "MECHANISM": "separate status indicator reduces operator checks",
+                        "RELATIONSHIP": "status indicator REDUCES operator checks",
+                        "OUTCOME_OBJECTIVE": "reduce operator workload through status display",
+                        "HISTORICAL_TERMINOLOGY": "annunciator operator checks",
+                        "ADJACENT_DOMAIN": "industrial process annunciator operator workload",
+                        "COMPONENT": "status indicator display",
+                    }[family.value]
                 intents.append(
                     {
                         **base,
                         "query_id": f"qry_{len(intents)}",
-                        "text": texts[family.value],
-                        "concepts": ["temperature", "relay"],
-                        "relationship_terms": ["CONTROLS"]
+                        "text": text,
+                        "concepts": ["temperature", "relay"]
+                        if row["mcu_id"] == "mcu_control"
+                        else ["status indicator", "operator checks"],
+                        "relationship_terms": [
+                            "CONTROLS" if row["mcu_id"] == "mcu_control" else "REDUCES"
+                        ]
                         if family.value == "RELATIONSHIP"
                         else [],
-                        "historical_terms": ["thermostatic"]
+                        "historical_terms": [
+                            "thermostatic" if row["mcu_id"] == "mcu_control" else "annunciator"
+                        ]
                         if family.value == "HISTORICAL_TERMINOLOGY"
                         else [],
                     }
