@@ -157,6 +157,7 @@ class HTTPRuntime:
             return {
                 k: "[REDACTED]" if k.casefold() in SENSITIVE else self.redact(v)
                 for k, v in data.items()
+                if not any(secret and secret in k for secret in self._secrets)
             }
         if isinstance(data, list):
             return [self.redact(v) for v in data]

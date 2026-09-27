@@ -7,7 +7,7 @@ from novelty_harness.providers.crossref import CrossrefProvider
 from novelty_harness.providers.github import GitHubProvider
 from novelty_harness.providers.http import HTTPRuntime
 from novelty_harness.providers.openalex import OpenAlexProvider
-from novelty_harness.providers.registry import ProviderRegistry
+from novelty_harness.providers.registry import CredentialRef, ProviderRegistry
 from novelty_harness.research.coverage import CoveragePolicy
 from novelty_harness.research.screening import ScreeningExecutor, ScreeningHit
 from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
@@ -148,3 +148,30 @@ async def test_provider_metadata_survives_screening_and_artifact_round_trip(tmp_
     assert metadata["github"]["topics"]
     assert "license" in metadata["github"]
     assert tuple(ScreeningHit.model_validate(h) for h in stored) == result.hits
+
+
+async def test_credential_echo_in_nested_metadata_key_never_reaches_artifacts(
+    monkeypatch, tmp_path
+):
+    secret = "review-fake-secret"
+    monkeypatch.setenv("NOVCHECK_REVIEW_TOKEN", secret)
+
+    def respond(request):
+        data = github_response()
+        data["items"][0]["license"] = {secret: "echoed metadata", "spdx_id": "MIT"}
+        return httpx.Response(200, json=data)
+
+    plan = await prepared()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        provider = GitHubProvider(
+            HTTPRuntime(client, sleeper=no_sleep),
+            credential=CredentialRef(env_name="NOVCHECK_REVIEW_TOKEN"),
+        )
+        registry = ProviderRegistry()
+        registry.register(provider, provider.descriptor, compiler=provider.compiler)
+        result = await ScreeningExecutor(registry, CoveragePolicy.standard()).execute(
+            plan, writer=RunArtifactWriter(tmp_path)
+        )
+    assert secret not in result.model_dump_json()
+    assert all(secret not in p.read_text() for p in (tmp_path / plan.assessment_id).iterdir())
+    assert all(h.provider_metadata["license"]["spdx_id"] == "MIT" for h in result.hits)
