@@ -74,6 +74,17 @@ class CrossrefRetrievalProvider(CrossrefProvider, NativeRequests):
         for hit in page.results:
             work = by_id.get(hit.source.provider_source_id)
             if work:
+                full_dates = [
+                    date(*parts)
+                    for field in (work.published, work.published_print, work.published_online)
+                    if field is not None
+                    for parts in field.parts
+                    if len(parts) == 3
+                ]
+                # The legacy screening projection pads partial dates; native chronology must not.
+                hit.metadata["publication_date"] = (
+                    min(full_dates).isoformat() if full_dates else None
+                )
                 hit.metadata["date_parts"] = {
                     k: v
                     for k, v in work.model_dump(mode="json", by_alias=True).items()
