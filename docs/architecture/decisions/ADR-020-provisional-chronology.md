@@ -19,3 +19,12 @@ Raw metadata and uncertainty remain available for Phase 5 normalization and
 chronology verification. Conservative handling may leave publicly old repositories
 undated until a verified disclosure date is obtained; no private creation or
 priority date silently becomes a public-art date.
+
+## Native semantic API cutoff
+
+The opt-in live OpenAlex smoke exposed that `to_publication_date` is rejected by
+deployed semantic search. A bounded diagnostic confirmed `publication_year:<Y+1`
+works. Native semantic compilation uses that coarse year bound and explicitly
+records its limitation. Complete returned publication dates still undergo the
+exact inclusive local cutoff; later dates in the same year remain context only.
+No cutoff is relaxed and no post-cutoff result becomes historical negation.

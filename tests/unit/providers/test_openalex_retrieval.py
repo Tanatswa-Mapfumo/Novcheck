@@ -37,6 +37,30 @@ async def test_native_semantic_request_is_not_lexical_and_capabilities_are_expli
     assert RetrievalBatch.model_validate_json(batch.model_dump_json()) == batch
 
 
+async def test_semantic_uses_supported_year_filter_and_keeps_day_cutoff_provisional():
+    from novelty_harness.research.expansion.chronology import assess_temporal, capture_chronology
+
+    def respond(request):
+        if request.url.params.get("filter") != "publication_year:<2027":
+            return httpx.Response(400, json={"error": "Unsupported semantic date filter"})
+        data = response()
+        data["results"][0]["publication_date"] = "2026-12-01"
+        return httpx.Response(200, json=data)
+
+    intent = (await build())[0].intents[0]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        batch = await OpenAlexRetrievalProvider(HTTPRuntime(client, sleeper=no_sleep)).retrieve(
+            intent=intent, strategy="SEMANTIC", as_of=date(2026, 9, 26)
+        )
+    assert (
+        assess_temporal(
+            capture_chronology(batch.candidates[0]), as_of=date(2026, 9, 26)
+        ).predates_cutoff
+        is False
+    )
+    assert any("exact cutoff" in n for n in batch.limitations)
+
+
 @pytest.mark.parametrize("length,success", [(2000, True), (2001, False)])
 async def test_semantic_length_limit_never_silently_truncates(length, success):
     intent = (await build())[0].intents[0].model_copy(update={"text": "x" * length})

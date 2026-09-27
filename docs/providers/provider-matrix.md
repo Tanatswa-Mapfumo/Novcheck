@@ -9,6 +9,10 @@
 | Crossref | Bibliographic cursor continuation | 1 RPS anonymous / 3 RPS polite before response limits; short page ends cursor; preserve all original query params and original date precision; no Boolean/full-text, semantic, or citation traversal |
 | GitHub | Repository pages, numeric repository lookup, owner/user/org public repositories | Search <=1000 window; separate search/core rate snapshots; primary and secondary limits explicit; secondary limits without timing headers wait >=60s; no code/content/history/releases inspection |
 
+OpenAlex semantic mode uses a supported year filter; exact inclusive `as_of`
+eligibility is assessed locally from provisional dates. The deployed API rejected
+the exact-date filter in the opt-in smoke, so no unsupported date syntax is emitted.
+
 All four native adapters expose safe compiled-request/physical-attempt audit and
 per-wire budget hooks. Requests are paced and retries bounded by the existing
 runtime and research budget. Caps, malformed records, unsupported capabilities and

@@ -111,7 +111,7 @@ class OpenAlexRetrievalProvider(OpenAlexProvider, NativeRequests):
             params={
                 "search.semantic": intent.text,
                 "per_page": 50,
-                "filter": "to_publication_date:" + as_of.isoformat(),
+                "filter": "publication_year:<" + str(as_of.year + 1),
             },
             compilation_notes=("Native semantic search, distinct from lexical search",),
         )
@@ -143,7 +143,11 @@ class OpenAlexRetrievalProvider(OpenAlexProvider, NativeRequests):
             rank_offset=rank_offset,
             calls=(result,),
             compiled=(compiled,),
-            limitations=(*notes, "Semantic result cap 50; neighborhood is not exhaustive"),
+            limitations=(
+                *notes,
+                "Semantic result cap 50; neighborhood is not exhaustive",
+                "Semantic year filter only; exact cutoff assessed from provisional chronology",
+            ),
         )
 
     async def expand(
