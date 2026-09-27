@@ -116,7 +116,7 @@ class CrossrefProvider(HTTPSearchAdapter):
                     continue
                 for parts in field.parts:
                     try:
-                        if not 1 <= len(parts) <= 3:
+                        if not 1 <= len(parts) <= 3 or not 1 <= parts[0] <= 9999:
                             raise ValueError("invalid date parts")
                         dates.append(
                             date(
@@ -127,7 +127,7 @@ class CrossrefProvider(HTTPSearchAdapter):
                         )
                         if len(parts) < 3:
                             notes.append("Partial publication date; exact chronology unresolved")
-                    except ValueError:
+                    except (ValueError, OverflowError):
                         notes.append("Invalid publication date; chronology unresolved")
             if dates and min(dates) > cutoff:
                 notes.append("Post-cutoff record omitted")

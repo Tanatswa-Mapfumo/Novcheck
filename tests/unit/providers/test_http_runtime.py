@@ -106,3 +106,23 @@ async def test_timeout_parse_and_nonidempotent_failures(kind):
             else:
                 runtime.parse_xml(result, provider="stub", query_id="qry_1")
         assert len(runtime.attempts) == (2 if kind in {"timeout", "transport"} else 1)
+
+
+@pytest.mark.parametrize("value", ["inf", "NaN", "1e999", "-1", "1e100"])
+async def test_malformed_numeric_rate_headers_become_recorded_parse_failures(value):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={}, headers={"X-RateLimit-Limit": value})
+        )
+    ) as client:
+        runtime = HTTPRuntime(client)
+        with pytest.raises(ProviderError) as raised:
+            await runtime.request(
+                provider="openalex",
+                query_id="qry_bad_header",
+                method="GET",
+                endpoint="https://api.openalex.org/works",
+            )
+        assert raised.value.failure.category.value == "PARSE_FAILURE"
+        assert len(runtime.attempts) == 1
+        assert runtime.attempts[0].failure.value == "PARSE_FAILURE"

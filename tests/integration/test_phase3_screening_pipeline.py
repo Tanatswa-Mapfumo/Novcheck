@@ -94,3 +94,24 @@ async def test_unreviewed_or_changed_plan_cannot_execute(tmp_path):
         with pytest.raises(ValueError):
             await executor.execute(plan)
     assert not list(tmp_path.iterdir())
+
+
+async def test_malformed_external_headers_do_not_abort_unrelated_provider_branches():
+    def respond(request):
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(
+                200, json=openalex_response(), headers={"X-RateLimit-Limit": "inf"}
+            )
+        return handler()(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        result = await ScreeningExecutor(registry_for(client), CoveragePolicy.standard()).execute(
+            await prepared()
+        )
+    assert all(f.category.value == "PARSE_FAILURE" for f in result.provider_failures)
+    assert {h.provider_name for h in result.hits} == {"crossref", "github"}
+    assert all(
+        c.state.value == "DEGRADED"
+        for c in result.coverage
+        if c.evidence_family.value == "SCHOLARLY"
+    )

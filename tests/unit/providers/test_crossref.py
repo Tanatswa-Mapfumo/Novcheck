@@ -94,3 +94,17 @@ def test_crossref_rejects_boolean_illusion_and_preserves_neutral_intent():
         )
     assert raised.value.failure.category.value == "CAPABILITY_MISMATCH"
     assert not intent.filters
+
+
+async def test_unrepresentable_date_parts_are_explicit_chronology_limitations():
+    data = response()
+    data["message"]["items"][0]["published"]["date-parts"] = [[10**30]]
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=data))
+    ) as client:
+        provider = CrossrefProvider(HTTPRuntime(client, sleeper=no_sleep))
+        page = await provider.search(query())
+        assert page.results[0].metadata["publication_date"] is None
+        assert "Invalid publication date; chronology unresolved" in provider.limitations(
+            query().query_id
+        )

@@ -1,4 +1,6 @@
 import asyncio
+import math
+import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -62,9 +64,12 @@ def _number(headers: httpx.Headers, *names: str) -> float | None:
         value = headers.get(name)
         if value is not None:
             try:
-                return max(0, float(value.removesuffix("s")))
+                number = float(value.removesuffix("s"))
             except ValueError:
-                continue
+                raise ValueError("Invalid numeric rate metadata") from None
+            if not math.isfinite(number) or not 0 <= number <= sys.maxsize:
+                raise ValueError("Unrepresentable numeric rate metadata")
+            return number
     return None
 
 
@@ -201,7 +206,13 @@ class HTTPRuntime:
                     failure = Failure.TIMEOUT
                 except httpx.RequestError:
                     failure = Failure.TRANSPORT_FAILURE
-                rate = rate_snapshot(response, provider, now) if response else RateLimitSnapshot()
+                try:
+                    rate = (
+                        rate_snapshot(response, provider, now) if response else RateLimitSnapshot()
+                    )
+                except (ValueError, OverflowError):
+                    rate = RateLimitSnapshot()
+                    failure = Failure.PARSE_FAILURE
                 rate = RateLimitSnapshot.model_validate(self.redact(rate.model_dump(mode="json")))
                 interval = min_interval
                 if rate.interval_seconds is not None and rate.limit:
