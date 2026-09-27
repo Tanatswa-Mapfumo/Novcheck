@@ -1,0 +1,47 @@
+phase: 4
+scope: Candidate retrieval, rank fusion, provisional chronology and operational adaptive research only
+requirements:
+  - ids: [FR-RET-001]
+    status: Distinct perspectives, native semantic and graph/entity mechanisms; text paraphrases remain one mechanism
+    modules: [research/retrieval/models.py, research/retrieval/executor.py, providers/openalex_semantic.py, providers/semantic_scholar.py, providers/crossref_pagination.py, providers/github_expansion.py]
+    tests: [tests/unit/research/retrieval, tests/unit/providers/test_openalex_retrieval.py, tests/unit/providers/test_semantic_scholar.py, tests/unit/providers/test_deep_pagination.py]
+  - ids: [FR-RET-002, FR-RET-003]
+    status: Configurable rank-only RRF; conservative candidate identity dedup retains conflicting metadata and all discovery paths, not canonical sources or provenance
+    modules: [research/fusion/rrf.py, research/fusion/clustering.py]
+    tests: [tests/unit/research/fusion, tests/unit/test_phase4_architecture_guards.py]
+  - ids: [FR-ARC-001, FR-ARC-003, INV-01, INV-10]
+    status: Sparse unresolved and externally supplied apparent-novelty hypotheses broaden falsification; discovered seeds create explicit budgeted actions
+    modules: [research/adaptive/controller.py, research/adaptive/escalation.py, research/adaptive/pipeline.py]
+    tests: [tests/unit/research/adaptive/test_controller.py, tests/adversarial/test_phase4_retrieval_attacks.py]
+  - ids: [FR-ARC-002, INV-11]
+    status: Architectural preservation only; no early negative stop from retrieved candidates. Requires later verified direct precedent, explicitly deferred
+    modules: [research/adaptive/pipeline.py]
+    tests: [tests/unit/test_phase4_architecture_guards.py]
+  - ids: [FR-EXP-001, FR-EXP-002, FR-EXP-003]
+    status: Backward/forward, related and explicit entity expansion; separate provisional dates and inclusive cutoff eligibility; post-cutoff context cannot negate historical novelty
+    modules: [research/expansion/citations.py, research/expansion/entities.py, research/expansion/chronology.py]
+    tests: [tests/unit/research/expansion, tests/adversarial/test_phase4_retrieval_attacks.py]
+  - ids: [INV-06, INV-12, INV-13]
+    sections: [19, 22]
+    status: Policy-bound operational convergence, hard wire budgets, explicit material access gaps; no universal absence, novelty score or conclusion from retrieval
+    modules: [runtime/budgets/controller.py, research/adaptive/stopping.py, ports/retrieval_audit.py, providers/http.py]
+    tests: [tests/unit/runtime/budgets, tests/unit/research/adaptive/test_stopping.py, tests/integration/test_phase4_retrieval_pipeline.py]
+  - sections: [21]
+    status: Adjacent-domain retrieval implemented; translated intents may pass through reviewed plans. Automated translation/multilingual provider coverage unavailable and explicit, configurable as material
+    modules: [research/adaptive/escalation.py, research/adaptive/pipeline.py]
+    tests: [tests/adversarial/test_phase4_retrieval_attacks.py, tests/benchmarks/test_known_item_retrieval.py]
+  - sections: [50]
+    status: Six controlled known-item attack classes through real pipeline; Recall@K, reciprocal rank and complete recovery paths; synthetic baseline, no universal threshold
+    modules: [evaluation/known_item.py]
+    tests: [tests/benchmarks/test_known_item_retrieval.py, tests/fixtures/known_items]
+  - sections: [42, 45, 46, 47, 54, 60 Phase 4]
+    status: Versioned artifacts, real Phase 2-4 integration, explicit Phase 5 fixture continuation, network-blocked deterministic tests and opt-in live contracts
+    modules: [application/research_phase4.py, application/vertical_slice.py, research/adaptive/pipeline.py]
+    tests: [tests/integration/test_phase3_slice_with_phase4_research.py, tests/unit/test_phase4_architecture_guards.py, tests/network/test_phase4_live_provider_smoke.py]
+deferred:
+  - Phase 5 canonical source normalization, provenance clustering and evidence lineage graph
+  - Phase 6 passage support verification, evidence equivalence and direct/partial precedent judgment
+  - Phase 7 prosecutor/defender and novelty adjudication; no novelty scores or probabilities
+  - Phase 8 full narrative reporting; accepted nine-question compiler copies frozen fixture findings
+  - Automated multilingual deepening, patent/web/archive/standards/regulatory provider adapters
+  - Live empirical retrieval calibration and model robustness; synthetic benchmark is not live quality

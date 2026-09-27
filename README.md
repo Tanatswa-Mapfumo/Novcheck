@@ -7,6 +7,7 @@ Implementation follows [the Phase 0 plan](docs/superpowers/plans/2026-09-26-phas
 [the Phase 1 plan](docs/superpowers/plans/2026-09-26-phase-1-deterministic-thin-vertical-slice-implementation-plan.md)
 and [the Phase 2 plan](docs/superpowers/plans/2026-09-26-phase-2-intake-sufficiency-robust-mcu-engine-implementation-plan.md),
 followed by [the Phase 3 plan](docs/superpowers/plans/2026-09-27-phase-3-research-planner-provider-infrastructure-implementation-plan.md),
+and [the Phase 4 plan](docs/superpowers/plans/2026-09-27-phase-4-multi-strategy-retrieval-adaptive-research-implementation-plan.md),
 with [AGENTS.md](AGENTS.md).
 
 Phase 0 provides versioned Pydantic contracts, canonical enums and opaque IDs,
@@ -154,10 +155,61 @@ Do not place values in configuration/artifacts or command arguments. See the
 [Phase 3 traceability](docs/traceability/phase-3.yaml) and
 [Phase 3 completion report](docs/phase-3-completion.md).
 
-No Phase 4 fusion, adaptive research, citation/entity expansion or saturation has
-started. No real evidence equivalence, adversarial reasoning, novelty adjudication,
+The retained Phase 3 path has no fusion, adaptive research or saturation.
+No real evidence equivalence, adversarial reasoning, novelty adjudication,
 scores or probabilities are implemented. Production still requires an injected
 abstract LLMProvider; no vendor-specific model integration is supplied.
+
+## Phase 4: Multi-strategy retrieval and adaptive research
+
+Real native retrieval extends the reviewed Phase 3 plan: lexical, relational,
+historical and adjacent-domain perspectives; OpenAlex semantic search and
+directional citations/related works; Semantic Scholar relevance, references,
+citations and author traversal; Crossref cursors; and GitHub repository pages and
+explicit owner/org lineage. Providers remain async, HTTP-injected and SDK-free.
+
+Rank-only RRF has a configurable constant and never reads provider-local scores.
+Conservative candidate dedup preserves every provider/query/strategy/seed path,
+raw metadata and conflicting dates; it is not canonical source normalization
+or independent-evidence provenance. Chronology retains eight distinct date types;
+unknown/partial dates stay unknown. Post-cutoff sources remain context only for
+historical negation. Creation/priority alone do not establish public disclosure.
+
+`run_adaptive_research` consumes an assessment-bound, independently PASS-reviewed
+ResearchPlan, registry, coverage/budget/stopping policies and trace sink. Native
+screening batches start the same budgeted flow. Sparse unresolved branches broaden
+falsification; explicit apparent-novelty hypotheses require stronger research.
+Wire guards count retries and partial expansions after pacing, before requests.
+Coverage records actual depth and distinct SATURATED/BUDGET_STOPPED/ACCESS_BLOCKED
+states. Saturation requires configured real provider/mechanism diversity and all
+convergence gates; zero results, access gaps or budget stops never establish it.
+Operational settings are not novelty or probability thresholds.
+
+```bash
+uv run pytest tests/integration/test_phase3_slice_with_phase4_research.py -v
+uv run pytest tests/adversarial/test_phase4_retrieval_attacks.py -v
+uv run pytest tests/benchmarks/test_known_item_retrieval.py -v
+```
+
+The slice reaches REPORTED/COMPLETED with real Phase 2-4 code and synthetic HTTP
+recordings. Phase 4 batches, fusion, expansions, chronology, branch/stop/coverage
+artifacts and request audits are persisted under phase4/. Source/passages,
+support verification and adjudication remain explicitly Phase 5+ fixture-backed.
+The nine-question report still copies frozen findings without a new novelty decision.
+
+The six-case known-item baseline records Recall@10 and recovery paths through
+lexical, semantic, alternate-corpus, predecessor, adjacent-domain and explicitly
+translated-query paths. It tests architecture under controlled synthetic responses,
+not live search quality or a universal release threshold. Automated translation
+and multilingual coverage remain unavailable and traced. Patent/web/archive and
+other future providers remain unimplemented; applicable families stay blocked.
+
+Default tests remain network-blocked. The opt-in command above also runs bounded
+Phase 4 native smokes; optional SEMANTIC_SCHOLAR_API_KEY is resolved at HTTP time.
+See [Phase 4 completion](docs/phase-4-completion.md),
+[traceability](docs/traceability/phase-4.yaml), [provider matrix](docs/providers/provider-matrix.md)
+and [known-item baseline](tests/fixtures/known_items/baseline.json).
+No Phase 5 source/provenance/evidence engine or later novelty intelligence is implemented.
 
 See [Phase 0 traceability](docs/traceability/phase-0.yaml),
 [Phase 1 traceability](docs/traceability/phase-1.yaml),

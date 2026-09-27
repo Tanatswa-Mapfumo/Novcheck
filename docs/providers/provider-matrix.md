@@ -1,4 +1,29 @@
-# Phase 3 provider matrix
+# Provider matrix
+
+## Current Phase 4 capabilities
+
+| Provider | Implemented Phase 4 paths | Scope and limits |
+| --- | --- | --- |
+| OpenAlex | Text cursors, native search.semantic, backward references, forward cites, related works | Semantic <=2000 chars, <=50 results, no semantic cursor, 1 RPS; graph ID hydration <=100 per request; citation directions retain seeds |
+| Semantic Scholar | Relevance offsets, paper metadata, references, citations, author papers | Optional SEMANTIC_SCHOLAR_API_KEY via x-api-key; conservative 1 RPS; relevance <=1000-result window; provider-local SPECTER features retained, not semantic-query capability or probability |
+| Crossref | Bibliographic cursor continuation | 1 RPS anonymous / 3 RPS polite before response limits; short page ends cursor; preserve all original query params and original date precision; no Boolean/full-text, semantic, or citation traversal |
+| GitHub | Repository pages, numeric repository lookup, owner/user/org public repositories | Search <=1000 window; separate search/core rate snapshots; primary and secondary limits explicit; secondary limits without timing headers wait >=60s; no code/content/history/releases inspection |
+
+All four native adapters expose safe compiled-request/physical-attempt audit and
+per-wire budget hooks. Requests are paced and retries bounded by the existing
+runtime and research budget. Caps, malformed records, unsupported capabilities and
+partial failures remain explicit; no adapter guarantees corpus completeness.
+No other provider is implemented. The accepted Phase 3 snapshot below retains its
+historical limitations; its original one-page screening entry point still works.
+
+Native API details were checked against official provider documentation:
+- [OpenAlex semantic search](https://help.openalex.org/api/semantic-search/)
+- [OpenAlex Works attributes](https://docs.openalex.org/api-entities/works/work-object)
+- [Semantic Scholar Graph API](https://api.semanticscholar.org/api-docs/graph)
+- [Crossref REST API](https://github.com/CrossRef/rest-api-doc)
+- [GitHub repositories](https://docs.github.com/en/rest/repos/repos)
+
+## Accepted Phase 3 snapshot
 
 IMPLEMENTED means an adapter/compiler tested using synthetic recorded responses
 and httpx.MockTransport, not guaranteed live availability or complete corpus coverage.
