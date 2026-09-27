@@ -8,6 +8,7 @@ from novelty_harness.domain.enums import EvidenceFamily
 from novelty_harness.domain.idea import NonBlankText
 from novelty_harness.ports.search import SearchProvider
 from novelty_harness.providers.errors import FailureCategory, provider_error
+from novelty_harness.research.provider_queries import ProviderQueryCompiler
 
 
 class CredentialRef(ContractModel):
@@ -40,6 +41,7 @@ class FallbackEvent(ContractModel):
 class RegisteredProvider:
     provider: SearchProvider
     descriptor: ProviderDescriptor
+    compiler: ProviderQueryCompiler | None = None
 
 
 class ProviderRegistry:
@@ -47,11 +49,17 @@ class ProviderRegistry:
         self._providers: dict[str, RegisteredProvider] = {}
         self._fallbacks: list[FallbackEvent] = []
 
-    def register(self, provider: SearchProvider, descriptor: ProviderDescriptor) -> None:
+    def register(
+        self,
+        provider: SearchProvider,
+        descriptor: ProviderDescriptor,
+        *,
+        compiler: ProviderQueryCompiler | None = None,
+    ) -> None:
         if provider.name != descriptor.name or descriptor.name in self._providers:
             raise ValueError("descriptor must match a unique provider name")
         self._providers[descriptor.name] = RegisteredProvider(
-            provider, descriptor.model_copy(deep=True)
+            provider, descriptor.model_copy(deep=True), compiler
         )
 
     def providers_for(self, family: EvidenceFamily) -> tuple[RegisteredProvider, ...]:

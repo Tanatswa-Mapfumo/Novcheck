@@ -9,6 +9,7 @@ from novelty_harness.ports.models import (
     SearchPage,
     SearchQuery,
 )
+from novelty_harness.ports.search_audit import ScreeningDiagnostics
 from novelty_harness.providers.errors import FailureCategory, provider_error
 from novelty_harness.providers.http import HTTPResult, HTTPRuntime
 from novelty_harness.providers.registry import CredentialRef, ProviderDescriptor
@@ -48,6 +49,7 @@ class HTTPSearchAdapter(ABC):
     def __init__(self, runtime: HTTPRuntime, *, credential: CredentialRef | None = None) -> None:
         self.runtime, self.credential = runtime, credential
         self._limitations: dict[str, tuple[str, ...]] = {}
+        self._diagnostics: dict[str, ScreeningDiagnostics] = {}
 
     async def capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(
@@ -65,6 +67,9 @@ class HTTPSearchAdapter(ABC):
 
     def limitations(self, query_id: str) -> tuple[str, ...]:
         return self._limitations.get(query_id, ())
+
+    def screening_diagnostics(self, query_id: str) -> ScreeningDiagnostics:
+        return self._diagnostics.get(query_id, ScreeningDiagnostics()).model_copy(deep=True)
 
     def headers(self) -> dict[str, str]:
         headers = {"User-Agent": "novcheck/0.1", "Accept": "application/json"}
@@ -117,19 +122,34 @@ class HTTPSearchAdapter(ABC):
                 )
             params[key] = value
         self.apply_cursor(params, cursor)
-        result = await self.runtime.request(
-            provider=self.name,
-            query_id=query.query_id,
-            method=compiled.method,
-            endpoint=compiled.endpoint,
-            params=self.request_params(params),
-            headers=self.headers(),
-            min_interval=self.min_interval(),
-        )
-        data = self.runtime.parse_json(result, provider=self.name, query_id=query.query_id)
-        page, notes = self.parse(data, result, query, cutoff)
-        self._limitations[query.query_id] = (*compiled.compilation_notes, *notes)
-        return page
+        start = len(self.runtime.attempts)
+        notes: tuple[str, ...] = ()
+        try:
+            result = await self.runtime.request(
+                provider=self.name,
+                query_id=query.query_id,
+                method=compiled.method,
+                endpoint=compiled.endpoint,
+                params=self.request_params(params),
+                headers=self.headers(),
+                min_interval=self.min_interval(),
+            )
+            data = self.runtime.parse_json(result, provider=self.name, query_id=query.query_id)
+            page, notes = self.parse(data, result, query, cutoff)
+            return page
+        finally:
+            attempts = tuple(
+                a
+                for a in self.runtime.attempts[start:]
+                if a.provider_name == self.name and a.query_id == query.query_id
+            )
+            self._limitations[query.query_id] = (*compiled.compilation_notes, *notes)
+            self._diagnostics[query.query_id] = ScreeningDiagnostics(
+                attempts=tuple(a.model_dump(mode="json") for a in attempts),
+                had_failed_attempts=any(a.failure is not None for a in attempts),
+                limitations=self._limitations[query.query_id],
+                complete="Incomplete provider result set" not in notes,
+            )
 
     def apply_cursor(self, params: dict[str, str | int | float | bool], cursor: str | None) -> None:
         params["cursor"] = cursor or "*"

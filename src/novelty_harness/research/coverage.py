@@ -63,6 +63,8 @@ class QueryScreeningOutcome(ContractModel):
     success: bool
     inspected_results: int = Field(ge=0)
     had_failed_attempts: bool = False
+    complete: bool = True
+    limitations: tuple[str, ...] = ()
 
 
 class CoverageCell(ContractModel):
@@ -107,6 +109,7 @@ def evaluate_coverage(
         successes = [o for o in completed if o.success]
         success_names = tuple(sorted({o.provider_name for o in successes}))
         notes = list(branch.limitations)
+        notes.extend(n for o in completed for n in o.limitations)
         if branch.applicability == FamilyApplicability.NOT_APPLICABLE:
             state = CoverageState.EXCLUDED_WITH_RATIONALE
             notes.append(branch.exclusion_reason or "Explicit semantic exclusion")
@@ -139,7 +142,9 @@ def evaluate_coverage(
                     )
                 )
             )
-            failed = any(not o.success or o.had_failed_attempts for o in completed)
+            failed = any(
+                not o.success or o.had_failed_attempts or not o.complete for o in completed
+            )
             state = (
                 CoverageState.PROVIDER_FAILURE
                 if completed and not successes
