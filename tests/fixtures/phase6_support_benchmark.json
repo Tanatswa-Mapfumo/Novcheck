@@ -1,0 +1,19 @@
+{
+  "cases": {
+    "support": "SUPPORTED",
+    "contradiction": "CONTRADICTED",
+    "insufficient-evidence": "INSUFFICIENT_CONTEXT",
+    "special-case-only": "INSUFFICIENT_CONTEXT",
+    "negative-qualifier": "CONTRADICTED",
+    "conditional-claim": "INSUFFICIENT_CONTEXT",
+    "context-population-mismatch": "NOT_SUPPORTED",
+    "dispersed-relationship": "NOT_SUPPORTED"
+  },
+  "metrics": {
+    "support_state_accuracy": 1.0,
+    "supported_precision": 1.0,
+    "contradiction_recall": 1.0,
+    "insufficient_context_abstention": 1.0,
+    "passage_rationale_faithfulness": 1.0
+  }
+}
