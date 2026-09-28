@@ -40,3 +40,15 @@ flow coverage depends on the lexicon; unmatched verbs still produce material
 relationship commitments, so the cost is a coarser dimension label, never a
 lost relationship. Combination claims require configuration evidence, which
 makes later anti-stitching enforcement structural rather than heuristic.
+
+## Amendment (F01 remediation)
+
+Structured MCU fields remain preferred, but they are no longer assumed to be
+complete. When a statement's material tokens are not covered by the structured
+commitments, `build_proposition` adds an explicit `statement:material`
+CONSTRAINTS commitment carrying the exact statement. It never fabricates a
+directed relationship. Because that commitment is material like any other, a
+source that supports only the generic mechanism cannot be classified direct
+until the statement condition itself is supported; a source whose passages
+support the full stated configuration can still become direct-eligible. This
+closes GPT-6 Sol High finding F01 (material MCU qualifier loss).

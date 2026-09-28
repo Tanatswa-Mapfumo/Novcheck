@@ -6,6 +6,7 @@ Combination profiles keep member and relationship structure so that a source
 can never be credited with a claimed configuration it does not contain.
 """
 
+import re
 from collections.abc import Sequence
 from typing import Literal, Self
 
@@ -65,6 +66,45 @@ CONTROL_FLOW_VERBS = frozenset(
         "triggers",
     }
 )
+
+
+_STATEMENT_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "their",
+        "then",
+        "this",
+        "to",
+        "with",
+    }
+)
+
+
+def _material_tokens(text: str) -> frozenset[str]:
+    return frozenset(
+        token
+        for token in re.findall(r"[a-z0-9]+", text.casefold())
+        if token not in _STATEMENT_STOPWORDS
+    )
 
 
 class MemberContribution(ContractModel):
@@ -366,6 +406,23 @@ def build_proposition(profile: MCUComparisonProfile) -> EvidenceProposition:
                 text=profile.statement,
             )
         )
+    else:
+        # F01: material statement content that structured fields do not cover
+        # becomes an explicit CONSTRAINTS commitment. No relationship is
+        # fabricated, and an unsupported condition blocks direct precedent
+        # because it is material like any other commitment.
+        statement_tokens = _material_tokens(profile.statement)
+        covered_tokens = frozenset(
+            token for commitment in commitments for token in _material_tokens(commitment.text)
+        )
+        if statement_tokens and not statement_tokens <= covered_tokens:
+            commitments.append(
+                PropositionCommitment(
+                    commitment_id="statement:material",
+                    dimension=ComparisonDimension.CONSTRAINTS,
+                    text=profile.statement,
+                )
+            )
     payload: JsonValue = {
         "mcu_id": str(profile.target_id),
         "statement": profile.statement,

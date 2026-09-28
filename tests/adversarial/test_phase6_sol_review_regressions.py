@@ -520,3 +520,141 @@ def test_f04_selection_helpers_report_bounds() -> None:
     assert len(selection.unassessed_sources) == 3
     slots, excluded = _select_versions(tuple(evidence.versions), evidence.passages, max_versions=2)
     assert len(slots) == 2 and len(excluded) >= 2
+
+
+# --- F01 ---
+
+from novelty_harness.domain.mcu import (  # noqa: E402
+    MCUFeature as _MCUFeature,
+)
+from novelty_harness.domain.mcu import (  # noqa: E402
+    MCURelationship as _MCURelationship,
+)
+from novelty_harness.evidence.mapping.dimensions import (  # noqa: E402
+    build_mcu_comparison_profile as _build_profile,
+)
+from novelty_harness.evidence.mapping.dimensions import (  # noqa: E402
+    build_proposition as _build_prop,
+)
+from novelty_harness.evidence.mapping.models import (  # noqa: E402
+    ComparisonDimension as _Dimension,
+)
+from tests.unit.evidence.precedent.test_classification import (  # noqa: E402
+    facts_for as _facts_for,
+)
+
+
+def _f01_states(proposition, supported_ids: set[str]) -> dict[str, str]:
+    return {
+        item.commitment_id: (
+            "SUPPORTED" if item.commitment_id in supported_ids else "NOT_SUPPORTED"
+        )
+        for item in proposition.commitments
+    }
+
+
+def test_f01_statement_only_condition_is_material_and_blocks_generic_direct() -> None:
+    proposition = _build_prop(
+        _build_profile(
+            _MCU(
+                mcu_id="mcu_1",
+                label="Conditional controller",
+                statement="A relay activates only after two independent sensors agree",
+                mechanism="threshold switches relay",
+                provenance=ORIGIN,
+            )
+        )
+    )
+    identifiers = {item.commitment_id for item in proposition.commitments}
+    assert "statement:material" in identifiers
+    material = next(
+        item for item in proposition.commitments if item.commitment_id == "statement:material"
+    )
+    assert material.dimension == _Dimension.CONSTRAINTS
+    assert material.relationship is None  # no fabricated relationship
+    assert "two independent sensors agree" in material.text
+
+    generic = classify_precedent(
+        _facts_for(
+            proposition,
+            states=_f01_states(proposition, {"mech"}),
+            matching=(_Dimension.MECHANISM,),
+            decisive=False,
+        ),
+        clock=lambda: NOW,
+    )
+    assert generic.relation != PrecedentState.DIRECT_PRECEDENT
+    assert not generic.decisive
+
+    complete = classify_precedent(
+        _facts_for(
+            proposition,
+            states=_f01_states(
+                proposition, {item.commitment_id for item in proposition.commitments}
+            ),
+            matching=(_Dimension.MECHANISM, _Dimension.CONSTRAINTS),
+            decisive=True,
+            chronology="PREDATES_CUTOFF",
+        ),
+        clock=lambda: NOW,
+    )
+    assert complete.relation == PrecedentState.DIRECT_PRECEDENT
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "The system works if the cache is warm",
+        "The relay activates and the lamp lights",
+        "At least three independent sensors must agree",
+        "First arm the sensor, then trigger the relay",
+        "The relay stays off unless two sensors agree",
+        "The relay activates only after two independent sensors agree",
+    ],
+)
+def test_f01_conditional_conjunction_quantified_sequence_and_only_if_conditions(
+    statement: str,
+) -> None:
+    proposition = _build_prop(
+        _build_profile(
+            _MCU(
+                mcu_id="mcu_1",
+                label="Conditional controller",
+                statement=statement,
+                mechanism="threshold switches relay",
+                provenance=ORIGIN,
+            )
+        )
+    )
+    material = [
+        item for item in proposition.commitments if item.commitment_id == "statement:material"
+    ]
+    assert material, statement
+    assert material[0].relationship is None
+    generic = classify_precedent(
+        _facts_for(
+            proposition,
+            states=_f01_states(proposition, {"mech"}),
+            matching=(_Dimension.MECHANISM,),
+            decisive=False,
+        ),
+        clock=lambda: NOW,
+    )
+    assert generic.relation != PrecedentState.DIRECT_PRECEDENT
+
+
+def test_f01_structured_statement_coverage_does_not_add_material_noise() -> None:
+    mcu = _MCU(
+        mcu_id="mcu_1",
+        label="Plain controller",
+        statement="A sensor controls a relay",
+        mechanism="threshold drives a coil",
+        features=(
+            _MCUFeature(feature_id="F1", concept="sensor"),
+            _MCUFeature(feature_id="F2", concept="relay"),
+        ),
+        relationships=(_MCURelationship(subject="sensor", relation="controls", object="relay"),),
+        provenance=ORIGIN,
+    )
+    proposition = _build_prop(_build_profile(mcu))
+    assert all(item.commitment_id != "statement:material" for item in proposition.commitments)
