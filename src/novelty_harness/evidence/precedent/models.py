@@ -83,8 +83,8 @@ class PrecedentClassification(ContractModel):
             if not (self.missing_elements or self.missing_relationships or self.configuration_gap):
                 raise ValueError("Strong partial precedent must identify its material gap")
         elif self.relation == PrecedentState.COMPONENT_PRECEDENT_ONLY:
-            if not (self.configuration_gap or self.missing_relationships):
-                raise ValueError("Component precedent must identify the missing configuration")
+            if not (self.configuration_gap or self.missing_relationships or self.missing_elements):
+                raise ValueError("Component precedent must identify the missing ingredients")
         elif self.relation == PrecedentState.ANALOGOUS_PRECEDENT:
             if not self.functional_similarity:
                 raise ValueError("Analogy must record the functional principle it shares")
