@@ -413,7 +413,7 @@ live verifier entailment or calibration.
 
 Final consolidation worktree verification: `uv sync --dev` passed;
 `uv run python scripts/verify.py` passed Ruff check, Ruff format (288 files),
-Pyright (0 errors/warnings), and **1497 passed, 5 opt-in network tests
+Pyright (0 errors/warnings), and **1498 passed, 5 opt-in network tests
 deselected**; `git diff --check` passed. Fresh exact-commit checkout
 verification is recorded with the implementation handoff.
 

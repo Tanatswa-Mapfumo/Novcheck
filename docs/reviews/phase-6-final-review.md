@@ -507,7 +507,7 @@ semantic acceptance is claimed from the implementation tests.
 
 Consolidation worktree verification: `uv sync --dev` passed;
 `uv run python scripts/verify.py` passed Ruff check, Ruff format (288 files),
-Pyright 0 errors/0 warnings, and **1497 passed, 5 network tests
+Pyright 0 errors/0 warnings, and **1498 passed, 5 network tests
 deselected**. `git diff --check` passed. The exact final commit will receive
 separate fresh-checkout verification in the implementation handoff.
 

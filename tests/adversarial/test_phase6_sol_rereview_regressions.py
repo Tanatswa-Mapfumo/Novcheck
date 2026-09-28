@@ -222,10 +222,11 @@ def test_f07_direct_graph_edge_cannot_use_a_bare_verified_artifact() -> None:
 
 def test_f07_decisive_chain_requires_the_real_cited_passage_node() -> None:
     from tests.adversarial.test_phase6_sol_review_regressions import _valid_chain
-    from tests.unit.evidence.graph.test_phase6_mapping import classification as graph_classification
 
     edge = _edge(relation=PrecedentState.DIRECT_PRECEDENT)
-    classified = graph_classification(edge, PrecedentState.DIRECT_PRECEDENT, decisive=True)
+    chain = _valid_chain(edge)
+    comparison = verified_comparison(chain)
+    classified = classify_verified_comparison(comparison, clock=lambda: NOW)
     nodes, graph_edges = verified_edge_graph_fragment(
         (edge,), (classified,), observed_at=NOW, provenance=phase6_graph_provenance()
     )
@@ -256,7 +257,10 @@ def test_f07_decisive_chain_requires_the_real_cited_passage_node() -> None:
             ),
             edges=graph_edges,
             verified_edges=(edge,),
-            verified_chains=(_valid_chain(edge),),
+            verified_chains=(chain,),
+            classified_comparisons=(
+                ClassifiedComparison(comparison=comparison, classification=classified),
+            ),
         )
     assert all(repository.get_edge(item.edge_id) is None for item in graph_edges)
 

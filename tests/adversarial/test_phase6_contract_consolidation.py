@@ -208,6 +208,14 @@ def test_f07_bare_verified_edge_cannot_be_persisted_as_authoritative() -> None:
     repository.close()
 
 
+def test_f07_classified_edge_requires_classification_identity() -> None:
+    repository, edge, chain, _, _, _ = _direct_graph_case()
+    with pytest.raises(ValueError, match="authoritative classification"):
+        repository.upsert(verified_edges=(edge,), verified_chains=(chain,))
+    assert repository.observations(edge.edge_id) == ()
+    repository.close()
+
+
 def _seed_verification_nodes(repository: SqlAlchemyEvidenceGraphRepository) -> None:
     version = make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1))
     provenance = phase6_graph_provenance()

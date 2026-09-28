@@ -107,6 +107,9 @@ class SqlAlchemyEvidenceGraphRepository:
         with Session(self._engine) as session, session.begin():
             self._verify_edge_endpoints(session, nodes, edges)
             batch_chains = {chain.edge.edge_id: chain for chain in verified_chains}
+            batch_classifications = {
+                item.comparison.chain.edge.edge_id: item for item in classified_comparisons
+            }
             for verified in verified_edges:
                 chain = batch_chains.get(verified.edge_id) or self._resolve_verified_chain(
                     session, verified.edge_id
@@ -114,6 +117,12 @@ class SqlAlchemyEvidenceGraphRepository:
                 if chain is None or _semantic_document(chain.edge) != _semantic_document(verified):
                     raise ValueError("Verified edge has no matching resolved semantic chain")
                 validate_verified_chain(chain)
+                if (
+                    verified.relation is not None
+                    and verified.edge_id not in batch_classifications
+                    and session.get(VerifiedClassificationRow, verified.edge_id) is None
+                ):
+                    raise ValueError("Classified verified edge has no authoritative classification")
                 self._persist_verified_edge(session, verified)
             for chain in verified_chains:
                 self._persist_verified_chain(session, chain, nodes)
