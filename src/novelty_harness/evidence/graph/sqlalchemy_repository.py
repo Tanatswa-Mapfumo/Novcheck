@@ -5,10 +5,13 @@ re-persistence is idempotent; different content under an existing identity is
 rejected because graph history is append-only.
 """
 
+import json
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from pydantic import BaseModel, JsonValue
 from sqlalchemy import Engine, create_engine, event, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -23,20 +26,41 @@ from novelty_harness.evidence.graph.models import (
     GraphNode,
     GraphNodeKind,
 )
+from novelty_harness.evidence.graph.phase6_mapping import verified_edge_graph_fragment
 from novelty_harness.evidence.graph.repository import GraphDirection
 from novelty_harness.evidence.graph.sqlalchemy_models import (
     GraphEdgeRow,
     GraphNodeRow,
     LineageClusterMemberRow,
     LineageClusterRow,
+    VerificationObservationRow,
     VerifiedChainRow,
+    VerifiedClassificationRow,
     VerifiedEdgeRow,
 )
+from novelty_harness.evidence.precedent.gates import ClassifiedComparison
 from novelty_harness.evidence.provenance.models import EvidenceLineageCluster
 from novelty_harness.evidence.verification.gates import validate_verified_chain
 from novelty_harness.evidence.verification.integrity import VerifiedEvidenceChain
 from novelty_harness.evidence.verification.models import VerifiedEvidenceEdge
-from novelty_harness.runtime.tracing.hashing import canonical_json
+from novelty_harness.runtime.tracing.hashing import canonical_hash, canonical_json
+
+
+def _semantic_document(value: JsonValue | BaseModel) -> str:
+    """Compare immutable meaning while observation times live in separate events."""
+
+    def without_clock(item: JsonValue) -> JsonValue:
+        if isinstance(item, dict):
+            return {key: without_clock(part) for key, part in item.items() if key != "observed_at"}
+        if isinstance(item, list):
+            return [without_clock(part) for part in item]
+        return item
+
+    document = cast(
+        JsonValue,
+        json.loads(value) if isinstance(value, str) else json.loads(canonical_json(value)),
+    )
+    return canonical_json(without_clock(document))
 
 
 def _sqlite_engine(database: Path | None) -> Engine:
@@ -78,18 +102,30 @@ class SqlAlchemyEvidenceGraphRepository:
         clusters: Sequence[EvidenceLineageCluster] = (),
         verified_edges: Sequence[VerifiedEvidenceEdge] = (),
         verified_chains: Sequence[VerifiedEvidenceChain] = (),
+        classified_comparisons: Sequence[ClassifiedComparison] = (),
     ) -> None:
         with Session(self._engine) as session, session.begin():
             self._verify_edge_endpoints(session, nodes, edges)
+            batch_chains = {chain.edge.edge_id: chain for chain in verified_chains}
             for verified in verified_edges:
+                chain = batch_chains.get(verified.edge_id) or self._resolve_verified_chain(
+                    session, verified.edge_id
+                )
+                if chain is None or _semantic_document(chain.edge) != _semantic_document(verified):
+                    raise ValueError("Verified edge has no matching resolved semantic chain")
+                validate_verified_chain(chain)
                 self._persist_verified_edge(session, verified)
             for chain in verified_chains:
                 self._persist_verified_chain(session, chain, nodes)
-            self._verify_phase6_edges(session, edges, verified_edges, verified_chains)
+            for classified in classified_comparisons:
+                self._persist_classification(session, classified)
+            derived_nodes, derived_edges = self._verify_phase6_edges(
+                session, nodes, edges, verified_edges, verified_chains, classified_comparisons
+            )
             for node in nodes:
-                self._persist_node(session, node)
+                self._persist_node(session, derived_nodes.get(node.node_id, node))
             for edge in edges:
-                self._persist_edge(session, edge)
+                self._persist_edge(session, derived_edges.get(edge.edge_id, edge))
             for cluster in clusters:
                 self._persist_cluster(session, cluster)
 
@@ -122,7 +158,7 @@ class SqlAlchemyEvidenceGraphRepository:
                 )
             )
             return
-        if row.document_json != document:
+        if _semantic_document(row.document_json) != _semantic_document(document):
             raise ValueError(
                 f"Graph node {node.node_id} already exists with different content; "
                 "history is append-only"
@@ -140,11 +176,24 @@ class SqlAlchemyEvidenceGraphRepository:
                     document_json=document,
                 )
             )
-            return
-        if row.document_json != document:
+        elif _semantic_document(row.document_json) != _semantic_document(document):
             raise ValueError(
                 f"Verified edge {verified.edge_id} already exists with different content; "
                 "history is append-only"
+            )
+        observation_id = "obs_" + canonical_hash(
+            {
+                "edge_id": verified.edge_id,
+                "observed_at": verified.observed_at.isoformat(),
+            }
+        )
+        if session.get(VerificationObservationRow, observation_id) is None:
+            session.add(
+                VerificationObservationRow(
+                    observation_id=observation_id,
+                    edge_id=verified.edge_id,
+                    observed_at=verified.observed_at.isoformat(),
+                )
             )
 
     def _resolve_verified_edge(
@@ -204,7 +253,7 @@ class SqlAlchemyEvidenceGraphRepository:
         row = session.get(VerifiedChainRow, chain.edge.edge_id)
         if row is None:
             session.add(VerifiedChainRow(edge_id=chain.edge.edge_id, document_json=document))
-        elif row.document_json != document:
+        elif _semantic_document(row.document_json) != _semantic_document(document):
             raise ValueError(
                 f"Verified semantic chain {chain.edge.edge_id} already exists "
                 "with different content"
@@ -213,14 +262,23 @@ class SqlAlchemyEvidenceGraphRepository:
     def _verify_phase6_edges(
         self,
         session: Session,
+        nodes: Sequence[GraphNode],
         edges: Sequence[GraphEdge],
         batch: Sequence[VerifiedEvidenceEdge],
         chains: Sequence[VerifiedEvidenceChain],
-    ) -> None:
+        classified_comparisons: Sequence[ClassifiedComparison],
+    ) -> tuple[dict[str, GraphNode], dict[str, GraphEdge]]:
         """Resolve every Phase 6 verification reference against a real artifact."""
 
+        derived_nodes: dict[str, GraphNode] = {}
+        derived_edges: dict[str, GraphEdge] = {}
         batch_by_id = {verified.edge_id: verified for verified in batch}
         chain_by_id = {chain.edge.edge_id: chain for chain in chains}
+        classification_by_id = {
+            item.comparison.chain.edge.edge_id: item for item in classified_comparisons
+        }
+        for item in classified_comparisons:
+            ClassifiedComparison.model_validate(item.model_dump(mode="json"))
         expected_relation = {
             GraphEdgeKind.DIRECT_PRECEDENT: PrecedentState.DIRECT_PRECEDENT,
             GraphEdgeKind.STRONG_PARTIAL_PRECEDENT: PrecedentState.STRONG_PARTIAL_PRECEDENT,
@@ -251,7 +309,35 @@ class SqlAlchemyEvidenceGraphRepository:
                 raise ValueError(f"Graph edge {edge.edge_id} has no resolved semantic chain")
             validate_verified_chain(chain)
             if chain.edge != verified:
-                raise ValueError("Graph edge semantic chain differs from verified artifact")
+                if _semantic_document(chain.edge) != _semantic_document(verified):
+                    raise ValueError("Graph edge semantic chain differs from verified artifact")
+            classified = classification_by_id.get(reference.verified_edge_id)
+            if classified is None:
+                row = session.get(VerifiedClassificationRow, reference.verified_edge_id)
+                if row is not None:
+                    classified = ClassifiedComparison.model_validate_json(row.document_json)
+            if classified is None:
+                raise ValueError("Phase 6 graph edge has no authoritative classification")
+            if _semantic_document(classified.comparison.chain) != _semantic_document(chain):
+                raise ValueError("Graph classification belongs to another semantic chain")
+            _, expected_edges = verified_edge_graph_fragment(
+                (chain.edge,),
+                (classified.classification,),
+                observed_at=edge.observed_at,
+                provenance=edge.provenance,
+            )
+            expected = next((item for item in expected_edges if item.edge_id == edge.edge_id), None)
+            if expected is None or (
+                expected.kind != edge.kind
+                or expected.source_node_id != edge.source_node_id
+                or expected.target_node_id != edge.target_node_id
+                or expected.attributes != edge.attributes
+                or expected.verification != edge.verification
+            ):
+                raise ValueError(
+                    "Phase 6 graph attributes differ from repository-derived projection"
+                )
+            derived_edges[edge.edge_id] = expected
             if verified.source_id != edge.source_node_id or verified.mcu_id != edge.target_node_id:
                 raise ValueError(
                     f"Graph edge {edge.edge_id} endpoints do not match the verified artifact"
@@ -276,6 +362,48 @@ class SqlAlchemyEvidenceGraphRepository:
                 raise ValueError(
                     f"Graph edge {edge.edge_id} claims decisiveness without eligible chronology"
                 )
+        for node in nodes:
+            if node.kind != GraphNodeKind.EVIDENCE_PROPOSITION:
+                continue
+            edge_id = node.attributes.get("verified_edge_id")
+            if not isinstance(edge_id, str):
+                raise ValueError("Proposition node lacks a verified edge identity")
+            classified = classification_by_id.get(edge_id)
+            if classified is None:
+                row = session.get(VerifiedClassificationRow, edge_id)
+                if row is not None:
+                    classified = ClassifiedComparison.model_validate_json(row.document_json)
+            if classified is None:
+                raise ValueError("Proposition node lacks authoritative classification")
+            expected_nodes, _ = verified_edge_graph_fragment(
+                (classified.comparison.chain.edge,),
+                (classified.classification,),
+                observed_at=node.observed_at,
+                provenance=node.provenance,
+            )
+            expected = next((item for item in expected_nodes if item.node_id == node.node_id), None)
+            if expected is None or expected.attributes != node.attributes:
+                raise ValueError("Proposition node attributes differ from authoritative comparison")
+            derived_nodes[node.node_id] = expected
+        return derived_nodes, derived_edges
+
+    def _persist_classification(self, session: Session, classified: ClassifiedComparison) -> None:
+        ClassifiedComparison.model_validate(classified.model_dump(mode="json"))
+        edge_id = classified.comparison.chain.edge.edge_id
+        if session.get(VerifiedChainRow, edge_id) is None:
+            raise ValueError("Classification has no persisted verified chain")
+        document = canonical_json(classified)
+        row = session.get(VerifiedClassificationRow, edge_id)
+        if row is None:
+            session.add(
+                VerifiedClassificationRow(
+                    edge_id=edge_id,
+                    classification_id=classified.classification.classification_id,
+                    document_json=document,
+                )
+            )
+        elif _semantic_document(row.document_json) != _semantic_document(document):
+            raise ValueError("Verified classification identity or basis changed")
 
     def _persist_edge(self, session: Session, edge: GraphEdge) -> None:
         if edge.kind in PHASE6_EDGE_KINDS:
@@ -296,7 +424,7 @@ class SqlAlchemyEvidenceGraphRepository:
                 )
             )
             return
-        if row.document_json != document:
+        if _semantic_document(row.document_json) != _semantic_document(document):
             raise ValueError(
                 f"Graph edge {edge.edge_id} already exists with different content; "
                 "history is append-only"
@@ -328,6 +456,17 @@ class SqlAlchemyEvidenceGraphRepository:
         with Session(self._engine) as session:
             row = session.get(GraphNodeRow, node_id)
             return GraphNode.model_validate_json(row.document_json) if row else None
+
+    def observations(self, edge_id: str) -> tuple[datetime, ...]:
+        """Return append-only observation times for one semantic edge."""
+
+        with Session(self._engine) as session:
+            rows = session.scalars(
+                select(VerificationObservationRow.observed_at)
+                .where(VerificationObservationRow.edge_id == edge_id)
+                .order_by(VerificationObservationRow.observed_at)
+            ).all()
+        return tuple(datetime.fromisoformat(value) for value in rows)
 
     def get_edge(self, edge_id: str) -> GraphEdge | None:
         with Session(self._engine) as session:

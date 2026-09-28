@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from typing import Literal
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, model_validator
 
 from novelty_harness.domain.base import ContractModel
 from novelty_harness.domain.ids import AssessmentId
@@ -12,7 +12,13 @@ from novelty_harness.evidence.mapping.models import EvidenceProposition, SourceM
 from novelty_harness.evidence.normalization.models import SourceRecord, SourceVersionRecord
 from novelty_harness.evidence.passages.hashing import text_hash
 from novelty_harness.evidence.passages.models import PassageRecord
-from novelty_harness.evidence.verification.models import SupportVerification, VerifiedEvidenceEdge
+from novelty_harness.evidence.verification.models import (
+    ChronologyAssessment,
+    CommitmentStateRecord,
+    ContextCompletenessState,
+    SupportVerification,
+    VerifiedEvidenceEdge,
+)
 
 
 class SemanticIntegrityError(ValueError):
@@ -34,6 +40,84 @@ class VerifiedEvidenceChain(ContractModel):
     verification: SupportVerification
     context_passages: tuple[PassageRecord, ...] = ()
     edge: VerifiedEvidenceEdge
+
+
+class VerifiedComparison(ContractModel):
+    """Validated, immutable comparison that owns all classification inputs."""
+
+    model_config = ConfigDict(frozen=True)
+    contract_kind: Literal["verified-comparison-v1"] = "verified-comparison-v1"
+    chain: VerifiedEvidenceChain
+    assessment_id: AssessmentId
+    source_id: str
+    source_version_id: str | None
+    mcu_id: str
+    proposition_id: str
+    mapping_id: str
+    claim_id: str
+    verification_id: str
+    passage_ids: tuple[str, ...]
+    chronology: ChronologyAssessment
+    context_completeness: ContextCompletenessState
+    verified_semantic_facts: tuple[CommitmentStateRecord, ...]
+
+    @model_validator(mode="after")
+    def authoritative_chain(self) -> "VerifiedComparison":
+        from novelty_harness.evidence.verification.gates import validate_verified_chain
+
+        cited = validate_verified_chain(self.chain)
+        chain = self.chain
+        expected = (
+            chain.assessment_id,
+            chain.source.source_id,
+            chain.version.version_id if chain.version else None,
+            chain.proposition.mcu_id,
+            chain.proposition.proposition_id,
+            chain.mapping.mapping_id,
+            chain.bundle.claim.claim_id,
+            chain.verification.verification_id,
+            tuple(passage.passage_id for passage in cited),
+            chain.edge.chronology,
+            chain.verification.context_completeness,
+            chain.verification.commitment_states,
+        )
+        actual = (
+            self.assessment_id,
+            self.source_id,
+            self.source_version_id,
+            self.mcu_id,
+            self.proposition_id,
+            self.mapping_id,
+            self.claim_id,
+            self.verification_id,
+            self.passage_ids,
+            self.chronology,
+            self.context_completeness,
+            self.verified_semantic_facts,
+        )
+        if actual != expected:
+            raise SemanticIntegrityError("Verified comparison identities differ from its chain")
+        return self
+
+
+def verified_comparison(chain: VerifiedEvidenceChain) -> VerifiedComparison:
+    """Produce the only classification-ready artifact from a resolved chain."""
+
+    return VerifiedComparison(
+        chain=chain,
+        assessment_id=chain.assessment_id,
+        source_id=chain.source.source_id,
+        source_version_id=chain.version.version_id if chain.version else None,
+        mcu_id=chain.proposition.mcu_id,
+        proposition_id=chain.proposition.proposition_id,
+        mapping_id=chain.mapping.mapping_id,
+        claim_id=chain.bundle.claim.claim_id,
+        verification_id=chain.verification.verification_id,
+        passage_ids=chain.edge.passage_ids,
+        chronology=chain.edge.chronology,
+        context_completeness=chain.verification.context_completeness,
+        verified_semantic_facts=chain.verification.commitment_states,
+    )
 
 
 def canonical_verifier_citations(verification: SupportVerification) -> tuple[str, ...]:

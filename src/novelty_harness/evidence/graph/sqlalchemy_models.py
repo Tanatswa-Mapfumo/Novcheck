@@ -56,6 +56,26 @@ class VerifiedChainRow(Base):
     document_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class VerificationObservationRow(Base):
+    __tablename__ = "verification_observations"
+
+    observation_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    edge_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("verified_edges.edge_id"), nullable=False, index=True
+    )
+    observed_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class VerifiedClassificationRow(Base):
+    __tablename__ = "verified_classifications"
+
+    edge_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("verified_edges.edge_id"), primary_key=True
+    )
+    classification_id: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    document_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class LineageClusterRow(Base):
     __tablename__ = "lineage_clusters"
 

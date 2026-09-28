@@ -5,9 +5,14 @@ from datetime import UTC, datetime
 from sqlalchemy import Engine, insert, inspect, select, update
 
 from novelty_harness.evidence.graph.models import PHASE6_EDGE_KINDS
-from novelty_harness.evidence.graph.sqlalchemy_models import Base, GraphEdgeRow, SchemaVersionRow
+from novelty_harness.evidence.graph.sqlalchemy_models import (
+    Base,
+    GraphEdgeRow,
+    SchemaVersionRow,
+    VerifiedEdgeRow,
+)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def schema_version(engine: Engine) -> int | None:
@@ -29,7 +34,7 @@ def ensure_schema(engine: Engine) -> int:
 
     existing_tables = set(inspect(engine).get_table_names())
     current = schema_version(engine) if "schema_version" in existing_tables else None
-    if current in {1, 2} and "graph_edges" in existing_tables:
+    if current in {1, 2, 3} and "graph_edges" in existing_tables:
         with engine.connect() as connection:
             unsafe = connection.execute(
                 select(GraphEdgeRow.edge_id).where(
@@ -38,9 +43,13 @@ def ensure_schema(engine: Engine) -> int:
             ).first()
         if unsafe is not None:
             raise ValueError(
-                "Legacy Phase 6 graph edges lack a resolved semantic chain; "
+                "Legacy Phase 6 graph edges lack the authoritative v4 contract; "
                 "migration is blocked until those edges are reprocessed"
             )
+    if current == 3 and "verified_edges" in existing_tables:
+        with engine.connect() as connection:
+            if connection.execute(select(VerifiedEdgeRow.edge_id)).first() is not None:
+                raise ValueError("Legacy verified edges require reprocessing before v4 migration")
     Base.metadata.create_all(engine)
     if current is None:
         with engine.begin() as connection:
@@ -56,8 +65,8 @@ def ensure_schema(engine: Engine) -> int:
             f"{SCHEMA_VERSION}; refusing to reinterpret"
         )
     if current < SCHEMA_VERSION:
-        if current in {1, 2}:
-            # v3 adds immutable semantic chains; legacy Phase 6 edges were blocked above.
+        if current in {1, 2, 3}:
+            # Legacy Phase 6 edges were blocked above. Metadata-only graphs migrate safely.
             with engine.begin() as connection:
                 connection.execute(
                     update(SchemaVersionRow)

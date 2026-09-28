@@ -27,6 +27,8 @@ from novelty_harness.evidence.mapping.models import (
     PropositionCommitment,
 )
 from novelty_harness.evidence.passages.models import (
+    EvidenceUnitBoundary,
+    EvidenceUnitScope,
     PassageLocator,
     PassageLocatorKind,
     PassageRecord,
@@ -305,6 +307,17 @@ async def run_case(case: SupportCase) -> dict[str, object]:
             if not case.expanded_passages
             else PassageLocator(kind=PassageLocatorKind.BLOCK)
         ),
+    ).model_copy(
+        update={
+            "unit_boundary": None
+            if case.expanded_passages
+            else EvidenceUnitBoundary(
+                unit_id="unit_benchmark",
+                scope=EvidenceUnitScope.DOCUMENT,
+                starts_unit=True,
+                ends_unit=True,
+            )
+        }
     )
     available: list[PassageRecord] = [passage]
     if case.expanded_passages:
@@ -314,6 +327,15 @@ async def run_case(case: SupportCase) -> dict[str, object]:
                 text=" ".join(case.passages + case.expanded_passages),
                 passage_id="pass_document",
                 source_version_id=VERSION,
+            ).model_copy(
+                update={
+                    "unit_boundary": EvidenceUnitBoundary(
+                        unit_id="unit_benchmark",
+                        scope=EvidenceUnitScope.DOCUMENT,
+                        starts_unit=True,
+                        ends_unit=True,
+                    )
+                }
             )
         )
     commitment = PropositionCommitment(

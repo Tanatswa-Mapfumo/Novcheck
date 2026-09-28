@@ -93,11 +93,21 @@ def verified_edge_graph_fragment(
 ) -> tuple[tuple[GraphNode, ...], tuple[GraphEdge, ...]]:
     """Build proposition nodes and verified/precedent graph edges."""
 
-    by_verification: dict[str, PrecedentClassification] = {
-        classification.verification_id: classification
-        for classification in classifications
-        if classification.verification_id is not None
-    }
+    by_identity: dict[tuple[str, str, str | None, str, str, str], PrecedentClassification] = {}
+    for classification in classifications:
+        if classification.verification_id is None:
+            continue
+        key = (
+            classification.verification_id,
+            classification.source_id,
+            classification.source_version_id,
+            classification.mcu_id,
+            classification.mapping_id,
+            classification.relation.value,
+        )
+        if key in by_identity:
+            raise ValueError("Duplicate classification for one verified comparison")
+        by_identity[key] = classification
     nodes: dict[str, GraphNode] = {}
     graph_edges: dict[str, GraphEdge] = {}
 
@@ -119,7 +129,24 @@ def verified_edge_graph_fragment(
         nodes.setdefault(node.node_id, node)
 
     for edge in edges:
-        classification = by_verification.get(edge.verification_id)
+        candidates = [
+            classification
+            for key, classification in by_identity.items()
+            if key[0] == edge.verification_id
+        ]
+        if len(candidates) > 1:
+            raise ValueError("Ambiguous classification for verified edge")
+        classification = candidates[0] if candidates else None
+        if classification is not None and (
+            classification.source_id != edge.source_id
+            or classification.source_version_id != edge.source_version_id
+            or classification.mcu_id != edge.mcu_id
+            or classification.mapping_id != edge.mapping_id
+            or (edge.relation is not None and classification.relation != edge.relation)
+            or classification.decisive
+            != (edge.decisive and classification.relation == PrecedentState.DIRECT_PRECEDENT)
+        ):
+            raise ValueError("Classification identity differs from verified edge")
         attributes: dict[str, JsonValue] = {
             "verified_edge_id": edge.edge_id,
             "proposition_node_id": proposition_node_id(edge),

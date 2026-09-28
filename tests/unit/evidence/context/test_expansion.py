@@ -10,7 +10,12 @@ from novelty_harness.evidence.context.selection import (
     PassageSelectionError,
     SupportEvidenceBundle,
 )
-from novelty_harness.evidence.passages.models import PassageLocator, PassageLocatorKind
+from novelty_harness.evidence.passages.models import (
+    EvidenceUnitBoundary,
+    EvidenceUnitScope,
+    PassageLocator,
+    PassageLocatorKind,
+)
 from tests.fixtures.phase5 import make_passage, phase5_provenance
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
@@ -35,6 +40,15 @@ def document(text: str, *, source_id: str = "src_1", version: str | None = VERSI
         passage_id="pass_document",
         source_version_id=version,
         provenance=ORIGIN,
+    ).model_copy(
+        update={
+            "unit_boundary": EvidenceUnitBoundary(
+                unit_id="unit_test_document",
+                scope=EvidenceUnitScope.DOCUMENT,
+                starts_unit=True,
+                ends_unit=True,
+            )
+        }
     )
 
 
@@ -267,7 +281,7 @@ def test_located_same_version_neighbor_is_supplied_as_exact_passage() -> None:
         attempt=1,
         clock=lambda: NOW,
     )
-    assert inspection.completeness == "COMPLETE"
+    assert inspection.completeness == "UNKNOWN"
     assert tuple(item.window_passage for item in inspection.expansions) == (neighbor,)
 
 

@@ -158,17 +158,12 @@ def inspect_passage_context(
         and candidate.source_version_id == passage.source_version_id
         and candidate.locator.label != "context-window"
     )
-    if (
-        not peers
-        and passage.locator.kind == PassageLocatorKind.RESOLVED_CONTENT
-        and passage.locator.char_start == 0
-        and passage.locator.char_end == len(passage.text)
-        and passage.access_state.value == "FULL_TEXT"
-    ):
+    boundary = passage.unit_boundary
+    if boundary is not None and boundary.starts_unit and boundary.ends_unit:
         return ContextInspection(
             ContextCompleteness.COMPLETE,
             (),
-            "Exact passage spans the complete resolved source content",
+            f"Extractor attests complete {boundary.scope.value} unit",
         )
     containing, reason = _containing_candidate(passage, peers)
     if containing is not None:
@@ -190,16 +185,28 @@ def inspect_passage_context(
             candidate.passage_id != outer.passage_id and candidate.text not in outer.text
             for candidate in peers
         )
-        if span.char_start == 0 and span.char_end == len(outer.text) and not omitted:
+        outer_boundary = outer.unit_boundary
+        if (
+            span.char_start == 0
+            and span.char_end == len(outer.text)
+            and not omitted
+            and outer_boundary is not None
+            and outer_boundary.starts_unit
+            and outer_boundary.ends_unit
+        ):
             return ContextInspection(
                 ContextCompleteness.COMPLETE,
                 (expansion,),
                 "Stored same-version context is contained in the supplied window",
             )
         return ContextInspection(
-            ContextCompleteness.TRUNCATED,
+            ContextCompleteness.TRUNCATED
+            if span.char_start != 0 or span.char_end != len(outer.text)
+            else ContextCompleteness.UNKNOWN,
             (expansion,),
-            "Truncated: known same-version context lies outside the bounded window",
+            "Truncated: bounded window does not prove both evidence-unit boundaries"
+            if span.char_start != 0 or span.char_end != len(outer.text)
+            else "Stored content does not prove both evidence-unit boundaries",
         )
     if "ambiguous" in reason:
         return ContextInspection(
@@ -259,10 +266,29 @@ def inspect_passage_context(
             or (_blocked(passage, attempt, "Neighbor exceeds bounded context window", clock),),
             "Truncated: known same-version context lies outside the neighboring window",
         )
+    boundaries = (boundary, *(neighbor.unit_boundary for neighbor in neighbors))
+    same_unit = (
+        all(item is not None for item in boundaries)
+        and len({item.unit_id for item in boundaries if item is not None}) == 1
+    )
+    starts = (
+        bool(before[0].unit_boundary.starts_unit)
+        if before and before[0].unit_boundary
+        else bool(boundary and boundary.starts_unit)
+    )
+    ends = (
+        bool(after[0].unit_boundary.ends_unit)
+        if after and after[0].unit_boundary
+        else bool(boundary and boundary.ends_unit)
+    )
     return ContextInspection(
-        ContextCompleteness.COMPLETE,
+        ContextCompleteness.COMPLETE
+        if same_unit and starts and ends
+        else ContextCompleteness.UNKNOWN,
         expansions,
-        "Adjacent same-version passages are supplied without an omitted gap",
+        "Both evidence-unit boundaries are attested"
+        if same_unit and starts and ends
+        else "Neighbor presence does not establish both evidence-unit boundaries",
     )
 
 

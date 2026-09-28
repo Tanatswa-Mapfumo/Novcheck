@@ -130,6 +130,23 @@ class CommitmentStateRecord(ContractModel):
         return self
 
 
+def derive_support_state(
+    commitment_states: tuple[CommitmentStateRecord, ...],
+) -> SupportVerificationState:
+    """Derive the only valid aggregate state from commitment judgments."""
+
+    states = {record.state for record in commitment_states}
+    if "CONTRADICTED" in states:
+        return SupportVerificationState.CONTRADICTED
+    if "INSUFFICIENT" in states:
+        return SupportVerificationState.INSUFFICIENT_CONTEXT
+    if states == {"SUPPORTED"}:
+        return SupportVerificationState.SUPPORTED
+    if states & {"SUPPORTED", "PARTIALLY_SUPPORTED"}:
+        return SupportVerificationState.PARTIALLY_SUPPORTED
+    return SupportVerificationState.NOT_SUPPORTED
+
+
 class SupportVerification(ContractModel):
     """Verified support state for one claim, with its unsupported remainder."""
 
@@ -158,6 +175,8 @@ class SupportVerification(ContractModel):
 
     @model_validator(mode="after")
     def state_matches_payload(self) -> Self:
+        if self.state != derive_support_state(self.commitment_states):
+            raise ValueError("Aggregate support state disagrees with commitment records")
         canonical_reliance = tuple(
             dict.fromkeys(
                 passage_id for record in self.commitment_states for passage_id in record.passage_ids
@@ -243,6 +262,41 @@ class ChronologyAssessment(ContractModel):
         return self
 
 
+class CitedDisclosure(ContractModel):
+    """Public chronology tied to the actual cited source/version."""
+
+    model_config = ConfigDict(frozen=True)
+    contract_kind: Literal["cited-disclosure-v1"] = "cited-disclosure-v1"
+
+    source_id: SourceId
+    source_version_id: SourceVersionId | None
+    as_of: date
+    cited_public_date: date | None
+    source_first_public_version: date | None
+    chronology: ChronologyAssessment
+
+    @model_validator(mode="after")
+    def chronology_follows_cited_disclosure(self) -> Self:
+        if self.chronology.as_of != self.as_of:
+            raise ValueError("Cited disclosure cutoff differs from chronology")
+        conflict = (
+            self.source_first_public_version is not None
+            and self.cited_public_date is not None
+            and self.cited_public_date < self.source_first_public_version
+        )
+        if self.cited_public_date is None or conflict:
+            expected: ChronologyState = "UNCERTAIN"
+        elif self.cited_public_date <= self.as_of:
+            expected = "PREDATES_CUTOFF"
+        else:
+            expected = "POST_CUTOFF"
+        if self.chronology.state != expected:
+            raise ValueError("Chronology contradicts the cited public disclosure")
+        if expected != "UNCERTAIN" and self.chronology.decisive_date != self.cited_public_date:
+            raise ValueError("Chronology date differs from the cited disclosure")
+        return self
+
+
 class EdgeEligibility(ContractModel):
     """Decisiveness gate for one verified evidence edge."""
 
@@ -268,7 +322,7 @@ class VerifiedEvidenceEdge(ContractModel):
     """
 
     model_config = ConfigDict(frozen=True)
-    contract_kind: Literal["verified-evidence-edge-v2"] = "verified-evidence-edge-v2"
+    contract_kind: Literal["verified-evidence-edge-v3"] = "verified-evidence-edge-v3"
 
     edge_id: NonBlankText
     source_id: SourceId
@@ -285,6 +339,7 @@ class VerifiedEvidenceEdge(ContractModel):
     comparison: MappingComparison
     support_state: SupportVerificationState
     decisive: bool
+    disclosure: CitedDisclosure
     chronology: ChronologyAssessment
     eligibility: EdgeEligibility
     relation: PrecedentState | None = None
@@ -304,6 +359,12 @@ class VerifiedEvidenceEdge(ContractModel):
             raise ValueError("Edge eligibility must match the decisive flag")
         if self.eligibility.chronology != self.chronology:
             raise ValueError("Edge eligibility must carry the same chronology")
+        if (
+            self.disclosure.source_id != self.source_id
+            or self.disclosure.source_version_id != self.source_version_id
+            or self.disclosure.chronology != self.chronology
+        ):
+            raise ValueError("Edge disclosure must match its source, version and chronology")
         if self.decisive and self.chronology.state != "PREDATES_CUTOFF":
             raise ValueError("Post-cutoff or uncertain evidence cannot be decisive")
         return self

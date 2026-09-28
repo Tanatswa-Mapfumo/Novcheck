@@ -143,11 +143,19 @@ def verify_expanded_response(context):
         "judgments": [
             {
                 "commitment_id": item["commitment_id"],
-                "state": "SUPPORTED",
+                "state": "PARTIALLY_SUPPORTED" if index == 0 else "SUPPORTED",
                 "rationale": "scripted fixture support over expanded context",
                 "passage_ids": [cited],
+                **(
+                    {
+                        "supported_subset": "read-only operations",
+                        "unsupported_remainder": "all operations",
+                    }
+                    if index == 0
+                    else {}
+                ),
             }
-            for item in payload["commitments"]
+            for index, item in enumerate(payload["commitments"])
         ],
         "context_needed": [],
     }
@@ -243,6 +251,15 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
         if line.strip()
     ]
     assert persisted_edges
+    verified_edges = [
+        json.loads(line)
+        for line in (phase6 / "verified_edges.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert all(
+        edge["disclosure"]["source_version_id"] == edge["source_version_id"]
+        for edge in verified_edges
+    )
     # F11: a real Phase 6 combination target must pass the bridge.
     assert any(edge["mcu_id"].startswith("mcu_comb_") for edge in persisted_edges)
     expansions = [
@@ -260,11 +277,23 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
         edge["mcu_id"].startswith("mcu_comb_") and expanded_ids.intersection(edge["passage_ids"])
         for edge in persisted_edges
     )
+    classifications = [
+        json.loads(line)
+        for line in (phase6 / "precedent_classifications.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert any(item["scoped_coverage"] for item in classifications)
+    assert all(not item["decisive"] for item in classifications if item["scoped_coverage"])
 
     repository = SqlAlchemyEvidenceGraphRepository(run_dir / "phase5" / "evidence_graph.sqlite3")
     kinds = {node.kind.value for node in repository.nodes()}
     assert {"SOURCE", "MCU", "EVIDENCE_PROPOSITION"} <= kinds
     assert any(edge.verification is not None for edge in repository.edges())
+    assert all(
+        "classification_id" in edge.attributes
+        for edge in repository.edges()
+        if edge.kind.value in {"DIRECT_PRECEDENT", "STRONG_PARTIAL_PRECEDENT"}
+    )
     repository.close()
 
     assert {f"q{i}" for i in range(1, 10)} <= json.loads((run_dir / "report.json").read_text())[

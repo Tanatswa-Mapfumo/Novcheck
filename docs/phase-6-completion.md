@@ -368,3 +368,53 @@ local checkout with the same 1471/5 result and clean Ruff/format/Pyright and
 
 **Gate 30 remains OPEN pending a fresh independent GPT-6 Sol High semantic
 re-review. Phase 7 has not started.**
+
+## Final bounded semantic-contract consolidation
+
+The independent review of `75cee5e` returned **FAIL** with F02, F03, F06,
+F07, F10 and N02 open. The prior review records remain historical. This
+implementation addresses those six contract classes; only a fresh independent
+GPT-6 Sol High/Max review can close them.
+
+- **F02:** `CitedDisclosure` binds eligibility to the owned cited version and
+  marks a conflict with source-wide `first_public_version` uncertain. An
+  independently cited earlier preprint remains eligible despite a later
+  sibling/journal publication (ADR-033).
+- **F03:** passage extractors attest explicit evidence-unit boundaries.
+  Context completeness requires both limits of the relevant unit; one-sided
+  neighbors, truncated windows, unknown continuation and zero budget cannot
+  make support decisive. Complete abstracts remain abstract-only (ADR-033).
+- **F10:** aggregate verifier state is derived from commitment records and
+  serialized state must match. Direct classification requires aggregate
+  `SUPPORTED`; scoped partial coverage remains visible (ADR-033).
+- **F06:** `VerifiedComparison` reconstructs the complete semantic chain and
+  owns exact identities, chronology, context and verified commitment facts.
+  The public classifier requires that artifact for verified classifications;
+  `ClassifiedComparison` re-derives identity and basis (ADR-034).
+- **F07:** graph schema v4 stores authoritative classifications and the
+  repository derives Phase 6 graph attributes from the validated chain.
+  Supplied citation/classification mutation fails transactionally. Bare
+  verified edges cannot persist without a resolved chain. Unsafe legacy
+  Phase 6 edges block migration (ADR-034).
+- **N02:** semantic edge content and append-only verification observations
+  are stored separately. Two observation times share one semantic edge;
+  exact replay is idempotent, and distinct cutoffs or assessments retain
+  distinct identities (ADR-035).
+
+The new `tests/adversarial/test_phase6_contract_consolidation.py` includes
+fresh boundary attacks, rollback/migration checks, multi-passage and
+combination projections, and observation reopen. The real full slice now
+combines version-specific disclosure, expanded citation, scoped partial
+support and a combination target through `REPORTED`/`COMPLETED`; Phase 7
+remains fixture-backed. Existing Sol regressions, benchmark and Phase 6
+integration suites remain present. Large excerpts without proven unit
+boundaries can remain nondecisive, and deterministic fixtures do not measure
+live verifier entailment or calibration.
+
+Final consolidation worktree verification: `uv sync --dev` passed;
+`uv run python scripts/verify.py` passed Ruff check, Ruff format (288 files),
+Pyright (0 errors/warnings), and **1497 passed, 5 opt-in network tests
+deselected**; `git diff --check` passed. Fresh exact-commit checkout
+verification is recorded with the implementation handoff.
+
+Gate 30 remains OPEN pending fresh independent GPT-6 Sol High/Max semantic re-review.

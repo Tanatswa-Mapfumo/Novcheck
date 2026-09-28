@@ -35,7 +35,9 @@ from novelty_harness.evidence.mapping.prompts import (
 )
 from novelty_harness.evidence.normalization.models import SourceType
 from novelty_harness.evidence.precedent.gates import (
-    classify_precedent,
+    _classify_facts as classify_precedent,
+)
+from novelty_harness.evidence.precedent.gates import (
     summarize_multi_source,
 )
 from novelty_harness.evidence.precedent.patent import (

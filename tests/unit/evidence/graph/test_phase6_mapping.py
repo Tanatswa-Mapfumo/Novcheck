@@ -19,8 +19,15 @@ from novelty_harness.evidence.graph.retrieval_mapping import passage_graph_node,
 from novelty_harness.evidence.graph.sqlalchemy_repository import (
     SqlAlchemyEvidenceGraphRepository,
 )
+from novelty_harness.evidence.precedent.gates import (
+    ClassifiedComparison,
+    classify_verified_comparison,
+)
 from novelty_harness.evidence.precedent.models import PrecedentClassification
-from novelty_harness.evidence.verification.integrity import VerifiedEvidenceChain
+from novelty_harness.evidence.verification.integrity import (
+    VerifiedEvidenceChain,
+    verified_comparison,
+)
 from tests.fixtures.phase5 import make_passage, make_version, phase5_provenance
 from tests.unit.evidence.verification.test_eligibility import (
     build,
@@ -161,7 +168,18 @@ def test_expanded_context_passages_get_graph_nodes() -> None:
 
 def test_repository_persists_phase6_fragment_and_rejects_ineligible_direct_edges() -> None:
     edge = build(SupportVerificationState.SUPPORTED, relation=PrecedentState.DIRECT_PRECEDENT)
-    classified = classification(edge, PrecedentState.DIRECT_PRECEDENT, decisive=True)
+    chain = VerifiedEvidenceChain(
+        assessment_id="asm_test",
+        source=source(),
+        version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
+        proposition=proposition(),
+        mapping=mapping(),
+        bundle=bundle(),
+        verification=verification(SupportVerificationState.SUPPORTED),
+        edge=edge,
+    )
+    comparison = verified_comparison(chain)
+    classified = classify_verified_comparison(comparison, clock=lambda: NOW)
     nodes, graph_edges = verified_edge_graph_fragment(
         (edge,), (classified,), observed_at=NOW, provenance=phase6_graph_provenance()
     )
@@ -191,18 +209,14 @@ def test_repository_persists_phase6_fragment_and_rejects_ineligible_direct_edges
     )
     repository = SqlAlchemyEvidenceGraphRepository()
     repository.upsert(nodes=existing)
-    chain = VerifiedEvidenceChain(
-        assessment_id="asm_test",
-        source=source(),
-        version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
-        proposition=proposition(),
-        mapping=mapping(),
-        bundle=bundle(),
-        verification=verification(SupportVerificationState.SUPPORTED),
-        edge=edge,
-    )
     repository.upsert(
-        nodes=nodes, edges=graph_edges, verified_edges=(edge,), verified_chains=(chain,)
+        nodes=nodes,
+        edges=graph_edges,
+        verified_edges=(edge,),
+        verified_chains=(chain,),
+        classified_comparisons=(
+            ClassifiedComparison(comparison=comparison, classification=classified),
+        ),
     )
     assert (
         repository.get_edge(

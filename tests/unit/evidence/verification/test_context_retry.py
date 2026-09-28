@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime
 
 from novelty_harness.domain.enums import SupportVerificationState
+from novelty_harness.evidence.passages.models import EvidenceUnitBoundary, EvidenceUnitScope
 from novelty_harness.evidence.verification.prompts import VERIFIER_PROMPT_VERSION
 from novelty_harness.evidence.verification.verifier import (
     VERIFIER_TASK,
@@ -45,6 +46,15 @@ def expanded_document(*extra: str):
         text=text,
         passage_id="pass_document",
         source_version_id=VERSION,
+    ).model_copy(
+        update={
+            "unit_boundary": EvidenceUnitBoundary(
+                unit_id="unit_retry_document",
+                scope=EvidenceUnitScope.DOCUMENT,
+                starts_unit=True,
+                ends_unit=True,
+            )
+        }
     )
 
 
@@ -260,6 +270,6 @@ async def test_adjacent_same_version_qualifier_reaches_initial_verifier() -> Non
         available_passages=(passage, neighbor),
         clock=lambda: NOW,
     )
-    assert result.context_completeness == "COMPLETE"
+    assert result.context_completeness == "UNKNOWN"
     assert result.verification.state == SupportVerificationState.CONTRADICTED
     assert result.verification_attempts == 1

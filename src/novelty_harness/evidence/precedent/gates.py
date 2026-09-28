@@ -24,6 +24,7 @@ from novelty_harness.evidence.mapping.models import (
     SourceMCUMapping,
 )
 from novelty_harness.evidence.precedent.models import PrecedentClassification, ScopedCoverage
+from novelty_harness.evidence.verification.integrity import VerifiedComparison
 from novelty_harness.evidence.verification.models import (
     ChronologyState,
     PassageSupportClaim,
@@ -72,6 +73,7 @@ class ClassificationFacts(ContractModel):
     verification: SupportVerification | None = None
     claim: PassageSupportClaim | None = None
     claim_id: SupportClaimId | None = None
+    verified_edge_id: NonBlankText | None = None
     decisive: bool = False
     chronology_state: ChronologyState = "UNCERTAIN"
     selection_failure: NonBlankText | None = None
@@ -89,6 +91,57 @@ class ClassificationFacts(ContractModel):
         ):
             raise ValueError("Decisive classification requires complete verified context")
         return self
+
+
+class ClassifiedComparison(ContractModel):
+    """A classification bound to a validated comparison and its exact basis."""
+
+    model_config = ConfigDict(frozen=True)
+    contract_kind: Literal["classified-comparison-v1"] = "classified-comparison-v1"
+    comparison: VerifiedComparison
+    classification: PrecedentClassification
+
+    @model_validator(mode="after")
+    def classification_matches_chain(self) -> Self:
+        expected = classify_verified_comparison(
+            self.comparison,
+            clock=lambda: self.classification.observed_at,
+            provenance=self.classification.provenance,
+        )
+        if self.classification != expected:
+            raise ValueError("Classification identity or basis differs from verified comparison")
+        relation = self.comparison.chain.edge.relation
+        if relation is not None and relation != self.classification.relation:
+            raise ValueError("Classification relation differs from verified edge")
+        return self
+
+
+def classify_verified_comparison(
+    comparison: VerifiedComparison,
+    *,
+    clock: Callable[[], datetime] = utc_now,
+    provenance: ArtifactProvenance | None = None,
+) -> PrecedentClassification:
+    """Classify only the identities and verified facts in a resolved chain."""
+
+    chain = comparison.chain
+    edge = chain.edge
+    return _classify_facts(
+        ClassificationFacts(
+            proposition=chain.proposition,
+            source_id=comparison.source_id,
+            source_version_id=comparison.source_version_id,
+            mapping=chain.mapping,
+            verification=chain.verification,
+            claim=chain.bundle.claim,
+            claim_id=comparison.claim_id,
+            verified_edge_id=edge.edge_id,
+            decisive=edge.decisive,
+            chronology_state=edge.chronology.state,
+        ),
+        clock=clock,
+        provenance=provenance,
+    )
 
 
 class MultiSourceAssessment(ContractModel):
@@ -154,6 +207,7 @@ def _classification(
             "mcu_id": facts.proposition.mcu_id,
             "mapping_id": facts.mapping.mapping_id if facts.mapping else None,
             "verification_id": facts.verification.verification_id if facts.verification else None,
+            "verified_edge_id": facts.verified_edge_id,
             "relation": relation.value,
             "classifier_version": CLASSIFIER_VERSION,
         }
@@ -189,7 +243,7 @@ def _classification(
     )
 
 
-def classify_precedent(
+def _classify_facts(
     facts: ClassificationFacts,
     *,
     clock: Callable[[], datetime] = utc_now,
@@ -364,7 +418,7 @@ def classify_precedent(
             provenance=provenance,
         )
     if supported == set(ordered_ids):
-        if facts.decisive:
+        if facts.decisive and verification.state == SupportVerificationState.SUPPORTED:
             return _classification(
                 facts,
                 relation=PrecedentState.DIRECT_PRECEDENT,
@@ -528,6 +582,21 @@ CONTRIBUTING_RELATIONS = frozenset(
         PrecedentState.ANALOGOUS_PRECEDENT,
     }
 )
+
+
+def classify_precedent(
+    comparison: VerifiedComparison | ClassificationFacts,
+    *,
+    clock: Callable[[], datetime] = utc_now,
+    provenance: ArtifactProvenance | None = None,
+) -> PrecedentClassification:
+    """Public classifier: verified comparisons or unassessable selection failures."""
+
+    if isinstance(comparison, VerifiedComparison):
+        return classify_verified_comparison(comparison, clock=clock, provenance=provenance)
+    if comparison.verification is not None:
+        raise ValueError("Verified classification requires an authoritative VerifiedComparison")
+    return _classify_facts(comparison, clock=clock, provenance=provenance)
 
 
 def summarize_multi_source(

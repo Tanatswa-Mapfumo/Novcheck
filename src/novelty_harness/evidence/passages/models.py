@@ -20,6 +20,25 @@ class PassageLocatorKind(StrEnum):
     USER_SUPPLIED = "USER_SUPPLIED"
 
 
+class EvidenceUnitScope(StrEnum):
+    ABSTRACT = "ABSTRACT"
+    PATENT_CLAIM = "PATENT_CLAIM"
+    PARAGRAPH = "PARAGRAPH"
+    README_SECTION = "README_SECTION"
+    DOCUMENT = "DOCUMENT"
+
+
+class EvidenceUnitBoundary(ContractModel):
+    """Extractor-attested limits of the unit containing a passage."""
+
+    model_config = ConfigDict(frozen=True)
+    contract_kind: Literal["evidence-unit-boundary-v1"] = "evidence-unit-boundary-v1"
+    unit_id: NonBlankText
+    scope: EvidenceUnitScope
+    starts_unit: bool
+    ends_unit: bool
+
+
 class PassageLocator(ContractModel):
     """Where exactly a passage came from inside its source/version."""
 
@@ -64,7 +83,7 @@ class PassageRecord(ContractModel):
     """
 
     model_config = ConfigDict(frozen=True)
-    contract_kind: Literal["source-passage-v1"] = "source-passage-v1"
+    contract_kind: Literal["source-passage-v2"] = "source-passage-v2"
 
     passage_id: PassageId
     source_id: SourceId
@@ -73,6 +92,7 @@ class PassageRecord(ContractModel):
     content_hash: NonBlankText
     access_state: SourceAccessState
     locator: PassageLocator
+    unit_boundary: EvidenceUnitBoundary | None = None
     limitations: tuple[NonBlankText, ...] = ()
     observed_at: UTCDateTime
     provenance: ArtifactProvenance

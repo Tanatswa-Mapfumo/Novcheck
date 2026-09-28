@@ -17,13 +17,22 @@ from novelty_harness.evidence.phase6_pipeline import select_versions
 from novelty_harness.evidence.precedent.gates import (
     ClassificationFacts as RawClassificationFacts,
 )
-from novelty_harness.evidence.precedent.gates import classify_precedent
+from novelty_harness.evidence.precedent.gates import (
+    ClassifiedComparison,
+    classify_verified_comparison,
+)
+from novelty_harness.evidence.precedent.gates import (
+    _classify_facts as classify_precedent,
+)
 from novelty_harness.evidence.verification.gates import (
     EdgeEligibilityError,
     build_verified_evidence_edge,
     validate_verified_chain,
 )
-from novelty_harness.evidence.verification.integrity import SemanticIntegrityError
+from novelty_harness.evidence.verification.integrity import (
+    SemanticIntegrityError,
+    verified_comparison,
+)
 from novelty_harness.evidence.verification.models import CommitmentStateRecord, SupportVerification
 from tests.fixtures.phase5 import make_passage, make_version
 from tests.unit.evidence.precedent.test_classification import (
@@ -273,31 +282,27 @@ def test_n01_two_cutoffs_persist_as_immutable_distinct_graph_artifacts() -> None
     later = _edge(as_of=date(2026, 9, 28), relation=PrecedentState.DIRECT_PRECEDENT)
     repository = SqlAlchemyEvidenceGraphRepository()
     for edge in (earlier, later):
-        classified = classify_precedent(
-            ClassificationFacts(
-                proposition=proposition(),
-                source_id="src_1",
-                source_version_id="srcv_1_v1",
-                mapping=mapping(),
-                verification=verification(SupportVerificationState.SUPPORTED),
-                claim_id="claim_1",
-                decisive=edge.decisive,
-                chronology_state=edge.chronology.state,
-            ),
-            clock=lambda: NOW,
-        )
+        chain = _valid_chain(edge)
+        comparison = verified_comparison(chain)
+        classified = classify_verified_comparison(comparison, clock=lambda: NOW)
         nodes, graph_edges = _persist_phase6_fragment(repository, edge, classified)
         repository.upsert(
             nodes=nodes,
             edges=graph_edges,
             verified_edges=(edge,),
-            verified_chains=(_valid_chain(edge),),
+            verified_chains=(chain,),
+            classified_comparisons=(
+                ClassifiedComparison(comparison=comparison, classification=classified),
+            ),
         )
         repository.upsert(
             nodes=nodes,
             edges=graph_edges,
             verified_edges=(edge,),
-            verified_chains=(_valid_chain(edge),),
+            verified_chains=(chain,),
+            classified_comparisons=(
+                ClassifiedComparison(comparison=comparison, classification=classified),
+            ),
         )
     assert earlier.edge_id != later.edge_id
     assert len(repository.nodes(kinds=frozenset({GraphNodeKind.EVIDENCE_PROPOSITION}))) == 2

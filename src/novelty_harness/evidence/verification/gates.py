@@ -32,10 +32,12 @@ from novelty_harness.evidence.verification.models import (
     BlindedPassage,
     BlindedVerificationInput,
     ChronologyAssessment,
+    CitedDisclosure,
     CommitmentStateRecord,
     EdgeEligibility,
     SupportVerification,
     VerifiedEvidenceEdge,
+    derive_support_state,
 )
 from novelty_harness.evidence.verification.prompts import (
     VERIFIER_PROMPT_VERSION,
@@ -142,7 +144,6 @@ def aggregate_verification(
         raise VerificationValidationError("Blinded input does not match the support claim")
     validate_judgments(blinded, proposal)
     commitment_text = {commitment.commitment_id: commitment for commitment in blinded.commitments}
-    states = {judgment.commitment_id: judgment.state for judgment in proposal.judgments}
     records = tuple(
         CommitmentStateRecord(
             commitment_id=judgment.commitment_id,
@@ -193,16 +194,7 @@ def aggregate_verification(
         if judgment.state == "INSUFFICIENT"
     )
 
-    if contradictions:
-        state = SupportVerificationState.CONTRADICTED
-    elif "INSUFFICIENT" in states.values():
-        state = SupportVerificationState.INSUFFICIENT_CONTEXT
-    elif all(item == "SUPPORTED" for item in states.values()):
-        state = SupportVerificationState.SUPPORTED
-    elif not supported:
-        state = SupportVerificationState.NOT_SUPPORTED
-    else:
-        state = SupportVerificationState.PARTIALLY_SUPPORTED
+    state = derive_support_state(records)
 
     relied_on = tuple(
         dict.fromkeys(
@@ -314,73 +306,84 @@ PUBLIC_DISCLOSURE_FIELDS = (
 )
 
 
-def assess_chronology(
+def assess_cited_disclosure(
     source: SourceRecord,
     *,
     as_of: date,
     version: SourceVersionRecord | None = None,
-) -> ChronologyAssessment:
-    """Compute the public-disclosure chronology gate for the cited content.
+) -> CitedDisclosure:
+    """Bind chronology to an owned cited disclosure and source-wide first date.
 
     A cited version's public disclosure governs that version alone. Parent or
     sibling source dates cannot make a revision earlier or erase an eligible
-    preprint. A cited version without a public date stays uncertain.
+    preprint. A contradictory first-public assertion stays uncertain.
     """
 
+    if version is not None and version.source_id != source.source_id:
+        raise EdgeEligibilityError("Cited version owner does not match source")
     candidates = [
         (getattr(source.dates, field), field)
         for field in PUBLIC_DISCLOSURE_FIELDS
         if getattr(source.dates, field) is not None
     ]
     if version is not None:
-        if version.published_date is None:
-            return ChronologyAssessment(
-                as_of=as_of,
-                state="UNCERTAIN",
-                decisive_date_field="version_published_date",
-                rationale=(
-                    "The cited source version has no public-disclosure date; "
-                    "chronology stays uncertain",
-                ),
-            )
-        decisive_date, field = version.published_date, "version_published_date"
+        public_date, field = version.published_date, "version_published_date"
+    elif candidates:
+        public_date, field = min(candidates)
+    else:
+        public_date, field = None, None
+    first_public = source.dates.first_public_version
+    conflict = first_public is not None and public_date is not None and public_date < first_public
+    if conflict:
+        chronology = ChronologyAssessment(
+            as_of=as_of,
+            state="UNCERTAIN",
+            rationale=(
+                "Cited disclosure predates conflicting source-wide first-public-version metadata",
+            ),
+        )
+    elif public_date is None:
+        chronology = ChronologyAssessment(
+            as_of=as_of,
+            state="UNCERTAIN",
+            decisive_date_field=field,
+            rationale=("Cited disclosure has no complete public date",),
+        )
+    else:
         state: Literal["PREDATES_CUTOFF", "POST_CUTOFF"] = (
-            "PREDATES_CUTOFF" if decisive_date <= as_of else "POST_CUTOFF"
+            "PREDATES_CUTOFF" if public_date <= as_of else "POST_CUTOFF"
         )
-        rationale = (
-            f"Cited version public disclosure is {field}={decisive_date.isoformat()}",
-            "Post-cutoff evidence cannot negate historical novelty"
-            if state == "POST_CUTOFF"
-            else "Cited version disclosure is at or before the assessment cutoff",
-        )
-        return ChronologyAssessment(
+        chronology = ChronologyAssessment(
             as_of=as_of,
             state=state,
             decisive_date_field=field,
-            decisive_date=decisive_date,
-            rationale=rationale,
+            decisive_date=public_date,
+            rationale=(
+                f"Cited public disclosure is {field}={public_date.isoformat()}",
+                "Post-cutoff evidence cannot negate historical novelty"
+                if state == "POST_CUTOFF"
+                else "Cited disclosure is at or before the assessment cutoff",
+            ),
         )
-    if not candidates:
-        return ChronologyAssessment(
-            as_of=as_of,
-            state="UNCERTAIN",
-            rationale=("No complete public-disclosure date; chronology stays uncertain",),
-        )
-    decisive_date, field = min(candidates)
-    state = "PREDATES_CUTOFF" if decisive_date <= as_of else "POST_CUTOFF"
-    rationale = (
-        f"Earliest public disclosure is {field}={decisive_date.isoformat()}",
-        "Post-cutoff evidence cannot negate historical novelty"
-        if state == "POST_CUTOFF"
-        else "Earliest public disclosure is at or before the assessment cutoff",
-    )
-    return ChronologyAssessment(
+    return CitedDisclosure(
+        source_id=source.source_id,
+        source_version_id=version.version_id if version is not None else None,
         as_of=as_of,
-        state=state,
-        decisive_date_field=field,
-        decisive_date=decisive_date,
-        rationale=rationale,
+        cited_public_date=public_date,
+        source_first_public_version=first_public,
+        chronology=chronology,
     )
+
+
+def assess_chronology(
+    source: SourceRecord,
+    *,
+    as_of: date,
+    version: SourceVersionRecord | None = None,
+) -> ChronologyAssessment:
+    """Compatibility view of the authoritative cited disclosure."""
+
+    return assess_cited_disclosure(source, as_of=as_of, version=version).chronology
 
 
 def check_relation_eligible(
@@ -459,7 +462,8 @@ def build_verified_evidence_edge(
     if quality is not None and quality.source_id != source.source_id:
         raise EdgeEligibilityError("Quality assessment belongs to another source")
 
-    chronology = assess_chronology(source, as_of=as_of, version=version)
+    disclosure = assess_cited_disclosure(source, as_of=as_of, version=version)
+    chronology = disclosure.chronology
     decisive = (
         verification.state == SupportVerificationState.SUPPORTED
         and chronology.state == "PREDATES_CUTOFF"
@@ -509,6 +513,7 @@ def build_verified_evidence_edge(
             "relation": relation.value if relation else None,
             "as_of": as_of.isoformat(),
             "chronology_state": chronology.state,
+            "disclosure": disclosure.model_dump(mode="json"),
             "context_completeness": verification.context_completeness,
             "chronology_date": chronology.decisive_date.isoformat()
             if chronology.decisive_date is not None
@@ -531,6 +536,7 @@ def build_verified_evidence_edge(
         comparison=mapping.aggregate_comparison(),
         support_state=verification.state,
         decisive=decisive,
+        disclosure=disclosure,
         chronology=chronology,
         eligibility=EdgeEligibility(
             decisive=decisive, chronology=chronology, reasons=tuple(reasons)
@@ -593,6 +599,7 @@ def validate_verified_chain(chain: VerifiedEvidenceChain) -> tuple[PassageRecord
         "comparison",
         "support_state",
         "decisive",
+        "disclosure",
         "chronology",
         "eligibility",
         "relation",

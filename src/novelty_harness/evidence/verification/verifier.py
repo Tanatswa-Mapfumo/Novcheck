@@ -95,11 +95,17 @@ def _bounded_verification(
     payload = verification.model_dump(mode="python")
     payload["context_expansions"] = len(expansions)
     payload["context_completeness"] = completeness.value
-    if completeness != ContextCompleteness.COMPLETE and verification.state in {
-        SupportVerificationState.SUPPORTED,
-        SupportVerificationState.PARTIALLY_SUPPORTED,
-    }:
+    if (
+        completeness != ContextCompleteness.COMPLETE
+        and verification.state == SupportVerificationState.SUPPORTED
+    ):
         needed = tuple(dict.fromkeys((*verification.context_needed, *reasons)))
+        for record in payload["commitment_states"]:
+            if record["state"] in {"SUPPORTED", "PARTIALLY_SUPPORTED"}:
+                record["state"] = "INSUFFICIENT"
+                record["rationale"] += "; context boundary was not established"
+                record["supported_subset"] = None
+                record["unsupported_remainder"] = None
         payload["state"] = SupportVerificationState.INSUFFICIENT_CONTEXT
         payload["context_needed"] = needed
         payload["verification_id"] = "ver_" + canonical_hash(

@@ -9,7 +9,7 @@ from novelty_harness.evidence.mapping.dimensions import (
     build_proposition,
 )
 from novelty_harness.evidence.mapping.models import ComparisonDimension
-from novelty_harness.evidence.precedent.gates import classify_precedent
+from novelty_harness.evidence.precedent.gates import _classify_facts as classify_precedent
 from tests.fixtures.phase5 import phase5_provenance
 from tests.unit.evidence.precedent.test_classification import NOW, facts_for
 

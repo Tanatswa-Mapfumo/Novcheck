@@ -21,7 +21,7 @@ from novelty_harness.evidence.graph.sqlalchemy_repository import (
     SqlAlchemyEvidenceGraphRepository,
 )
 from novelty_harness.evidence.precedent.gates import (
-    classify_precedent,
+    _classify_facts as classify_precedent,
 )
 from novelty_harness.evidence.precedent.patent import PatentEvidenceEntry
 from novelty_harness.evidence.verification.gates import (
@@ -261,18 +261,27 @@ def _valid_chain(edge) -> VerifiedEvidenceChain:
 
 def test_f07_graph_persistence_rejects_unresolved_or_mismatched_verification() -> None:
     edge = build(SupportVerificationState.SUPPORTED, relation=PrecedentState.DIRECT_PRECEDENT)
-    from tests.unit.evidence.graph.test_phase6_mapping import (
-        classification as graph_classification,
+    from novelty_harness.evidence.precedent.gates import (
+        ClassifiedComparison,
+        classify_verified_comparison,
     )
+    from novelty_harness.evidence.verification.integrity import verified_comparison
 
-    classified = graph_classification(edge, PrecedentState.DIRECT_PRECEDENT, decisive=True)
+    chain = _valid_chain(edge)
+    comparison = verified_comparison(chain)
+    classified = classify_verified_comparison(comparison, clock=lambda: NOW)
 
     # Legitimate projected edge persists when its verified artifact is present.
     repository = SqlAlchemyEvidenceGraphRepository()
     _, graph_edges = _persist_phase6_fragment(repository, edge, classified)
     direct = next(item for item in graph_edges if item.kind == GraphEdgeKind.DIRECT_PRECEDENT)
     repository.upsert(
-        edges=(direct,), verified_edges=(edge,), verified_chains=(_valid_chain(edge),)
+        edges=(direct,),
+        verified_edges=(edge,),
+        verified_chains=(chain,),
+        classified_comparisons=(
+            ClassifiedComparison(comparison=comparison, classification=classified),
+        ),
     )
     assert repository.get_edge(direct.edge_id) is not None
 
@@ -292,9 +301,9 @@ def test_f07_graph_persistence_rejects_unresolved_or_mismatched_verification() -
 
     # A real verified artifact for another MCU cannot back this edge.
     other_repository = SqlAlchemyEvidenceGraphRepository()
-    other_repository.upsert(nodes=_persist_phase6_fragment(other_repository, edge, classified)[0])
+    _persist_phase6_fragment(other_repository, edge, classified)
     other_mcu_edge = edge.model_copy(update={"mcu_id": "mcu_other"})
-    with pytest.raises(ValueError, match="semantic chain differs"):
+    with pytest.raises(ValueError, match="resolved semantic chain|semantic chain differs"):
         other_repository.upsert(
             edges=(direct,),
             verified_edges=(other_mcu_edge,),
@@ -308,31 +317,40 @@ def test_f07_schema_v1_migrates_to_v3(tmp_path) -> None:
     repository = SqlAlchemyEvidenceGraphRepository(database)
     # Simulate a v1 database with no Phase 6 edges.
     with repository.engine.begin() as connection:
-        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 3"))
+        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 4"))
     repository.close()
     migrated = SqlAlchemyEvidenceGraphRepository(database)
     from novelty_harness.evidence.graph.migrations import SCHEMA_VERSION, schema_version
 
-    assert schema_version(migrated.engine) == SCHEMA_VERSION == 3
+    assert schema_version(migrated.engine) == SCHEMA_VERSION == 4
     migrated.close()
 
 
 def test_f07_legacy_direct_edge_cannot_be_reinterpreted_as_verified(tmp_path) -> None:
     database = tmp_path / "legacy-direct.sqlite3"
     edge = build(SupportVerificationState.SUPPORTED, relation=PrecedentState.DIRECT_PRECEDENT)
-    from tests.unit.evidence.graph.test_phase6_mapping import (
-        classification as graph_classification,
+    from novelty_harness.evidence.precedent.gates import (
+        ClassifiedComparison,
+        classify_verified_comparison,
     )
+    from novelty_harness.evidence.verification.integrity import verified_comparison
 
-    classified = graph_classification(edge, PrecedentState.DIRECT_PRECEDENT, decisive=True)
+    chain = _valid_chain(edge)
+    comparison = verified_comparison(chain)
+    classified = classify_verified_comparison(comparison, clock=lambda: NOW)
     repository = SqlAlchemyEvidenceGraphRepository(database)
     _, graph_edges = _persist_phase6_fragment(repository, edge, classified)
     direct = next(item for item in graph_edges if item.kind == GraphEdgeKind.DIRECT_PRECEDENT)
     repository.upsert(
-        edges=(direct,), verified_edges=(edge,), verified_chains=(_valid_chain(edge),)
+        edges=(direct,),
+        verified_edges=(edge,),
+        verified_chains=(chain,),
+        classified_comparisons=(
+            ClassifiedComparison(comparison=comparison, classification=classified),
+        ),
     )
     with repository.engine.begin() as connection:
-        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 3"))
+        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 4"))
     repository.close()
     with pytest.raises(ValueError, match="Legacy Phase 6 graph edges"):
         SqlAlchemyEvidenceGraphRepository(database)

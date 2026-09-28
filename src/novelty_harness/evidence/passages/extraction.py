@@ -14,6 +14,8 @@ from novelty_harness.domain.ids import PassageId, SourceId, SourceVersionId
 from novelty_harness.evidence.normalization.models import SourceAccessState
 from novelty_harness.evidence.passages.hashing import normalize_text, text_hash
 from novelty_harness.evidence.passages.models import (
+    EvidenceUnitBoundary,
+    EvidenceUnitScope,
     PassageLocator,
     PassageLocatorKind,
     PassageRecord,
@@ -53,6 +55,7 @@ def _make_passage(
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
     limitations: Sequence[str] = (),
+    unit_boundary: EvidenceUnitBoundary | None = None,
 ) -> PassageRecord:
     normalized = normalize_text(text)
     if not normalized:
@@ -66,6 +69,7 @@ def _make_passage(
         content_hash=content_hash,
         access_state=access_state,
         locator=locator,
+        unit_boundary=unit_boundary,
         limitations=tuple(limitations),
         observed_at=observed_at,
         provenance=provenance,
@@ -88,6 +92,7 @@ def extract_span(
     source_version_id: SourceVersionId | None = None,
     limitations: Sequence[str] = (),
     notes: Sequence[str] = (),
+    unit_boundary: EvidenceUnitBoundary | None = None,
 ) -> PassageRecord:
     """Extract an explicit half-open character span from normalized document text.
 
@@ -119,6 +124,7 @@ def extract_span(
         observed_at=observed_at,
         provenance=provenance,
         limitations=limitations,
+        unit_boundary=unit_boundary,
     )
 
 
@@ -149,6 +155,20 @@ def extract_abstract(
         limitations=tuple(
             dict.fromkeys((*limitations, "Abstract-only access limits completeness"))
         ),
+        unit_boundary=EvidenceUnitBoundary(
+            unit_id="unit_"
+            + canonical_hash(
+                {
+                    "source": source_id,
+                    "version": source_version_id,
+                    "scope": "abstract",
+                    "text": normalize_text(abstract),
+                }
+            ),
+            scope=EvidenceUnitScope.ABSTRACT,
+            starts_unit=True,
+            ends_unit=True,
+        ),
     )
 
 
@@ -174,6 +194,20 @@ def extract_resolved_content(
         kind=PassageLocatorKind.RESOLVED_CONTENT,
         source_version_id=source_version_id,
         limitations=limitations,
+        unit_boundary=EvidenceUnitBoundary(
+            unit_id="unit_"
+            + canonical_hash(
+                {
+                    "source": source_id,
+                    "version": source_version_id,
+                    "scope": "document",
+                    "text": normalized,
+                }
+            ),
+            scope=EvidenceUnitScope.DOCUMENT,
+            starts_unit=True,
+            ends_unit=True,
+        ),
     )
 
 
@@ -201,6 +235,21 @@ def extract_readme(
         label=path,
         source_version_id=source_version_id,
         limitations=limitations,
+        unit_boundary=EvidenceUnitBoundary(
+            unit_id="unit_"
+            + canonical_hash(
+                {
+                    "source": source_id,
+                    "version": source_version_id,
+                    "scope": "readme",
+                    "path": path,
+                    "text": normalized,
+                }
+            ),
+            scope=EvidenceUnitScope.DOCUMENT,
+            starts_unit=True,
+            ends_unit=True,
+        ),
     )
 
 
@@ -314,6 +363,22 @@ def extract_section(
         source_version_id=source_version_id,
         limitations=limitations,
         notes=notes,
+        unit_boundary=EvidenceUnitBoundary(
+            unit_id="unit_"
+            + canonical_hash(
+                {
+                    "source": source_id,
+                    "version": source_version_id,
+                    "scope": "section",
+                    "start": selected.start,
+                    "end": end,
+                    "text": normalized[selected.start : end],
+                }
+            ),
+            scope=EvidenceUnitScope.README_SECTION,
+            starts_unit=True,
+            ends_unit=True,
+        ),
     )
 
 

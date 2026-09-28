@@ -5,7 +5,9 @@ from novelty_harness.evidence.mapping.models import (
 )
 from novelty_harness.evidence.precedent.counterfactuals import counterfactual_removal
 from novelty_harness.evidence.precedent.gates import (
-    classify_precedent,
+    _classify_facts as classify_precedent,
+)
+from novelty_harness.evidence.precedent.gates import (
     summarize_multi_source,
 )
 from tests.unit.evidence.precedent.test_classification import (

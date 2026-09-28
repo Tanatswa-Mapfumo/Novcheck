@@ -56,8 +56,10 @@ from novelty_harness.evidence.passages.models import PassageRecord
 from novelty_harness.evidence.pipeline import EvidenceNormalizationResult
 from novelty_harness.evidence.precedent.gates import (
     ClassificationFacts,
+    ClassifiedComparison,
     MultiSourceAssessment,
     classify_precedent,
+    classify_verified_comparison,
     summarize_multi_source,
 )
 from novelty_harness.evidence.precedent.models import (
@@ -71,7 +73,10 @@ from novelty_harness.evidence.precedent.patent import (
 )
 from novelty_harness.evidence.quality.models import EvidenceQualityAssessment
 from novelty_harness.evidence.verification.gates import build_verified_evidence_edge
-from novelty_harness.evidence.verification.integrity import VerifiedEvidenceChain
+from novelty_harness.evidence.verification.integrity import (
+    VerifiedEvidenceChain,
+    verified_comparison,
+)
 from novelty_harness.evidence.verification.models import (
     ContextExpansion,
     SupportVerification,
@@ -375,21 +380,25 @@ class EvidenceVerificationPipeline:
             ),
             quality=quality_by_source.get(source.source_id),
         )
-        classification = classify_precedent(
-            ClassificationFacts(
-                proposition=proposition,
-                source_id=source.source_id,
-                source_version_id=version.version_id if version else None,
-                mapping=mapping,
-                verification=retry.verification,
-                claim=retry.verified_bundle.claim,
-                claim_id=retry.verification.claim_id,
-                decisive=edge.decisive,
-                chronology_state=edge.chronology.state,
-            ),
+        context_passages = tuple(
+            item.window_passage for item in retry.expansions if item.window_passage is not None
+        )
+        preliminary_chain = VerifiedEvidenceChain(
+            assessment_id=assessment_id,
+            source=source,
+            version=version,
+            proposition=proposition,
+            mapping=mapping,
+            bundle=retry.verified_bundle,
+            verification=retry.verification,
+            context_passages=context_passages,
+            edge=edge,
+        )
+        provisional_classification = classify_verified_comparison(
+            verified_comparison(preliminary_chain),
             clock=clock,
         )
-        if classification.relation != PrecedentState.UNASSESSABLE:
+        if provisional_classification.relation != PrecedentState.UNASSESSABLE:
             edge = build_verified_evidence_edge(
                 mapping=mapping,
                 verification=retry.verification,
@@ -406,25 +415,25 @@ class EvidenceVerificationPipeline:
                     if item.window_passage is not None
                 ),
                 quality=quality_by_source.get(source.source_id),
-                relation=classification.relation,
+                relation=provisional_classification.relation,
             )
         edges.append(edge)
-        chains.append(
-            VerifiedEvidenceChain(
-                assessment_id=assessment_id,
-                source=source,
-                version=version,
-                proposition=proposition,
-                mapping=mapping,
-                bundle=retry.verified_bundle,
-                verification=retry.verification,
-                context_passages=tuple(
-                    item.window_passage
-                    for item in retry.expansions
-                    if item.window_passage is not None
-                ),
-                edge=edge,
-            )
+        final_chain = VerifiedEvidenceChain(
+            assessment_id=assessment_id,
+            source=source,
+            version=version,
+            proposition=proposition,
+            mapping=mapping,
+            bundle=retry.verified_bundle,
+            verification=retry.verification,
+            context_passages=context_passages,
+            edge=edge,
+        )
+        classification = classify_verified_comparison(verified_comparison(final_chain), clock=clock)
+        chains.append(final_chain)
+        ClassifiedComparison(
+            comparison=verified_comparison(final_chain),
+            classification=classification,
         )
         classifications.append(classification)
         target_classifications.append(classification)
@@ -703,6 +712,13 @@ class EvidenceVerificationPipeline:
             edges=fragment_edges,
             verified_edges=tuple(edges),
             verified_chains=tuple(chains),
+            classified_comparisons=tuple(
+                ClassifiedComparison(
+                    comparison=verified_comparison(chain),
+                    classification=classification,
+                )
+                for chain, classification in zip(chains, classifications, strict=True)
+            ),
         )
         emit(
             "PHASE6_GRAPH_PERSISTED",

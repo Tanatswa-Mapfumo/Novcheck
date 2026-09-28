@@ -13,7 +13,9 @@ from novelty_harness.evidence.mapping.models import (
 )
 from novelty_harness.evidence.precedent.gates import (
     ClassificationFacts,
-    classify_precedent,
+)
+from novelty_harness.evidence.precedent.gates import (
+    _classify_facts as classify_precedent,
 )
 from novelty_harness.evidence.verification.models import (
     CommitmentStateRecord,

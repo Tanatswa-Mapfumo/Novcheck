@@ -328,3 +328,187 @@ Gate 30 remains OPEN pending a fresh independent GPT-6 Sol High semantic re-revi
   fresh GPT-6 Sol High reviewer independently closes F01-F10 and N01.
 
 Gate 30 remains OPEN pending a fresh independent GPT-6 Sol High semantic re-review.
+
+---
+
+## Final independent Round-2 semantic re-review at `75cee5e`
+
+**Reviewed commit:** `75cee5e926b27a2ae695c7ad37db2eedc6404a6f` on
+`phase-6-evidence-verification`. This review did not implement the remediation.
+The two earlier independent FAIL records and the implementation records above
+remain intact. The checks below used new, schema-valid variants at public
+boundaries, inspected the actual production code changed since `c41b11f`, and
+ran the existing adversarial, benchmark, integration, and full-slice suites.
+Passing fixture tests were not treated as semantic proof.
+
+### Finding-by-finding attacks
+
+| Finding | Invariant and implemented repair | Independent attack and actual behavior | Status |
+| --- | --- | --- | --- |
+| F01 | MCU structure must survive proposition construction. `build_proposition` adds ordered `statement:material` and member obligations unless an existing commitment contains the complete statement. | Fresh statements for `and`, `or`, both `then` orders, `only after`, `unless`, `requires both`, two-step activation, reversed subject/object, and a member-only condition each retained a material statement alongside split features. An exact duplicate mechanism statement produced only `mech`, avoiding a fabricated extra obligation. Generic components still lack full configuration support. | **CLOSED** |
+| F02 | Eligibility must follow the cited public version. The edge gate now requires an owned version, and `assess_chronology` uses its date. | Old parent/later revision, missing/foreign version, unknown version date, later journal/earlier preprint, and decisive/post-cutoff facts are guarded. A fresh conflict remains: source `first_public_version=2027-01-01` plus cited version `published_date=2020-01-01`, cutoff 2026, returns `PREDATES_CUTOFF` and a decisive edge. Those two claims cannot both describe the first public disclosure. | **OPEN** |
+| F03 | Decisive support needs complete same-version context. The precheck now expands the located occurrence and records completeness. | A qualifier beyond the window is `TRUNCATED`; an ambiguous repeat, zero budget, and unavailable context do not become decisive. Yet a mapped block at `[100,113)` with only an adjacent benign block at `[85,100)` is marked `COMPLETE`, despite no evidence that content after 113 was obtained. A standalone complete abstract is `UNAVAILABLE`. Thus an omitted next-block qualifier can still be treated as absent, while a complete limited unit can be permanently downgraded. | **OPEN** |
+| F04 | Every unversioned passage must be assessed or disclosed. `select_versions` adds an unversioned slot when no versions exist and otherwise records passage IDs as unassessed. | Mixed versioned/unversioned passages at version limits 1 and 2 disclosed `unversioned:pass_no_version`; only-unversioned and multiple-unversioned inputs selected the unversioned slot. No tested passage silently vanished. | **CLOSED** |
+| F05 | Verifier reliance must equal its commitment citation union. Schema and chain checks now enforce canonical reliance and actual supplied passages. | Reordered, added, missing, and foreign top-level citation IDs fail validation or edge construction; a partial-support citation must likewise be in the bundle. Duplicate commitment-level IDs collapse to one canonical relied-on ID, without creating a second source. The graph attribute failure below is a later projection defect. | **CLOSED** |
+| F06 | Classification and verification must belong to the same proposition, claim, mapping, source, version, and MCU. The edge gate and `validate_semantic_chain` join these objects. | Foreign source/version owners and a claim or proposition from another comparison are rejected at the edge gate. But a schema-valid `PrecedentClassification` with `mapping_id=map_foreign` and `classification_id=cls_foreign`, while retaining the verified edge's `verification_id`, was paired with that edge by `verified_edge_graph_fragment` and persisted as direct. Classification identity is still cross-wirable after chain validation. | **OPEN** |
+| F07 | A persisted decisive graph relation must resolve to exactly its authoritative verified citation chain. Schema v3 stores and revalidates a chain and refuses v1/v2 Phase 6 edges. | Missing passage nodes, a foreign version node, and unsafe legacy direct edges are refused. But changing only a valid direct `GraphEdge.attributes['passage_ids']` to `['pass_nonexistent']` passed `repository.upsert`; the stored direct edge advertises that nonexistent citation. A foreign classification's ID and basis also persist as graph attributes. | **OPEN** |
+| F08 | Patent screening may use only eligible cited versions and distinct lineage roots; separate references never become one-reference anticipation. Screening now consumes version chronology and lineage roots. | Two future revisions from old parents yielded `LIMITED`; two eligible versions sharing one root yielded `LIMITED`; two independent eligible partial patents yielded `MULTI_REFERENCE_COMBINATION_LIKE`. Existing cases also cover missing chronology, mixed eligible/future, and one eligible direct patent. No tested partial set became anticipation-like. | **CLOSED** |
+| F09 | Mapper-only assertions must not decide a verified precedent class. The classifier now reads commitment states. | Holding a supported mechanism fixed, independently changing each of all twelve mapper dimensions, including purpose, problem, target, architecture, features, relationships, control flow, context, outcome, and constraints, left the class `DIRECT_PRECEDENT`. Existing verified relationship-gap cases demote direct. | **CLOSED** |
+| F10 | Scoped partial support must remain partial and retain its subset/remainder. The classifier now emits `ScopedCoverage`. | Ordinary one- and two-commitment partials, partial plus contradiction, and subgroup/condition records retain scope without aggregating to direct. However a schema-valid `SupportVerification(state=PARTIALLY_SUPPORTED)` with all commitment records `SUPPORTED` and an invented `unsupported_portions` entry yields `DIRECT_PRECEDENT` and `decisive=True` when passed as `ClassificationFacts(decisive=True)`. Aggregate/record inconsistency still permits public direct classification. | **OPEN** |
+| N01 | Immutable edge IDs must distinguish assessment context and chronology. The canonical edge ID now includes assessment ID, cutoff, chronology state/date, and context completeness. | Same evidence with cutoffs before/after disclosure had different IDs; two assessment IDs at one cutoff had different IDs; exact same object re-upsert was idempotent. Chronology and eligibility inputs tested did not collide. A separate volatile-observation replay failure is N02 below. | **CLOSED** |
+| F11 | The real lifecycle must admit a combination target and verifier-cited expanded passage while rejecting foreign identities. The projection bridge now accepts the genuine extra target and expansion IDs. | The full-slice integration reached `REPORTED`/`COMPLETED` with both identities. Foreign target/source/expanded-passage source fail the bridge; foreign version and expansion version fail the upstream semantic-chain and expansion ownership checks. The legacy bridge itself carries source-level passage identity, so upstream version validation remains essential. | **CLOSED** |
+| M01 | A lexical fixture citation metric must not be presented as semantic faithfulness. The benchmark now names `citation_presence_and_bundle_integrity` and states its limits. | Inspected the metric and benchmark fixtures: they measure bundle citation presence and deterministic state agreement, without claiming rationale faithfulness, calibration, or live accuracy. | **CLOSED** |
+
+### Open Critical and Important defects
+
+**F02 — Important: contradictory first-public-version chronology.**
+Invariant: an internally conflicting chronology cannot establish decisive earlier
+disclosure. Function: `evidence/verification/gates.py::assess_chronology`
+(around line 317), then `build_verified_evidence_edge`. Minimal reproduction:
+construct a source with `dates.first_public_version=date(2027,1,1)`, an owned
+cited version with `published_date=date(2020,1,1)`, and `as_of=date(2026,9,28)`;
+use otherwise valid fully supported claim artifacts. Current: chronology is
+`PREDATES_CUTOFF`, edge `decisive=True`. Required: flag the contradictory
+first-public-disclosure claims as uncertain/nondecisive, while permitting a
+clearly identified earlier preprint when a later source-level *journal*
+publication refers to a separate edition. Smallest fix: distinguish
+source-wide first-public-date assertions from edition-specific publication
+dates, and validate an owned cited version against the former. Regression:
+conflicting first-public-version versus version date is nondecisive; earlier
+preprint versus later journal publication stays eligible.
+
+**F03 — Critical: incomplete neighbor coverage is declared complete.**
+Invariant: inability to establish context completeness cannot be interpreted
+as absence of a qualifier. Function:
+`evidence/context/expansion.py::inspect_passage_context` (around lines 220-265).
+Minimal reproduction: one mapped block with locator `[100,113)` and one stored
+previous block `[85,100)`, with no whole-content boundary or following block.
+Current: `ContextCompleteness.COMPLETE`; a supporting verifier can therefore
+become decisive although following content is unknown. A complete standalone
+abstract currently returns `UNAVAILABLE`, showing the opposite failure.
+Required: completeness only when the relevant content unit's boundaries are
+proved, including both ends; a known complete abstract/claim unit can be
+complete within its explicitly limited scope. Smallest fix: carry an explicit
+unit/boundary marker from extraction or resolved content and require it before
+setting `COMPLETE`; otherwise use `UNKNOWN`/`TRUNCATED`. Regression: previous-
+only and next-only blocks remain nondecisive when the other boundary is
+unknown; a fully delimited abstract/claim is classified as complete but retains
+its access limitation.
+
+**F06/F07 — Critical: graph projection and persistence accept cross-wired
+classification metadata and false decisive citations.** Invariant: every
+persisted direct graph relation, including the citations and classification it
+advertises, must match the resolved semantic chain. Functions:
+`evidence/graph/phase6_mapping.py::verified_edge_graph_fragment` (around line
+86) and `evidence/graph/sqlalchemy_repository.py::_verify_phase6_edges`
+(around line 213). Minimal reproductions: (1) pair a valid direct edge with a
+schema-valid direct classification carrying the same `verification_id` but
+`mapping_id='map_foreign'`; (2) take a valid projected direct graph edge and
+change only `attributes['passage_ids']` to `['pass_nonexistent']`. Current:
+both persist, with the foreign classification basis or nonexistent graph
+citation visible on the stored relation. Required: projection and persistence
+must join classification source/version/MCU/mapping/verification/relation to
+the exact edge, and graph citation/classification attributes must be derived
+from or checked against the resolved chain. Smallest fix: key classification
+joins by the full edge comparison identity; validate the graph edge's
+Phase 6 attribute schema against the chain before insertion, or generate those
+attributes only inside the repository. Regression: both reproductions fail
+transactionally; a valid multi-passage and combination edge still persist.
+
+**F10 — Important: aggregate partial state can be upgraded to direct.**
+Invariant: partial verifier support cannot become decisive/direct. Functions:
+`evidence/verification/models.py::SupportVerification.state_matches_payload`
+(around line 160) and `evidence/precedent/gates.py::classify_precedent` (around
+line 366). Minimal reproduction: a valid claim with one `SUPPORTED` commitment
+record, `state=PARTIALLY_SUPPORTED`, `supported_portions` populated and
+`unsupported_portions=('all patients',)`; pass it to classification with
+`decisive=True` and eligible chronology. Current: schema accepts the internally
+inconsistent verification, and classifier returns decisive
+`DIRECT_PRECEDENT`. Required: reject inconsistent aggregate/record states and
+never classify direct unless the aggregate verifier state itself is
+`SUPPORTED`. Smallest fix: recompute/validate the aggregate state from the
+commitment records in the model or a shared deterministic gate, then guard
+the all-supported classifier branch by aggregate `SUPPORTED`. Regression:
+schema-valid-looking forged partial aggregate is rejected or non-direct;
+genuine scoped partial plus full/contradictory records retain their coverage.
+
+**N02 — Important, newly identified: repeat observation collides with an
+immutable edge.** Invariant: an identical semantic assessment replay must
+either be idempotent or append a distinct observation without overwriting
+history. Functions: `evidence/verification/gates.py::build_verified_evidence_edge`
+(edge ID construction around line 500) and
+`evidence/graph/sqlalchemy_repository.py::_persist_verified_edge` (around line
+131). Minimal reproduction: build the same valid edge twice for one
+`assessment_id` and cutoff, changing only `observed_at` by one second; upsert
+the first then the second. Current: IDs are equal but the second upsert raises
+`ValueError ... already exists with different content`. Required: repeated
+semantic results must coexist or re-upsert without discarding the observation
+history. Smallest fix: persist immutable semantic edge content separately
+from append-only observation events, or version the observation in an explicit
+artifact identity while retaining a stable semantic key. Regression: same
+assessment/evidence with two clocks can be persisted and traced; exact repeat
+stays idempotent; different cutoff and assessment IDs remain distinct.
+
+No additional Critical/Important defect was found in F01 statement obligation
+construction, F04 unversioned disclosure, F08 patent lineage counting, or F09
+mapper separation. Schema v3 refuses unsafe legacy Phase 6 edges rather than
+silently reinterpreting them. The very conservative context policy can also
+keep large source excerpts nondecisive; that is disclosed as a limitation,
+but the false `COMPLETE` result above is the blocking defect.
+
+### Verification and gate
+
+- Exact reviewed worktree, HEAD `75cee5e926b27a2ae695c7ad37db2eedc6404a6f`
+  before this review-only append: `uv sync --dev` passed; `uv run python
+  scripts/verify.py` passed Ruff, Ruff format (287 files), Pyright (0 errors,
+  0 warnings), and pytest **1471 passed, 5 deselected**; `git diff --check`
+  passed.
+- Fresh no-network local clone at
+  `/private/tmp/novcheck-phase6-final-review-75cee5e`, detached at the exact
+  same commit: `uv sync --dev`, `uv run python scripts/verify.py` (same checks
+  and **1471 passed, 5 deselected**), and `git diff --check` all passed.
+- Independent `python` probes, run with the reviewed worktree virtual
+  environment, reproduced the open variants above; the existing Phase 6
+  adversarial, benchmark, pipeline integration, and full-slice suites were
+  included in both full verifier runs. No production code, test fixture, or
+  Phase 7 implementation was changed by this review.
+
+Gate 30 **FAILS**: F02, F03, F06, F07, and F10 remain open, and N02 is a new
+Important finding. F01, F04, F05, F08, F09, N01, F11, and M01 are closed for
+the attacks stated above. Phase 7 remains unstarted.
+
+Acceptance Gate 30: FAIL — Phase 6 remains blocked.
+
+---
+
+## Final contract-consolidation implementation record (not an independent re-review)
+
+The preceding independent **FAIL** at `75cee5e` is preserved. This section
+records implementation only; it does not close findings or change Gate 30.
+The approved consolidation plan is
+`docs/superpowers/plans/2026-09-28-phase-6-contract-consolidation-plan.md`.
+
+| Open finding | Consolidated contract | New adversarial evidence |
+| --- | --- | --- |
+| F02 | `CitedDisclosure` binds the owned exact version, cutoff and source-wide first-public assertion; conflicts abstain. | Contradictory first-public date, early preprint/later sibling, future revision, missing/foreign/unknown version, decisive/post-cutoff. |
+| F03 | Extractor-attested unit start and end govern completeness. | Previous-only, next-only, complete abstract, truncated qualifier, exact repeated locator, zero budget, blocked context. |
+| F10 | Commitment records derive aggregate verifier state; direct requires aggregate `SUPPORTED`. | Both forged aggregate directions, genuine multiple partials, partial plus contradiction, all-supported baseline. |
+| F06 | `VerifiedComparison` validates the full chain; public verified classification consumes it; `ClassifiedComparison` checks identity and basis. | Foreign mapping and basis, raw public classifier rejection, valid combination comparison. |
+| F07 | Repository resolves source/version/claim/passages/chain/classification and derives graph semantic attributes. | False graph citation, nonexistent passage, bare edge, rollback, valid multi-passage and combination edges, unsafe legacy migration block. |
+| N02 | Schema v4 stores immutable semantic edges plus append-only observation events. | Two timestamps, exact replay, different cutoff and assessment, reopen, safe metadata-only migration. |
+
+The real full-slice test reaches `REPORTED` and `COMPLETED` with a versioned
+disclosure, a verifier-cited expanded passage, scoped partial support and a
+combination target. The public graph path uses authoritative comparisons;
+Phase 7 adjudication remains a fixture. The previously closed F01, F04,
+F05, F08, F09, N01, F11 and M01 contracts were retained. ADR-033 through
+ADR-035 document the new decisions and schema migration. No independent
+semantic acceptance is claimed from the implementation tests.
+
+Consolidation worktree verification: `uv sync --dev` passed;
+`uv run python scripts/verify.py` passed Ruff check, Ruff format (288 files),
+Pyright 0 errors/0 warnings, and **1497 passed, 5 network tests
+deselected**. `git diff --check` passed. The exact final commit will receive
+separate fresh-checkout verification in the implementation handoff.
+
+Gate 30 remains OPEN pending fresh independent GPT-6 Sol High/Max semantic re-review.
