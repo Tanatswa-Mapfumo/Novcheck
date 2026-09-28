@@ -397,7 +397,9 @@ def test_attack_10_analogy_inflation_cannot_become_direct() -> None:
         ),
         clock=lambda: NOW,
     )
-    assert classification.relation == PrecedentState.ANALOGOUS_PRECEDENT
+    # F09: an unverified PURPOSE mapping cannot upgrade component context to
+    # analogy; only independently verified functional commitments can.
+    assert classification.relation == PrecedentState.COMPONENT_PRECEDENT_ONLY
     assert not classification.decisive
     with pytest.raises(EdgeEligibilityError):
         build_verified_evidence_edge(

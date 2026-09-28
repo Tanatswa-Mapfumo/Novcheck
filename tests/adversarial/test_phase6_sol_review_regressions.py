@@ -540,6 +540,10 @@ from novelty_harness.evidence.mapping.models import (  # noqa: E402
     ComparisonDimension as _Dimension,
 )
 from tests.unit.evidence.precedent.test_classification import (  # noqa: E402
+    RELATIONSHIP,
+    basic_commitments,
+)
+from tests.unit.evidence.precedent.test_classification import (  # noqa: E402
     facts_for as _facts_for,
 )
 
@@ -841,3 +845,89 @@ def test_f03_expansion_never_crosses_source_or_version() -> None:
         )
         assert not expansion.available
         assert expansion.blocked_reason is not None
+
+
+# --- F09 ---
+
+
+def test_f09_unverified_purpose_match_cannot_upgrade_to_analogy() -> None:
+    target = classification_proposition(*basic_commitments())
+    classification = classify_precedent(
+        _facts_for(
+            target,
+            states={"mech": "NOT_SUPPORTED", "feat": "SUPPORTED", "rel": "NOT_SUPPORTED"},
+            matching=(_Dimension.PURPOSE, _Dimension.FEATURES),
+        ),
+        clock=lambda: NOW,
+    )
+    assert classification.relation == PrecedentState.COMPONENT_PRECEDENT_ONLY
+    assert classification.functional_similarity == ()
+    assert not classification.decisive
+
+
+def test_f09_verified_functional_commitment_supports_analogy() -> None:
+    target = classification_proposition(
+        commitment("mech", _Dimension.MECHANISM, text="threshold drives a coil"),
+        commitment("purpose", _Dimension.PURPOSE, text="avoid manual switching"),
+        commitment(
+            "rel", _Dimension.RELATIONSHIPS, text="sensor controls relay", relationship=RELATIONSHIP
+        ),
+    )
+    classification = classify_precedent(
+        _facts_for(
+            target,
+            states={
+                "mech": "NOT_SUPPORTED",
+                "purpose": "SUPPORTED",
+                "rel": "NOT_SUPPORTED",
+            },
+            matching=(_Dimension.PURPOSE,),
+        ),
+        clock=lambda: NOW,
+    )
+    assert classification.relation == PrecedentState.ANALOGOUS_PRECEDENT
+    assert _Dimension.PURPOSE in classification.functional_similarity
+    assert not classification.decisive
+
+
+def test_f09_mapper_conflict_blocks_direct_until_resolved() -> None:
+    target = classification_proposition(*basic_commitments())
+    all_supported = {
+        "mech": "SUPPORTED",
+        "feat": "SUPPORTED",
+        "rel": "SUPPORTED",
+    }
+    conflicted = classify_precedent(
+        _facts_for(
+            target,
+            states=all_supported,
+            matching=(
+                _Dimension.MECHANISM,
+                _Dimension.FEATURES,
+                _Dimension.RELATIONSHIPS,
+            ),
+            conflicting=(_Dimension.CONTROL_FLOW,),
+            decisive=True,
+            chronology="PREDATES_CUTOFF",
+        ),
+        clock=lambda: NOW,
+    )
+    assert conflicted.relation == PrecedentState.UNRESOLVED
+    assert conflicted.relation != PrecedentState.DIRECT_PRECEDENT
+    assert any("mapper conflict" in item.lower() for item in conflicted.unresolved)
+
+    resolved = classify_precedent(
+        _facts_for(
+            target,
+            states=all_supported,
+            matching=(
+                _Dimension.MECHANISM,
+                _Dimension.FEATURES,
+                _Dimension.RELATIONSHIPS,
+            ),
+            decisive=True,
+            chronology="PREDATES_CUTOFF",
+        ),
+        clock=lambda: NOW,
+    )
+    assert resolved.relation == PrecedentState.DIRECT_PRECEDENT

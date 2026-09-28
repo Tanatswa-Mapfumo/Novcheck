@@ -237,14 +237,17 @@ def classify_precedent(
     ingredients_supported = bool(ingredient_ids & supported)
     mechanism_supported = bool(mechanism_ids) and mechanism_ids <= supported
     supported_ratio = len(supported) / len(ordered_ids)
-    functional_matched = tuple(
+    # F09: functional analogy requires independently verified functional
+    # commitments, not merely a mapper proposal.
+    functional_verified = tuple(
         dict.fromkeys(
-            dimension.dimension
-            for dimension in mapping.dimensions
-            if dimension.matching and dimension.dimension in FUNCTIONAL_DIMENSIONS
+            commitments[identity].dimension
+            for identity in ordered_ids
+            if identity in supported and commitments[identity].dimension in FUNCTIONAL_DIMENSIONS
         )
     )
     mapping_matching = any(dimension.matching for dimension in mapping.dimensions)
+    unresolved_conflicts = mapping.aggregate_comparison().conflicting_elements
 
     if verification.state == SupportVerificationState.CONTRADICTED:
         return _classification(
@@ -275,7 +278,7 @@ def classify_precedent(
     if verification.state == SupportVerificationState.NOT_SUPPORTED:
         relation = (
             PrecedentState.SUPERFICIAL_SIMILARITY
-            if mapping_matching or functional_matched
+            if mapping_matching
             else PrecedentState.NO_DIRECT_PRECEDENT_IDENTIFIED
         )
         return _classification(
@@ -287,7 +290,7 @@ def classify_precedent(
                 if relation == PrecedentState.SUPERFICIAL_SIMILARITY
                 else "This source does not address the claimed proposition",
             ),
-            functional_similarity=functional_matched,
+            functional_similarity=functional_verified,
             covered_elements=covered_elements,
             covered_relationships=covered_relationships,
             missing_elements=missing_elements,
@@ -296,6 +299,22 @@ def classify_precedent(
             provenance=provenance,
         )
     if supported == set(ordered_ids):
+        if unresolved_conflicts:
+            return _classification(
+                facts,
+                relation=PrecedentState.UNRESOLVED,
+                basis=(
+                    "Every material commitment is supported but the mapper recorded "
+                    "material conflicts that must be independently resolved",
+                ),
+                unresolved=tuple(
+                    f"Unresolved mapper conflict: {item}" for item in unresolved_conflicts
+                ),
+                covered_elements=covered_elements,
+                covered_relationships=covered_relationships,
+                clock=clock,
+                provenance=provenance,
+            )
         if facts.decisive:
             return _classification(
                 facts,
@@ -330,7 +349,7 @@ def classify_precedent(
 
     # Partial support: configuration-first, then functional analogy, then coverage.
     configuration_claimed = bool(configuration_ids)
-    if functional_matched and not mechanism_supported and not configuration_supported:
+    if functional_verified and not mechanism_supported and not configuration_supported:
         return _classification(
             facts,
             relation=PrecedentState.ANALOGOUS_PRECEDENT,
@@ -338,7 +357,7 @@ def classify_precedent(
                 "A relevant functional principle is shared while the claimed mechanism "
                 "and configuration are not verified",
             ),
-            functional_similarity=functional_matched,
+            functional_similarity=functional_verified,
             configuration_gap=(
                 "Claimed configuration not established by this source"
                 if configuration_claimed
@@ -387,12 +406,12 @@ def classify_precedent(
             clock=clock,
             provenance=provenance,
         )
-    if functional_matched:
+    if functional_verified:
         return _classification(
             facts,
             relation=PrecedentState.ANALOGOUS_PRECEDENT,
             basis=("A functional principle is shared but the mechanism materially differs",),
-            functional_similarity=functional_matched,
+            functional_similarity=functional_verified,
             covered_elements=covered_elements,
             covered_relationships=covered_relationships,
             missing_elements=missing_elements,

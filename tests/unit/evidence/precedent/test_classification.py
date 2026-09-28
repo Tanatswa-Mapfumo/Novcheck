@@ -316,18 +316,35 @@ def test_most_aspects_with_one_material_gap_is_strong_partial() -> None:
 
 
 def test_functional_match_with_missing_mechanism_is_analogous_not_direct() -> None:
-    target = proposition(*basic_commitments())
+    # F09: analogy requires an independently verified functional commitment,
+    # not merely a mapper-proposed PURPOSE match.
+    target = proposition(
+        commitment("mech", ComparisonDimension.MECHANISM, text="threshold drives a coil"),
+        commitment("feat", ComparisonDimension.FEATURES, text="sensor"),
+        commitment("outcome", ComparisonDimension.INTENDED_OUTCOME, text="avoid manual switching"),
+        commitment(
+            "rel",
+            ComparisonDimension.RELATIONSHIPS,
+            text="sensor controls relay",
+            relationship=RELATIONSHIP,
+        ),
+    )
     classification = classify_precedent(
         facts_for(
             target,
-            states={"mech": "NOT_SUPPORTED", "feat": "SUPPORTED", "rel": "NOT_SUPPORTED"},
+            states={
+                "mech": "NOT_SUPPORTED",
+                "feat": "SUPPORTED",
+                "outcome": "SUPPORTED",
+                "rel": "NOT_SUPPORTED",
+            },
             matching=(ComparisonDimension.PURPOSE, ComparisonDimension.FEATURES),
             missing=(ComparisonDimension.MECHANISM, ComparisonDimension.RELATIONSHIPS),
         ),
         clock=lambda: NOW,
     )
     assert classification.relation == PrecedentState.ANALOGOUS_PRECEDENT
-    assert classification.functional_similarity == (ComparisonDimension.PURPOSE,)
+    assert classification.functional_similarity == (ComparisonDimension.INTENDED_OUTCOME,)
     assert not classification.decisive
 
 
