@@ -64,6 +64,7 @@ from novelty_harness.evidence.precedent.patent import (
     patent_locator_from_passage,
     screen_patent_references,
 )
+from novelty_harness.evidence.quality.models import EvidenceQualityAssessment
 from novelty_harness.evidence.verification.gates import build_verified_evidence_edge
 from novelty_harness.evidence.verification.models import (
     ContextExpansion,
@@ -101,6 +102,9 @@ class Phase6EvidenceResult:
     classifications: tuple[PrecedentClassification, ...]
     multi_source: tuple[MultiSourceAssessment, ...]
     patent_screenings: tuple[PatentScreeningResult, ...]
+    unassessed_sources: tuple[SourceId, ...]
+    unassessed_versions: tuple[str, ...]
+    coverage_limitations: tuple[str, ...]
     failures: tuple[str, ...]
     limitations: tuple[str, ...]
     graph_ref: str
@@ -118,6 +122,14 @@ def _combination_profile_and_proposition(
     return profile, build_proposition(profile)
 
 
+@dataclass(frozen=True, slots=True)
+class CandidateSelection:
+    """Selected candidates plus the bounded remainder (F04)."""
+
+    selected: tuple[SourceRecord, ...]
+    unassessed_sources: tuple[SourceId, ...]
+
+
 def select_candidate_sources(
     *,
     target_id: MCUId,
@@ -125,8 +137,12 @@ def select_candidate_sources(
     sources: Sequence[SourceRecord],
     passages_by_source: Mapping[SourceId, tuple[PassageRecord, ...]],
     max_sources: int,
-) -> tuple[SourceRecord, ...]:
-    """Choose candidate sources by discovery routing only; no rank or quality."""
+) -> CandidateSelection:
+    """Choose candidate sources by discovery routing only; no rank or quality.
+
+    Sources beyond the bound are returned as explicitly unassessed so a local
+    classification never implies exhaustive coverage (F04).
+    """
 
     wanted = {target_id, *member_ids}
     routed = [
@@ -142,21 +158,39 @@ def select_candidate_sources(
         and passages_by_source.get(source.source_id)
     ]
     ordered = sorted(eligible, key=lambda source: source.source_id)
-    return tuple(ordered[:max_sources])
+    return CandidateSelection(
+        selected=tuple(ordered[:max_sources]),
+        unassessed_sources=tuple(source.source_id for source in ordered[max_sources:]),
+    )
 
 
-def _best_version(
+def select_versions(
     versions: Sequence[SourceVersionRecord],
     passages: Sequence[PassageRecord],
-) -> SourceVersionRecord | None:
+    *,
+    max_versions: int,
+) -> tuple[tuple[SourceVersionRecord | None, ...], tuple[str, ...]]:
+    """Documented multi-version policy: assess every version with passages up to a
+    bound, oldest-first, and report the remainder as unassessed (F04)."""
+
     usable = [
         version
         for version in versions
-        if any(p.source_version_id == version.version_id for p in passages)
+        if any(passage.source_version_id == version.version_id for passage in passages)
     ]
-    if not usable:
-        return None
-    return max(usable, key=lambda version: (version.observed_at, version.version_id))
+    usable.sort(
+        key=lambda version: (
+            version.published_date is None,
+            version.published_date or date.min,
+            version.observed_at,
+            version.version_id,
+        )
+    )
+    selected: tuple[SourceVersionRecord | None, ...] = tuple(usable[:max_versions])
+    excluded = tuple(version.version_id for version in usable[max_versions:])
+    if not selected:
+        return (None,), excluded
+    return selected, excluded
 
 
 class EvidenceVerificationPipeline:
@@ -167,16 +201,183 @@ class EvidenceVerificationPipeline:
         runner: SemanticRunner,
         *,
         max_sources_per_mcu: int = 3,
+        max_versions_per_source: int = 3,
         max_expansions: int = 2,
         window_chars: int = DEFAULT_WINDOW_CHARS,
     ) -> None:
-        if max_sources_per_mcu < 1:
-            raise ValueError("At least one candidate source per MCU is required")
+        if max_sources_per_mcu < 1 or max_versions_per_source < 1:
+            raise ValueError("Candidate source/version bounds must be positive")
         self.mapper = EvidenceMapperV2(runner)
         self.verifier = IndependentSupportVerifier(runner)
         self.max_sources_per_mcu = max_sources_per_mcu
+        self.max_versions_per_source = max_versions_per_source
         self.max_expansions = max_expansions
         self.window_chars = window_chars
+
+    async def _assess_candidate(
+        self,
+        *,
+        proposition: EvidenceProposition,
+        source: SourceRecord,
+        version: SourceVersionRecord | None,
+        source_passages: tuple[PassageRecord, ...],
+        as_of: date,
+        quality_by_source: Mapping[SourceId, EvidenceQualityAssessment],
+        mappings: list[SourceMCUMapping],
+        claims: list[SupportEvidenceBundle],
+        verifications: list[SupportVerification],
+        expansions: list[ContextExpansion],
+        edges: list[VerifiedEvidenceEdge],
+        classifications: list[PrecedentClassification],
+        target_classifications: list[PrecedentClassification],
+        failures: list[str],
+        emit: Callable[..., None],
+        clock: Callable[[], datetime],
+    ) -> None:
+        """Map, select, verify, gate and classify one source/version candidate."""
+
+        try:
+            mapping = await self.mapper.map_source_to_mcu(
+                proposition=proposition,
+                source=source,
+                version=version,
+                passages=source_passages,
+                clock=clock,
+            )
+        except (SemanticOutputValidationError, MappingValidationError) as error:
+            failure = (
+                f"{source.source_id}->{proposition.mcu_id}: mapping failed: {type(error).__name__}"
+            )
+            failures.append(failure)
+            emit("EVIDENCE_MAPPING_FAILED", {"detail": failure}, failure=True)
+            unassessable = classify_precedent(
+                ClassificationFacts(
+                    proposition=proposition,
+                    source_id=source.source_id,
+                    source_version_id=version.version_id if version else None,
+                    selection_failure="Mapping could not be validated",
+                ),
+                clock=clock,
+            )
+            classifications.append(unassessable)
+            target_classifications.append(unassessable)
+            return
+        mappings.append(mapping)
+        emit(
+            "EVIDENCE_MAPPING",
+            {
+                "mapping_id": mapping.mapping_id,
+                "source_id": source.source_id,
+                "mcu_id": proposition.mcu_id,
+                "dimension_count": len(mapping.dimensions),
+            },
+        )
+        try:
+            bundle = select_support_passages(
+                mapping=mapping,
+                proposition=proposition,
+                source=source,
+                version=version,
+                passages=source_passages,
+                clock=clock,
+            )
+        except PassageSelectionError as error:
+            failure = f"{source.source_id}->{proposition.mcu_id}: {error}"
+            failures.append(failure)
+            unassessable = classify_precedent(
+                ClassificationFacts(
+                    proposition=proposition,
+                    source_id=source.source_id,
+                    source_version_id=version.version_id if version else None,
+                    mapping=mapping,
+                    selection_failure=str(error),
+                ),
+                clock=clock,
+            )
+            classifications.append(unassessable)
+            target_classifications.append(unassessable)
+            return
+        claims.append(bundle)
+        retry = await verify_with_context_retry(
+            self.verifier,
+            bundle,
+            available_passages=source_passages,
+            max_expansions=self.max_expansions,
+            window_chars=self.window_chars,
+            clock=clock,
+        )
+        verifications.append(retry.verification)
+        expansions.extend(retry.expansions)
+        for expansion in retry.expansions:
+            emit(
+                "CONTEXT_EXPANSION",
+                {
+                    "origin_passage_id": expansion.origin_passage_id,
+                    "available": expansion.available,
+                    "attempt": expansion.attempt,
+                },
+                failure=not expansion.available,
+                stage=AssessmentStage.EVIDENCE_VERIFIED,
+            )
+        emit(
+            "SUPPORT_VERIFICATION",
+            {
+                "verification_id": retry.verification.verification_id,
+                "source_id": source.source_id,
+                "mcu_id": proposition.mcu_id,
+                "state": retry.verification.state.value,
+            },
+            failure=retry.verification.state.value in {"NOT_SUPPORTED", "CONTRADICTED"},
+            stage=AssessmentStage.EVIDENCE_VERIFIED,
+        )
+        edge = build_verified_evidence_edge(
+            mapping=mapping,
+            verification=retry.verification,
+            proposition=proposition,
+            source=source,
+            as_of=as_of,
+            observed_at=clock(),
+            version=version,
+            quality=quality_by_source.get(source.source_id),
+        )
+        classification = classify_precedent(
+            ClassificationFacts(
+                proposition=proposition,
+                source_id=source.source_id,
+                source_version_id=version.version_id if version else None,
+                mapping=mapping,
+                verification=retry.verification,
+                claim_id=bundle.claim.claim_id,
+                decisive=edge.decisive,
+                chronology_state=edge.chronology.state,
+            ),
+            clock=clock,
+        )
+        if classification.relation != PrecedentState.UNASSESSABLE:
+            edge = build_verified_evidence_edge(
+                mapping=mapping,
+                verification=retry.verification,
+                proposition=proposition,
+                source=source,
+                as_of=as_of,
+                observed_at=clock(),
+                version=version,
+                quality=quality_by_source.get(source.source_id),
+                relation=classification.relation,
+            )
+        edges.append(edge)
+        classifications.append(classification)
+        target_classifications.append(classification)
+        emit(
+            "PRECEDENT_CLASSIFICATION",
+            {
+                "classification_id": classification.classification_id,
+                "source_id": source.source_id,
+                "mcu_id": proposition.mcu_id,
+                "relation": classification.relation.value,
+                "local_only": True,
+            },
+        )
 
     async def run(
         self,
@@ -250,170 +451,58 @@ class EvidenceVerificationPipeline:
         edges: list[VerifiedEvidenceEdge] = []
         classifications: list[PrecedentClassification] = []
         multi_source_summaries: list[MultiSourceAssessment] = []
+        unassessed_sources: list[SourceId] = []
+        unassessed_versions: list[str] = []
         failures: list[str] = []
 
         for profile, proposition, member_ids in targets:
             profiles.append(profile)
             propositions.append(proposition)
-            candidates = select_candidate_sources(
+            selection = select_candidate_sources(
                 target_id=profile.target_id,
                 member_ids=member_ids,
                 sources=sources,
                 passages_by_source=passages_by_source,
                 max_sources=self.max_sources_per_mcu,
             )
+            unassessed_sources.extend(selection.unassessed_sources)
             target_classifications: list[PrecedentClassification] = []
-            for source in candidates:
+            for source in selection.selected:
                 all_passages = passages_by_source[source.source_id]
-                version = _best_version(versions_by_source.get(source.source_id, ()), all_passages)
-                source_passages = tuple(
-                    passage
-                    for passage in all_passages
-                    if version is not None and passage.source_version_id == version.version_id
-                ) or (all_passages if version is None else ())
-                if not source_passages:
-                    continue
-                try:
-                    mapping = await self.mapper.map_source_to_mcu(
+                version_slots, excluded_versions = select_versions(
+                    versions_by_source.get(source.source_id, ()),
+                    all_passages,
+                    max_versions=self.max_versions_per_source,
+                )
+                unassessed_versions.extend(
+                    f"{source.source_id}:{version_id}" for version_id in excluded_versions
+                )
+                for version in version_slots:
+                    source_passages = tuple(
+                        passage
+                        for passage in all_passages
+                        if version is not None and passage.source_version_id == version.version_id
+                    ) or (all_passages if version is None else ())
+                    if not source_passages:
+                        continue
+                    await self._assess_candidate(
                         proposition=proposition,
                         source=source,
                         version=version,
-                        passages=source_passages,
-                        clock=clock,
-                    )
-                except (SemanticOutputValidationError, MappingValidationError) as error:
-                    failure = (
-                        f"{source.source_id}->{proposition.mcu_id}: mapping failed: "
-                        f"{type(error).__name__}"
-                    )
-                    failures.append(failure)
-                    emit("EVIDENCE_MAPPING_FAILED", {"detail": failure}, failure=True)
-                    unassessable = classify_precedent(
-                        ClassificationFacts(
-                            proposition=proposition,
-                            source_id=source.source_id,
-                            source_version_id=version.version_id if version else None,
-                            selection_failure="Mapping could not be validated",
-                        ),
-                        clock=clock,
-                    )
-                    classifications.append(unassessable)
-                    target_classifications.append(unassessable)
-                    continue
-                mappings.append(mapping)
-                emit(
-                    "EVIDENCE_MAPPING",
-                    {
-                        "mapping_id": mapping.mapping_id,
-                        "source_id": source.source_id,
-                        "mcu_id": proposition.mcu_id,
-                        "dimension_count": len(mapping.dimensions),
-                    },
-                )
-                try:
-                    bundle = select_support_passages(
-                        mapping=mapping,
-                        proposition=proposition,
-                        source=source,
-                        version=version,
-                        passages=source_passages,
-                        clock=clock,
-                    )
-                except PassageSelectionError as error:
-                    failure = f"{source.source_id}->{proposition.mcu_id}: {error}"
-                    failures.append(failure)
-                    unassessable = classify_precedent(
-                        ClassificationFacts(
-                            proposition=proposition,
-                            source_id=source.source_id,
-                            source_version_id=version.version_id if version else None,
-                            mapping=mapping,
-                            selection_failure=str(error),
-                        ),
-                        clock=clock,
-                    )
-                    classifications.append(unassessable)
-                    target_classifications.append(unassessable)
-                    continue
-                claims.append(bundle)
-                retry = await verify_with_context_retry(
-                    self.verifier,
-                    bundle,
-                    available_passages=source_passages,
-                    max_expansions=self.max_expansions,
-                    window_chars=self.window_chars,
-                    clock=clock,
-                )
-                verifications.append(retry.verification)
-                expansions.extend(retry.expansions)
-                for expansion in retry.expansions:
-                    emit(
-                        "CONTEXT_EXPANSION",
-                        {
-                            "origin_passage_id": expansion.origin_passage_id,
-                            "available": expansion.available,
-                            "attempt": expansion.attempt,
-                        },
-                        failure=not expansion.available,
-                        stage=AssessmentStage.EVIDENCE_VERIFIED,
-                    )
-                emit(
-                    "SUPPORT_VERIFICATION",
-                    {
-                        "verification_id": retry.verification.verification_id,
-                        "source_id": source.source_id,
-                        "mcu_id": proposition.mcu_id,
-                        "state": retry.verification.state.value,
-                    },
-                    failure=retry.verification.state.value in {"NOT_SUPPORTED", "CONTRADICTED"},
-                    stage=AssessmentStage.EVIDENCE_VERIFIED,
-                )
-                edge = build_verified_evidence_edge(
-                    mapping=mapping,
-                    verification=retry.verification,
-                    proposition=proposition,
-                    source=source,
-                    as_of=as_of,
-                    observed_at=clock(),
-                    quality=quality_by_source.get(source.source_id),
-                )
-                classification = classify_precedent(
-                    ClassificationFacts(
-                        proposition=proposition,
-                        source_id=source.source_id,
-                        source_version_id=version.version_id if version else None,
-                        mapping=mapping,
-                        verification=retry.verification,
-                        decisive=edge.decisive,
-                        chronology_state=edge.chronology.state,
-                    ),
-                    clock=clock,
-                )
-                if classification.relation != PrecedentState.UNASSESSABLE:
-                    edge = build_verified_evidence_edge(
-                        mapping=mapping,
-                        verification=retry.verification,
-                        proposition=proposition,
-                        source=source,
+                        source_passages=source_passages,
                         as_of=as_of,
-                        observed_at=clock(),
-                        quality=quality_by_source.get(source.source_id),
-                        relation=classification.relation,
+                        quality_by_source=quality_by_source,
+                        mappings=mappings,
+                        claims=claims,
+                        verifications=verifications,
+                        expansions=expansions,
+                        edges=edges,
+                        classifications=classifications,
+                        target_classifications=target_classifications,
+                        failures=failures,
+                        emit=emit,
+                        clock=clock,
                     )
-                edges.append(edge)
-                classifications.append(classification)
-                target_classifications.append(classification)
-                emit(
-                    "PRECEDENT_CLASSIFICATION",
-                    {
-                        "classification_id": classification.classification_id,
-                        "source_id": source.source_id,
-                        "mcu_id": proposition.mcu_id,
-                        "relation": classification.relation.value,
-                        "local_only": True,
-                    },
-                )
-
             independent_root_of = {
                 source_id: cluster.root_source_ids[0]
                 for cluster in evidence.lineage_clusters
@@ -527,11 +616,25 @@ class EvidenceVerificationPipeline:
             },
         )
 
+        coverage_limitations: list[str] = []
+        if unassessed_sources:
+            coverage_limitations.append(
+                f"{len(unassessed_sources)} candidate source(s) were outside the "
+                "bounded local coverage and remain unassessed"
+            )
+        if unassessed_versions:
+            coverage_limitations.append(
+                f"{len(unassessed_versions)} source version(s) were outside the "
+                "bounded local coverage and remain unassessed"
+            )
         limitations: list[str] = [
             "Mapping and verification are local source/MCU comparisons; "
             "no global absence or novelty claim is produced",
+            "Local classifications cover only the assessed sources/versions; "
+            "unassessed coverage is recorded explicitly",
             "Relevance/quality did not enter the blinded verifier input",
         ]
+        limitations.extend(coverage_limitations)
         if not edges:
             limitations.append("No source could be mapped to any MCU target locally")
         result = Phase6EvidenceResult(
@@ -545,6 +648,9 @@ class EvidenceVerificationPipeline:
             classifications=tuple(classifications),
             multi_source=tuple(multi_source_summaries),
             patent_screenings=tuple(patent_screenings),
+            unassessed_sources=tuple(dict.fromkeys(unassessed_sources)),
+            unassessed_versions=tuple(dict.fromkeys(unassessed_versions)),
+            coverage_limitations=tuple(coverage_limitations),
             failures=tuple(failures),
             limitations=tuple(limitations),
             graph_ref=graph_ref,
@@ -576,6 +682,15 @@ def write_phase6_artifacts(
     writer.write_jsonl(assessment_id, "phase6/patent_screenings.jsonl", result.patent_screenings)
     writer.write_json(
         assessment_id,
+        "phase6/coverage.json",
+        {
+            "unassessed_sources": list(result.unassessed_sources),
+            "unassessed_versions": list(result.unassessed_versions),
+            "coverage_limitations": list(result.coverage_limitations),
+        },
+    )
+    writer.write_json(
+        assessment_id,
         "phase6/phase6_result.json",
         {
             "graph_ref": result.graph_ref,
@@ -584,6 +699,8 @@ def write_phase6_artifacts(
             "verified_edge_count": len(result.edges),
             "classification_count": len(result.classifications),
             "expansion_count": len(result.expansions),
+            "unassessed_source_count": len(result.unassessed_sources),
+            "unassessed_version_count": len(result.unassessed_versions),
             "failures": list(result.failures),
             "limitations": list(result.limitations),
         },
@@ -603,6 +720,7 @@ async def verify_evidence_against_mcus(
     trace_sink: TraceSink,
     graph_ref: str = "phase5/evidence_graph.sqlite3",
     max_sources_per_mcu: int = 3,
+    max_versions_per_source: int = 3,
     max_expansions: int = 2,
     window_chars: int = DEFAULT_WINDOW_CHARS,
     clock: Callable[[], datetime] = utc_now,
@@ -612,6 +730,7 @@ async def verify_evidence_against_mcus(
     pipeline = EvidenceVerificationPipeline(
         runner,
         max_sources_per_mcu=max_sources_per_mcu,
+        max_versions_per_source=max_versions_per_source,
         max_expansions=max_expansions,
         window_chars=window_chars,
     )

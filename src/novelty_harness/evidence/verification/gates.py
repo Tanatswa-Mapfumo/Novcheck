@@ -18,7 +18,7 @@ from novelty_harness.domain.enums import (
 from novelty_harness.domain.idea import ArtifactProvenance
 from novelty_harness.evidence.context.selection import SupportEvidenceBundle
 from novelty_harness.evidence.mapping.models import EvidenceProposition, SourceMCUMapping
-from novelty_harness.evidence.normalization.models import SourceRecord
+from novelty_harness.evidence.normalization.models import SourceRecord, SourceVersionRecord
 from novelty_harness.evidence.passages.hashing import text_hash
 from novelty_harness.evidence.quality.models import EvidenceQualityAssessment
 from novelty_harness.evidence.verification.models import (
@@ -289,14 +289,56 @@ PUBLIC_DISCLOSURE_FIELDS = (
 )
 
 
-def assess_chronology(source: SourceRecord, *, as_of: date) -> ChronologyAssessment:
-    """Compute the public-disclosure chronology gate for one source."""
+def assess_chronology(
+    source: SourceRecord,
+    *,
+    as_of: date,
+    version: SourceVersionRecord | None = None,
+) -> ChronologyAssessment:
+    """Compute the public-disclosure chronology gate for the cited content.
+
+    When a cited source version is supplied, its publication date governs the
+    content actually being assessed (F02): an old source date can never make a
+    later revision eligible, conflicting source-level dates are combined
+    conservatively, and a cited version without a disclosure date stays
+    uncertain rather than inheriting the source date.
+    """
 
     candidates = [
         (getattr(source.dates, field), field)
         for field in PUBLIC_DISCLOSURE_FIELDS
         if getattr(source.dates, field) is not None
     ]
+    if version is not None:
+        if version.published_date is None:
+            return ChronologyAssessment(
+                as_of=as_of,
+                state="UNCERTAIN",
+                decisive_date_field="version_published_date",
+                rationale=(
+                    "The cited source version has no public-disclosure date; "
+                    "chronology stays uncertain",
+                ),
+            )
+        known: list[tuple[date, str]] = [(version.published_date, "version_published_date")]
+        known.extend(candidates)
+        decisive_date, field = max(known)
+        state: Literal["PREDATES_CUTOFF", "POST_CUTOFF"] = (
+            "PREDATES_CUTOFF" if decisive_date <= as_of else "POST_CUTOFF"
+        )
+        rationale = (
+            f"Cited version/combined public disclosure is {field}={decisive_date.isoformat()}",
+            "Post-cutoff evidence cannot negate historical novelty"
+            if state == "POST_CUTOFF"
+            else "Cited version disclosure is at or before the assessment cutoff",
+        )
+        return ChronologyAssessment(
+            as_of=as_of,
+            state=state,
+            decisive_date_field=field,
+            decisive_date=decisive_date,
+            rationale=rationale,
+        )
     if not candidates:
         return ChronologyAssessment(
             as_of=as_of,
@@ -304,9 +346,7 @@ def assess_chronology(source: SourceRecord, *, as_of: date) -> ChronologyAssessm
             rationale=("No complete public-disclosure date; chronology stays uncertain",),
         )
     decisive_date, field = min(candidates)
-    state: Literal["PREDATES_CUTOFF", "POST_CUTOFF"] = (
-        "PREDATES_CUTOFF" if decisive_date <= as_of else "POST_CUTOFF"
-    )
+    state = "PREDATES_CUTOFF" if decisive_date <= as_of else "POST_CUTOFF"
     rationale = (
         f"Earliest public disclosure is {field}={decisive_date.isoformat()}",
         "Post-cutoff evidence cannot negate historical novelty"
@@ -354,6 +394,7 @@ def build_verified_evidence_edge(
     source: SourceRecord,
     as_of: date,
     observed_at: datetime,
+    version: SourceVersionRecord | None = None,
     quality: EvidenceQualityAssessment | None = None,
     relation: PrecedentState | None = None,
     provenance: ArtifactProvenance | None = None,
@@ -371,10 +412,12 @@ def build_verified_evidence_edge(
         raise EdgeEligibilityError("Verification, mapping and source identities must agree")
     if mapping.source_version_id != verification.source_version_id:
         raise EdgeEligibilityError("Verification and mapping versions must agree")
+    if version is not None and version.version_id != verification.source_version_id:
+        raise EdgeEligibilityError("Cited version does not match the verified version")
     if quality is not None and quality.source_id != source.source_id:
         raise EdgeEligibilityError("Quality assessment belongs to another source")
 
-    chronology = assess_chronology(source, as_of=as_of)
+    chronology = assess_chronology(source, as_of=as_of, version=version)
     decisive = (
         verification.state == SupportVerificationState.SUPPORTED
         and chronology.state == "PREDATES_CUTOFF"

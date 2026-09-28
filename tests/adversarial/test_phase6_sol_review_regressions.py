@@ -4,6 +4,7 @@ One regression per finding F01-F11 plus the minor M01; added after the review
 recorded them as open. These do not replace the original tests.
 """
 
+import json
 from datetime import date
 
 import pytest
@@ -32,7 +33,12 @@ from novelty_harness.evidence.verification.models import (
     CommitmentStateRecord,
     SupportVerification,
 )
-from tests.fixtures.phase5 import phase5_provenance
+from tests.fixtures.phase5 import (
+    make_passage,
+    make_source,
+    make_version,
+    phase5_provenance,
+)
 from tests.unit.evidence.precedent.test_classification import (
     commitment,
     facts_for,
@@ -294,3 +300,223 @@ def test_f06_f05_foundations_hold_on_a_valid_edge() -> None:
     )
     assert classification.relation == PrecedentState.DIRECT_PRECEDENT
     assert date(2026, 9, 28) == AS_OF
+
+
+# --- F02 ---
+
+
+def _f02_edge(*, version_published: date | None, source_overrides: dict | None = None):
+    return build_verified_evidence_edge(
+        mapping=eligibility_mapping(),
+        verification=eligibility_verification(SupportVerificationState.SUPPORTED),
+        proposition=eligibility_proposition(),
+        source=source(**(source_overrides or {})),
+        version=make_version("src_1", version_id="srcv_1_v1", published_date=version_published),
+        as_of=AS_OF,
+        observed_at=NOW,
+    )
+
+
+def test_f02_post_cutoff_revision_of_old_source_is_not_decisive() -> None:
+    edge = _f02_edge(version_published=date(2027, 1, 1))
+    assert edge.chronology.state == "POST_CUTOFF"
+    assert not edge.decisive
+    classification = classify_precedent(
+        ClassificationFacts(
+            proposition=eligibility_proposition(),
+            source_id="src_1",
+            source_version_id="srcv_1_v1",
+            mapping=eligibility_mapping(),
+            verification=eligibility_verification(SupportVerificationState.SUPPORTED),
+            decisive=edge.decisive,
+            chronology_state=edge.chronology.state,
+        ),
+        clock=lambda: NOW,
+    )
+    assert classification.relation == PrecedentState.UNRESOLVED
+    assert classification.relation != PrecedentState.DIRECT_PRECEDENT
+
+
+def test_f02_unknown_version_timing_stays_uncertain() -> None:
+    edge = _f02_edge(version_published=None)
+    assert edge.chronology.state == "UNCERTAIN"
+    assert not edge.decisive
+    assert any("uncertain" in item for item in edge.eligibility.reasons)
+
+
+def test_f02_older_eligible_version_remains_independently_assessable() -> None:
+    edge = _f02_edge(version_published=date(2019, 1, 1))
+    assert edge.chronology.state == "PREDATES_CUTOFF"
+    assert edge.decisive
+
+
+def test_f02_later_source_level_date_is_combined_conservatively() -> None:
+    edge = _f02_edge(
+        version_published=date(2020, 1, 1),
+        source_overrides={"dates": {"publication_date": date(2027, 1, 1)}},
+    )
+    assert edge.chronology.state == "POST_CUTOFF"
+    assert not edge.decisive
+
+
+# --- F04 ---
+
+from novelty_harness.domain.mcu import MCU as _MCU  # noqa: E402
+from novelty_harness.evidence.phase6_pipeline import (  # noqa: E402
+    select_candidate_sources as _select,
+)
+from novelty_harness.evidence.phase6_pipeline import (  # noqa: E402
+    select_versions as _select_versions,
+)
+from novelty_harness.evidence.pipeline import (  # noqa: E402
+    EvidenceNormalizationResult as _EvidenceResult,
+)
+from novelty_harness.runtime.semantic.structured import SemanticRunner as _Runner  # noqa: E402
+from tests.fixtures.phase5 import (  # noqa: E402
+    make_discovery_path as _make_path,
+)
+from tests.fixtures.phase5 import (  # noqa: E402
+    make_version as _make_version,
+)
+from tests.fixtures.phase6 import scripted_phase6_llm as _scripted  # noqa: E402
+
+
+def _f04_mcu() -> _MCU:
+    return _MCU(
+        mcu_id="mcu_1",
+        label="Switch",
+        statement="threshold switches relay",
+        mechanism="threshold switches relay",
+        provenance=ORIGIN,
+    )
+
+
+def _f04_evidence(sources_count: int, versions_per_source: int):
+    sources: list = []
+    versions: list = []
+    passages: list = []
+    for index in range(sources_count):
+        sid = f"src_{index:02d}"
+        sources.append(
+            make_source(
+                sid,
+                discovery_paths=(
+                    _make_path(provider_source_id=f"W{index}", query_id="qry_1", mcu_id="mcu_1"),
+                ),
+            )
+        )
+        for version_index in range(versions_per_source):
+            vid = f"srcv_{index:02d}_v{version_index}"
+            versions.append(
+                _make_version(
+                    sid,
+                    version_id=vid,
+                    version_label=f"v{version_index}",
+                    published_date=date(2019 + version_index, 1, 1),
+                )
+            )
+            passages.append(
+                make_passage(
+                    sid,
+                    text=f"threshold switches relay source {index} version {version_index}",
+                    passage_id=f"pass_{index:02d}_{version_index}",
+                    source_version_id=vid,
+                )
+            )
+    return _EvidenceResult(
+        sources=tuple(sources),
+        versions=tuple(versions),
+        passages=tuple(passages),
+        provenance_edges=(),
+        lineage_clusters=(),
+        quality_assessments=(),
+        relevance_assessments=(),
+        cycles=(),
+        conflicts=(),
+        unresolved_fields=(),
+        limitations=(),
+        graph_ref="phase5/evidence_graph.sqlite3",
+    )
+
+
+async def _run_f04_pipeline(tmp_path, evidence, *, max_sources=3, max_versions=3):
+    from novelty_harness.evidence.graph.models import GraphNode, GraphNodeKind
+    from novelty_harness.evidence.graph.sqlalchemy_repository import (
+        SqlAlchemyEvidenceGraphRepository as _Repo,
+    )
+    from novelty_harness.evidence.phase6_pipeline import (
+        verify_evidence_against_mcus as _verify,
+    )
+    from novelty_harness.runtime.artifacts.writer import RunArtifactWriter as _Writer
+    from novelty_harness.runtime.tracing.sinks import InMemoryTraceSink as _Sink
+
+    repository = _Repo()
+    repository.upsert(
+        nodes=tuple(
+            GraphNode(
+                node_id=item.source_id,
+                kind=GraphNodeKind.SOURCE,
+                label=item.canonical_title,
+                observed_at=NOW,
+                provenance=ORIGIN,
+            )
+            for item in evidence.sources
+        )
+    )
+    result = await _verify(
+        assessment_id="asm_f04",
+        evidence=evidence,
+        mcus=(_f04_mcu(),),
+        as_of=AS_OF,
+        runner=_Runner(_scripted()),
+        repository=repository,
+        writer=_Writer(tmp_path),
+        trace_sink=_Sink(),
+        max_sources_per_mcu=max_sources,
+        max_versions_per_source=max_versions,
+        clock=lambda: NOW,
+    )
+    repository.close()
+    return result
+
+
+async def test_f04_fourth_source_is_explicitly_unassessed(tmp_path) -> None:
+    evidence = _f04_evidence(4, 1)
+    result = await _run_f04_pipeline(tmp_path, evidence)
+    assert "src_03" in result.unassessed_sources
+    assert result.coverage_limitations
+    coverage = json.loads((tmp_path / "asm_f04" / "phase6" / "coverage.json").read_text())
+    assert "src_03" in coverage["unassessed_sources"]
+
+
+async def test_f04_older_version_is_assessed_not_silently_dropped(tmp_path) -> None:
+    evidence = _f04_evidence(1, 4)
+    result = await _run_f04_pipeline(tmp_path, evidence)
+    selected_versions = {mapping.source_version_id for mapping in result.mappings}
+    assert {
+        "srcv_00_v0",
+        "srcv_00_v1",
+        "srcv_00_v2",
+    } <= selected_versions
+    assert "src_00:srcv_00_v3" in result.unassessed_versions
+    assert any(vid in result.unassessed_versions[0] for vid in ("srcv_00_v3",))
+
+
+def test_f04_selection_helpers_report_bounds() -> None:
+    evidence = _f04_evidence(5, 4)
+    selection = _select(
+        target_id="mcu_1",
+        member_ids=("mcu_1",),
+        sources=evidence.sources,
+        passages_by_source={
+            passage.source_id: tuple(
+                item for item in evidence.passages if item.source_id == passage.source_id
+            )
+            for passage in evidence.passages
+        },
+        max_sources=2,
+    )
+    assert len(selection.selected) == 2
+    assert len(selection.unassessed_sources) == 3
+    slots, excluded = _select_versions(tuple(evidence.versions), evidence.passages, max_versions=2)
+    assert len(slots) == 2 and len(excluded) >= 2
