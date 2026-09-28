@@ -931,3 +931,140 @@ def test_f09_mapper_conflict_blocks_direct_until_resolved() -> None:
         clock=lambda: NOW,
     )
     assert resolved.relation == PrecedentState.DIRECT_PRECEDENT
+
+
+# --- F08 ---
+
+
+def _f08_entry(
+    source_id: str,
+    relation,
+    *,
+    publication: date,
+    priority: date | None = None,
+    decisive: bool = False,
+):
+    from tests.unit.evidence.precedent.test_patent import entry as _entry
+
+    return _entry(
+        source_id,
+        relation,
+        decisive=decisive,
+        publication=publication,
+        priority=priority,
+    )
+
+
+def test_f08_future_patent_references_cannot_challenge_the_cutoff() -> None:
+    from novelty_harness.evidence.precedent.patent import (
+        screen_patent_references as _screen,
+    )
+
+    result = _screen(
+        mcu_id="mcu_1",
+        entries=(
+            _f08_entry(
+                "src_patent_a",
+                PrecedentState.STRONG_PARTIAL_PRECEDENT,
+                publication=date(2027, 1, 1),
+            ),
+            _f08_entry(
+                "src_patent_b",
+                PrecedentState.COMPONENT_PRECEDENT_ONLY,
+                publication=date(2027, 6, 1),
+            ),
+        ),
+        as_of=AS_OF,
+        observed_at=NOW,
+        clock=lambda: NOW,
+    )
+    assert result.mode == "LIMITED"
+    assert result.mode != "MULTI_REFERENCE_COMBINATION_LIKE"
+    assert result.reference_source_ids == ()
+    assert any("post-cutoff" in item for item in result.limitations)
+
+
+def test_f08_family_publications_count_as_one_lineage_root() -> None:
+    from novelty_harness.evidence.precedent.patent import (
+        screen_patent_references as _screen,
+    )
+
+    result = _screen(
+        mcu_id="mcu_1",
+        entries=(
+            _f08_entry(
+                "src_patent_us",
+                PrecedentState.STRONG_PARTIAL_PRECEDENT,
+                publication=date(2020, 1, 1),
+            ),
+            _f08_entry(
+                "src_patent_ep",
+                PrecedentState.COMPONENT_PRECEDENT_ONLY,
+                publication=date(2021, 1, 1),
+            ),
+        ),
+        as_of=AS_OF,
+        observed_at=NOW,
+        independent_root_of={"src_patent_us": "src_family", "src_patent_ep": "src_family"},
+        clock=lambda: NOW,
+    )
+    assert result.mode == "LIMITED"
+    assert any("one root" in item or "one patent" in item for item in result.limitations)
+
+
+def test_f08_independent_pre_cutoff_partials_remain_combination_context() -> None:
+    from novelty_harness.evidence.precedent.patent import (
+        screen_patent_references as _screen,
+    )
+
+    result = _screen(
+        mcu_id="mcu_1",
+        entries=(
+            _f08_entry(
+                "src_patent_a",
+                PrecedentState.STRONG_PARTIAL_PRECEDENT,
+                publication=date(2019, 1, 1),
+            ),
+            _f08_entry(
+                "src_patent_b",
+                PrecedentState.STRONG_PARTIAL_PRECEDENT,
+                publication=date(2020, 1, 1),
+            ),
+        ),
+        as_of=AS_OF,
+        observed_at=NOW,
+        clock=lambda: NOW,
+    )
+    assert result.mode == "MULTI_REFERENCE_COMBINATION_LIKE"
+    assert result.single_reference_id is None
+    assert any("never one-reference anticipation" in item for item in result.limitations)
+
+
+def test_f08_future_decisive_reference_is_not_selected_over_eligible_one() -> None:
+    from novelty_harness.evidence.precedent.patent import (
+        screen_patent_references as _screen,
+    )
+
+    result = _screen(
+        mcu_id="mcu_1",
+        entries=(
+            _f08_entry(
+                "src_patent_future",
+                PrecedentState.DIRECT_PRECEDENT,
+                publication=date(2027, 1, 1),
+                decisive=True,
+            ),
+            _f08_entry(
+                "src_patent_eligible",
+                PrecedentState.DIRECT_PRECEDENT,
+                publication=date(2019, 1, 1),
+                decisive=True,
+            ),
+        ),
+        as_of=AS_OF,
+        observed_at=NOW,
+        clock=lambda: NOW,
+    )
+    assert result.mode == "SINGLE_REFERENCE_ANTICIPATION_LIKE"
+    assert result.single_reference_id == "src_patent_eligible"
+    assert any("post-cutoff" in item for item in result.limitations)

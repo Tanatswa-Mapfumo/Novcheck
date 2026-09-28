@@ -9,7 +9,7 @@ patent evidence stays limited/unassessable rather than becoming an absence
 finding.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
 from typing import Literal, Self
 
@@ -91,15 +91,28 @@ def screen_patent_references(
     *,
     mcu_id: MCUId,
     entries: Sequence[PatentEvidenceEntry],
+    as_of: date,
     observed_at: datetime,
+    independent_root_of: Mapping[SourceId, SourceId] | None = None,
     clock: Callable[[], datetime] = utc_now,
     provenance: ArtifactProvenance | None = None,
 ) -> PatentScreeningResult:
-    """Produce a one-reference versus multi-reference screening result."""
+    """Produce a one-reference versus multi-reference screening result.
+
+    Only eligible pre-cutoff publication dates can challenge the historical
+    cutoff, and combination context counts distinct lineage roots so versions
+    or family publications of one patent cannot inflate multi-reference
+    context (F08).
+    """
 
     wrong_mcu = [entry.source_id for entry in entries if entry.mcu_id != mcu_id]
     if wrong_mcu:
         raise ValueError(f"Patent screening entries belong to another MCU: {wrong_mcu}")
+    roots = independent_root_of or {}
+
+    def root_of(entry: PatentEvidenceEntry) -> SourceId:
+        return roots.get(entry.source_id, entry.source_id)
+
     patent_entries = [entry for entry in entries if entry.is_patent]
     limitations: list[str] = []
     if not patent_entries:
@@ -120,10 +133,35 @@ def screen_patent_references(
             provenance=provenance,
         )
 
+    eligible = [
+        entry
+        for entry in patent_entries
+        if entry.publication_date is not None and entry.publication_date <= as_of
+    ]
+    ineligible = [entry for entry in patent_entries if entry not in eligible]
+    if ineligible:
+        limitations.append(
+            f"{len(ineligible)} patent reference(s) are post-cutoff or of unknown "
+            "publication date and cannot challenge the cutoff"
+        )
+    if not eligible:
+        limitations.append(
+            "No eligible pre-cutoff patent reference is available; not a finding of absence"
+        )
+        return _result(
+            mcu_id=mcu_id,
+            mode="LIMITED",
+            entries=(),
+            limitations=limitations,
+            observed_at=observed_at,
+            clock=clock,
+            provenance=provenance,
+        )
+
     direct = sorted(
         (
             entry
-            for entry in patent_entries
+            for entry in eligible
             if entry.classification.relation == PrecedentState.DIRECT_PRECEDENT
             and entry.classification.decisive
         ),
@@ -135,9 +173,14 @@ def screen_patent_references(
     if direct:
         chosen = direct[0]
         limitations.append(
-            "Anticipation-like screening uses exactly one earlier reference; "
+            "Anticipation-like screening uses exactly one earlier eligible reference; "
             "it is not a legal patentability determination"
         )
+        if len({root_of(entry) for entry in direct}) > 1:
+            limitations.append(
+                "Multiple distinct decisive lineages exist; the earliest eligible "
+                "reference is selected for the one-reference view"
+            )
         return _result(
             mcu_id=mcu_id,
             mode="SINGLE_REFERENCE_ANTICIPATION_LIKE",
@@ -149,17 +192,15 @@ def screen_patent_references(
         )
 
     contributing = sorted(
-        (
-            entry
-            for entry in patent_entries
-            if entry.classification.relation in CONTRIBUTING_RELATIONS
-        ),
+        (entry for entry in eligible if entry.classification.relation in CONTRIBUTING_RELATIONS),
         key=lambda entry: (entry.publication_date or date.max, entry.source_id),
     )
-    if len(contributing) >= 2:
+    contributing_roots = {root_of(entry) for entry in contributing}
+    if len(contributing_roots) >= 2:
         limitations.append(
-            "Multiple references each cover parts of the claimed configuration; this is "
-            "combination/obviousness-like context, never one-reference anticipation"
+            "Multiple independent pre-cutoff lineages each cover parts of the claimed "
+            "configuration; this is combination/obviousness-like context, never "
+            "one-reference anticipation"
         )
         return _result(
             mcu_id=mcu_id,
@@ -170,17 +211,26 @@ def screen_patent_references(
             clock=clock,
             provenance=provenance,
         )
-    if len(contributing) == 1:
+    if contributing:
         limitations.append(
-            "A single partial reference does not establish the claimed configuration and "
-            "cannot be one-reference anticipation"
+            "One distinct pre-cutoff lineage cannot establish multi-reference "
+            "combination context; versions or family publications of one patent "
+            "count as one root"
         )
-    else:
-        limitations.append("No contributing patent reference was verified locally")
+        return _result(
+            mcu_id=mcu_id,
+            mode="LIMITED",
+            entries=tuple(contributing),
+            limitations=limitations,
+            observed_at=observed_at,
+            clock=clock,
+            provenance=provenance,
+        )
+    limitations.append("No contributing eligible patent reference was verified locally")
     return _result(
         mcu_id=mcu_id,
         mode="LIMITED",
-        entries=tuple(contributing),
+        entries=(),
         limitations=limitations,
         observed_at=observed_at,
         clock=clock,

@@ -528,6 +528,7 @@ def test_attack_16_stitched_patents_are_never_anticipation() -> None:
             source_id="src_patent_a",
             mcu_id="mcu_1",
             is_patent=True,
+            publication_date=date(2019, 1, 1),
             classification=patent_classification(
                 "src_patent_a", PrecedentState.STRONG_PARTIAL_PRECEDENT
             ),
@@ -536,13 +537,18 @@ def test_attack_16_stitched_patents_are_never_anticipation() -> None:
             source_id="src_patent_b",
             mcu_id="mcu_1",
             is_patent=True,
+            publication_date=date(2020, 1, 1),
             classification=patent_classification(
                 "src_patent_b", PrecedentState.STRONG_PARTIAL_PRECEDENT
             ),
         ),
     )
     result = screen_patent_references(
-        mcu_id="mcu_1", entries=entries, observed_at=NOW, clock=lambda: NOW
+        mcu_id="mcu_1",
+        entries=entries,
+        as_of=date(2026, 9, 28),
+        observed_at=NOW,
+        clock=lambda: NOW,
     )
     assert result.mode == "MULTI_REFERENCE_COMBINATION_LIKE"
     assert result.single_reference_id is None

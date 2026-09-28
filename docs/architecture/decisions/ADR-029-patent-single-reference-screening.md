@@ -39,3 +39,14 @@ missing patent evidence cannot become an absence claim. The cost is that a
 genuinely anticipatory combination (rare in this screening context) stays
 combination-context only; that conservatism is required because the patent
 lens is explicitly non-legal and must not overstate.
+
+## Amendment (F08 remediation)
+
+Screening now receives the assessment cutoff and lineage roots. Only
+references whose publication date is known and at or before `as_of` can
+challenge the historical cutoff; post-cutoff or unknown-date references remain
+explicit limitations. Multi-reference combination context requires at least two
+distinct eligible lineage roots, so later versions or family publications of
+one patent count as one root and can never inflate the combination view.
+Priority dates alone still do not establish disclosure, and neither case can
+become one-reference anticipation. This closes GPT-6 Sol High finding F08.

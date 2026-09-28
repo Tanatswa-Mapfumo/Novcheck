@@ -411,6 +411,12 @@ class EvidenceVerificationPipeline:
         quality_by_source = {
             assessment.source_id: assessment for assessment in evidence.quality_assessments
         }
+        independent_root_of = {
+            source_id: cluster.root_source_ids[0]
+            for cluster in evidence.lineage_clusters
+            for source_id in cluster.source_ids
+            if cluster.root_source_ids
+        }
 
         def emit(
             reason: str,
@@ -503,12 +509,6 @@ class EvidenceVerificationPipeline:
                         emit=emit,
                         clock=clock,
                     )
-            independent_root_of = {
-                source_id: cluster.root_source_ids[0]
-                for cluster in evidence.lineage_clusters
-                for source_id in cluster.source_ids
-                if cluster.root_source_ids
-            }
             summary = summarize_multi_source(
                 target_classifications,
                 mcu_id=profile.target_id,
@@ -563,7 +563,9 @@ class EvidenceVerificationPipeline:
                 screening = screen_patent_references(
                     mcu_id=profile.target_id,
                     entries=tuple(entries),
+                    as_of=as_of,
                     observed_at=clock(),
+                    independent_root_of=independent_root_of,
                 )
                 patent_screenings.append(screening)
                 emit(

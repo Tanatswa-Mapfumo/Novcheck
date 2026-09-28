@@ -15,6 +15,7 @@ from novelty_harness.evidence.precedent.patent import (
 from tests.fixtures.phase5 import phase5_provenance
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
+AS_OF = date(2026, 9, 28)
 ORIGIN = phase5_provenance("patent-test")
 
 
@@ -93,6 +94,7 @@ def test_one_decisive_patent_is_single_reference_anticipation_like() -> None:
             ),
             entry("src_patent_b", PrecedentState.COMPONENT_PRECEDENT_ONLY),
         ),
+        as_of=AS_OF,
         observed_at=NOW,
         clock=lambda: NOW,
     )
@@ -113,6 +115,7 @@ def test_two_partial_patents_stay_multi_reference_combination_context() -> None:
             entry("src_patent_a", PrecedentState.STRONG_PARTIAL_PRECEDENT),
             entry("src_patent_b", PrecedentState.COMPONENT_PRECEDENT_ONLY),
         ),
+        as_of=AS_OF,
         observed_at=NOW,
         clock=lambda: NOW,
     )
@@ -130,6 +133,7 @@ def test_two_stitched_patents_never_become_anticipation() -> None:
             entry("src_patent_a", PrecedentState.STRONG_PARTIAL_PRECEDENT),
             entry("src_patent_b", PrecedentState.STRONG_PARTIAL_PRECEDENT),
         ),
+        as_of=AS_OF,
         observed_at=NOW,
         clock=lambda: NOW,
     )
@@ -141,6 +145,7 @@ def test_single_partial_patent_is_limited_not_anticipation() -> None:
     result = screen_patent_references(
         mcu_id="mcu_1",
         entries=(entry("src_patent_a", PrecedentState.STRONG_PARTIAL_PRECEDENT),),
+        as_of=AS_OF,
         observed_at=NOW,
         clock=lambda: NOW,
     )
@@ -159,12 +164,15 @@ def test_no_patent_evidence_is_limited_not_absence() -> None:
                 is_patent=False,
             ),
         ),
+        as_of=AS_OF,
         observed_at=NOW,
         clock=lambda: NOW,
     )
     assert result.mode == "LIMITED"
     assert any("not a finding of absence" in item for item in result.limitations)
-    empty = screen_patent_references(mcu_id="mcu_1", entries=(), observed_at=NOW, clock=lambda: NOW)
+    empty = screen_patent_references(
+        mcu_id="mcu_1", entries=(), as_of=AS_OF, observed_at=NOW, clock=lambda: NOW
+    )
     assert empty.mode == "UNASSESSABLE"
     assert any("not a finding of absence" in item for item in empty.limitations)
 
@@ -188,6 +196,7 @@ def test_earliest_decisive_patent_is_chosen_deterministically() -> None:
                 publication=date(2019, 1, 1),
             ),
         ),
+        as_of=AS_OF,
         observed_at=NOW,
         clock=lambda: NOW,
     )
@@ -210,6 +219,7 @@ def test_earliest_decisive_patent_is_chosen_deterministically() -> None:
                 publication=date(2021, 1, 1),
             ),
         ),
+        as_of=AS_OF,
         observed_at=NOW,
         clock=lambda: NOW,
     )
