@@ -1068,3 +1068,283 @@ def test_f08_future_decisive_reference_is_not_selected_over_eligible_one() -> No
     assert result.mode == "SINGLE_REFERENCE_ANTICIPATION_LIKE"
     assert result.single_reference_id == "src_patent_eligible"
     assert any("post-cutoff" in item for item in result.limitations)
+
+
+# --- F11 ---
+
+from novelty_harness.domain.enums import (  # noqa: E402
+    PrecedentState as _PrecedentState,
+)
+from novelty_harness.domain.enums import (  # noqa: E402
+    SupportVerificationState as _SupportState,
+)
+from novelty_harness.domain.evidence import (  # noqa: E402
+    EvidenceComparison as _LegacyComparison,
+)
+from novelty_harness.domain.evidence import (  # noqa: E402
+    EvidenceEdge as _LegacyEdge,
+)
+from novelty_harness.domain.evidence import (  # noqa: E402
+    SourcePassage as _LegacyPassage,
+)
+from novelty_harness.domain.evidence import (  # noqa: E402
+    SourceRecord as _LegacySource,
+)
+
+
+def _legacy_source(source_id: str = "src_1") -> _LegacySource:
+    return _LegacySource(
+        source_id=source_id,
+        canonical_title="Legacy source",
+        source_type="paper",
+        access_state="full_text",
+        content_hash="legacy-hash-" + source_id,
+        provider_name="fixture",
+        provider_source_id="x",
+        provenance=ORIGIN,
+    )
+
+
+def _legacy_passage(passage_id: str = "pass_1", source_id: str = "src_1") -> _LegacyPassage:
+    return _LegacyPassage(
+        passage_id=passage_id,
+        source_id=source_id,
+        text="Exact legacy text.",
+        content_hash="legacy-passage-hash",
+        provenance=ORIGIN,
+    )
+
+
+def _legacy_edge(*, edge_id: str, mcu_id: str, passage_ids: tuple[str, ...]) -> _LegacyEdge:
+    return _LegacyEdge(
+        edge_id=edge_id,
+        source_id="src_1",
+        mcu_id=mcu_id,
+        proposition="legacy proposition",
+        passage_ids=passage_ids,
+        comparison=_LegacyComparison(),
+        relation_type=_PrecedentState.STRONG_PARTIAL_PRECEDENT,
+        support_verification=_SupportState.SUPPORTED,
+        provenance=ORIGIN,
+    )
+
+
+def test_f11_bridge_accepts_combination_and_expanded_passage_identities() -> None:
+    from novelty_harness.application.vertical_slice import _check_edges
+    from novelty_harness.domain.mcu import MCU as _BridgeMCU
+
+    mcu = _BridgeMCU(mcu_id="mcu_1", label="MCU", statement="statement", provenance=ORIGIN)
+    sources = (_legacy_source(),)
+    passages = (_legacy_passage(),)
+    combination_edge = _legacy_edge(
+        edge_id="edge_comb", mcu_id="mcu_comb_abc", passage_ids=("pass_1",)
+    )
+    expanded_edge = _legacy_edge(
+        edge_id="edge_window", mcu_id="mcu_1", passage_ids=("pass_window",)
+    )
+    with pytest.raises(ValueError, match="unknown MCU"):
+        _check_edges((combination_edge,), (mcu,), sources, passages)
+    with pytest.raises(ValueError, match="does not belong"):
+        _check_edges((expanded_edge,), (mcu,), sources, passages)
+
+    _check_edges(
+        (combination_edge, expanded_edge),
+        (mcu,),
+        sources,
+        passages,
+        extra_mcu_ids=("mcu_comb_abc",),
+        extra_passage_sources={"pass_window": "src_1"},
+    )
+    with pytest.raises(ValueError, match="does not belong"):
+        _check_edges(
+            (expanded_edge,),
+            (mcu,),
+            sources,
+            passages,
+            extra_passage_sources={"pass_window": "src_other"},
+        )
+    with pytest.raises(ValueError, match="unknown MCU"):
+        _check_edges(
+            (_legacy_edge(edge_id="edge_foreign", mcu_id="mcu_foreign", passage_ids=("pass_1",)),),
+            (mcu,),
+            sources,
+            passages,
+            extra_mcu_ids=("mcu_comb_abc",),
+        )
+
+
+async def test_f11_pipeline_projection_passes_the_bridge_with_combination_and_window(
+    tmp_path,
+) -> None:
+    from novelty_harness.application.evidence_phase5 import (
+        project_passage as _project_passage,
+    )
+    from novelty_harness.application.evidence_phase5 import (
+        project_source as _project_source,
+    )
+    from novelty_harness.application.evidence_phase6 import (
+        project_verified_edges as _project_edges,
+    )
+    from novelty_harness.application.vertical_slice import _check_edges
+    from novelty_harness.domain.mcu import (
+        MCU as _BridgeMCU,
+    )
+    from novelty_harness.domain.mcu import (
+        MCUCombination as _Combination,
+    )
+    from novelty_harness.domain.mcu import (
+        MCURelationship as _Relationship,
+    )
+    from novelty_harness.evidence.graph.models import GraphNode, GraphNodeKind
+    from novelty_harness.evidence.phase6_pipeline import (
+        verify_evidence_against_mcus as _verify,
+    )
+    from novelty_harness.runtime.artifacts.writer import RunArtifactWriter as _Writer
+    from novelty_harness.runtime.semantic.structured import SemanticRunner as _Runner2
+    from novelty_harness.runtime.tracing.sinks import InMemoryTraceSink as _Sink2
+    from tests.fixtures.phase6 import (
+        StubLLMProvider as _Stub,
+    )
+    from tests.fixtures.phase6 import context_json as _ctx_json
+    from tests.fixtures.phase6 import (
+        map_evidence_response as _map_response,
+    )
+
+    def verify_citing_last(context):
+        payload = _ctx_json(context, "verification_input")
+        last = payload["passages"][-1]["passage_id"]
+        return {
+            "prompt_version": "support-verifier-v1",
+            "judgments": [
+                {
+                    "commitment_id": commitment["commitment_id"],
+                    "state": "SUPPORTED",
+                    "rationale": "cites the expanded window",
+                    "passage_ids": [last],
+                }
+                for commitment in payload["commitments"]
+            ],
+            "context_needed": [],
+        }
+
+    source = make_source(
+        "src_1",
+        discovery_paths=(
+            _make_path(provider_source_id="W1", query_id="qry_1", mcu_id="mcu_1"),
+            _make_path(provider_source_id="W1", query_id="qry_1", mcu_id="mcu_2"),
+        ),
+    )
+    version = make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1))
+    section = make_passage(
+        "src_1",
+        text="The method is effective.",
+        passage_id="pass_section",
+        source_version_id="srcv_1_v1",
+    )
+    document = make_passage(
+        "src_1",
+        text="The method is effective. However, it failed after a week.",
+        passage_id="pass_document",
+        source_version_id="srcv_1_v1",
+    )
+    evidence = _EvidenceResult(
+        sources=(source,),
+        versions=(version,),
+        passages=(section, document),
+        provenance_edges=(),
+        lineage_clusters=(),
+        quality_assessments=(),
+        relevance_assessments=(),
+        cycles=(),
+        conflicts=(),
+        unresolved_fields=(),
+        limitations=(),
+        graph_ref="phase5/evidence_graph.sqlite3",
+    )
+    mcus = (
+        _BridgeMCU(
+            mcu_id="mcu_1",
+            label="One",
+            statement="threshold switches relay",
+            mechanism="threshold switches relay",
+            provenance=ORIGIN,
+        ),
+        _BridgeMCU(
+            mcu_id="mcu_2",
+            label="Two",
+            statement="indicator shows state",
+            mechanism="lamp follows relay",
+            provenance=ORIGIN,
+        ),
+    )
+    combination = _Combination(
+        combination_id="C1",
+        label="Combined",
+        statement="threshold switches relay and lamp follows",
+        member_ids=("mcu_1", "mcu_2"),
+        relationships=(_Relationship(subject="relay", relation="controls", object="lamp"),),
+        provenance=ORIGIN,
+    )
+    repository = SqlAlchemyEvidenceGraphRepository()
+    repository.upsert(
+        nodes=tuple(
+            GraphNode(
+                node_id=item.source_id,
+                kind=GraphNodeKind.SOURCE,
+                label=item.canonical_title,
+                observed_at=NOW,
+                provenance=ORIGIN,
+            )
+            for item in evidence.sources
+        )
+    )
+    runner = _Runner2(_Stub({"map_evidence": _map_response, "verify_support": verify_citing_last}))
+    result = await _verify(
+        assessment_id="asm_f11",
+        evidence=evidence,
+        mcus=mcus,
+        combinations=(combination,),
+        as_of=AS_OF,
+        runner=runner,
+        repository=repository,
+        writer=_Writer(tmp_path),
+        trace_sink=_Sink2(),
+        clock=lambda: NOW,
+    )
+    repository.close()
+    assert any(edge.mcu_id.startswith("mcu_comb_") for edge in result.edges)
+    window_ids = {
+        expansion.window_passage.passage_id
+        for expansion in result.expansions
+        if expansion.available and expansion.window_passage is not None
+    }
+    assert window_ids
+    projected = _project_edges(result)
+    assert any(set(edge.passage_ids) & window_ids for edge in projected)
+
+    legacy_sources = tuple(
+        _project_source(item, provenance=item.provenance) for item in evidence.sources
+    )
+    legacy_passages = tuple(
+        _project_passage(item, provenance=item.provenance) for item in evidence.passages
+    )
+    _check_edges(
+        projected,
+        mcus,
+        legacy_sources,
+        legacy_passages,
+        extra_mcu_ids=tuple(item.mcu_id for item in result.propositions),
+        extra_passage_sources={
+            expansion.window_passage.passage_id: expansion.window_passage.source_id
+            for expansion in result.expansions
+            if expansion.available and expansion.window_passage is not None
+        },
+    )
+    with pytest.raises(ValueError, match="does not belong"):
+        _check_edges(
+            tuple(edge for edge in projected if set(edge.passage_ids) & window_ids),
+            mcus,
+            legacy_sources,
+            legacy_passages,
+            extra_mcu_ids=tuple(item.mcu_id for item in result.propositions),
+        )

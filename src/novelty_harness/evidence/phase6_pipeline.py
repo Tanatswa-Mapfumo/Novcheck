@@ -347,7 +347,7 @@ class EvidenceVerificationPipeline:
                 source_version_id=version.version_id if version else None,
                 mapping=mapping,
                 verification=retry.verification,
-                claim_id=bundle.claim.claim_id,
+                claim_id=retry.verification.claim_id,
                 decisive=edge.decisive,
                 chronology_state=edge.chronology.state,
             ),

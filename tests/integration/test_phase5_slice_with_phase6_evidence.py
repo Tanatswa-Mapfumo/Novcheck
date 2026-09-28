@@ -14,6 +14,7 @@ from novelty_harness.domain.enums import (
     SupportVerificationState,
     VerdictState,
 )
+from novelty_harness.domain.mcu import MCUCombination, MCURelationship
 from novelty_harness.evidence.graph.sqlalchemy_repository import (
     SqlAlchemyEvidenceGraphRepository,
 )
@@ -35,6 +36,29 @@ from tests.fixtures.phase4 import registry, stop_policy, wire
 from tests.fixtures.phase5 import SyntheticContentResolver
 from tests.fixtures.phase6 import scripted_phase6_llm
 from tests.unit.research.test_search_critique import critic_response
+
+
+class CombinationReconciler:
+    """Wrap the real understanding reconciler and add a combination contribution."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+
+    async def reconcile(self, idea, candidates):
+        graph = await self.inner.reconcile(idea, candidates)
+        if graph.combinations or len(graph.mcus) < 2:
+            return graph
+        combination = MCUCombination(
+            combination_id="C1",
+            label="Combined control and indication",
+            statement="Control the relay and show its status",
+            member_ids=tuple(mcu.mcu_id for mcu in graph.mcus[:2]),
+            relationships=(
+                MCURelationship(subject="control", relation="triggers", object="indication"),
+            ),
+            provenance=fixture_provenance("CombinationReconciler"),
+        )
+        return graph.model_copy(update={"combinations": (combination,)})
 
 
 class Phase7FixtureAdjudicator:
@@ -102,7 +126,7 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
         normalizer=understanding,
         sufficiency_analyzer=understanding,
         decomposer=understanding,
-        reconciler=understanding,
+        reconciler=CombinationReconciler(understanding),
         adjudicator=Phase7FixtureAdjudicator(),
     )
     sink = InMemoryTraceSink()
@@ -158,7 +182,14 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
     summary = json.loads((phase6 / "phase6_result.json").read_text())
     assert summary["mapping_count"] > 0
     assert summary["verified_edge_count"] > 0
-    assert (run_dir / "evidence_edges.jsonl").read_text().strip()
+    persisted_edges = [
+        json.loads(line)
+        for line in (run_dir / "evidence_edges.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert persisted_edges
+    # F11: a real Phase 6 combination target must pass the bridge.
+    assert any(edge["mcu_id"].startswith("mcu_comb_") for edge in persisted_edges)
 
     repository = SqlAlchemyEvidenceGraphRepository(run_dir / "phase5" / "evidence_graph.sqlite3")
     kinds = {node.kind.value for node in repository.nodes()}

@@ -1,4 +1,4 @@
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -329,10 +329,25 @@ def _check_edges(
     mcus: Sequence[MCU],
     sources: Sequence[SourceRecord],
     passages: Sequence[SourcePassage],
+    *,
+    extra_mcu_ids: Sequence[str] = (),
+    extra_passage_sources: Mapping[str, str] | None = None,
 ) -> None:
-    mcu_ids = {mcu.mcu_id for mcu in mcus}
+    """Validate edge identities against persisted evidence.
+
+    Phase 6 combination targets and same-source context-expansion passages are
+    legitimate identities and are supplied explicitly; anything else remains
+    foreign and is rejected.
+    """
+
+    mcu_ids = {mcu.mcu_id for mcu in mcus} | set(extra_mcu_ids)
     source_ids = {source.source_id for source in sources}
     passage_sources = {passage.passage_id: passage.source_id for passage in passages}
+    for identity, source_id in (extra_passage_sources or {}).items():
+        existing = passage_sources.get(identity)
+        if existing is not None and existing != source_id:
+            raise ValueError("context-expansion passage identity conflicts with a source")
+        passage_sources[identity] = source_id
     if len({edge.edge_id for edge in edges}) != len(edges):
         raise ValueError("duplicate evidence edge IDs")
     for edge in edges:
@@ -723,7 +738,20 @@ async def run_vertical_slice(
             )
         if phase6_result is not None:
             verified: list[EvidenceEdge] = list(project_verified_edges(phase6_result))
-            _check_edges(verified, graph.mcus, sources, passages)
+            _check_edges(
+                verified,
+                graph.mcus,
+                sources,
+                passages,
+                extra_mcu_ids=tuple(
+                    proposition.mcu_id for proposition in phase6_result.propositions
+                ),
+                extra_passage_sources={
+                    expansion.window_passage.passage_id: expansion.window_passage.source_id
+                    for expansion in phase6_result.expansions
+                    if expansion.available and expansion.window_passage is not None
+                },
+            )
             run.stage(
                 AssessmentStage.EVIDENCE_MAPPED,
                 _origin(
