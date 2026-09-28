@@ -3,8 +3,13 @@
 Inspired by claim/evidence benchmarks (FEVER/SciFact structure): each case pairs
 material commitments with exact passages and an expected support state. The
 judgment is produced by a documented lexical baseline judge running through the
-real deterministic verification pipeline, so the benchmark measures the
-harness plus a simple baseline rather than deployed model quality.
+real deterministic verification pipeline.
+
+This is a deterministic fixture benchmark. Its reported metrics describe
+support-state agreement of this lexical baseline plus the deterministic gates;
+the `citation_presence_and_bundle_integrity` metric only checks that reported
+citations/references belong to the supplied bundle. It does **not** establish
+model rationale faithfulness, entailment quality or semantic calibration.
 """
 
 import json
@@ -345,7 +350,7 @@ async def run_case(case: SupportCase) -> dict[str, object]:
         "state": result.verification.state.value,
         "expected": case.expected_state,
         "relied_on": list(result.verification.relied_on_passage_ids),
-        "faithful": set(result.verification.relied_on_passage_ids) <= supplied
+        "citation_bundle_ok": set(result.verification.relied_on_passage_ids) <= supplied
         and all(record.rationale.strip() for record in result.verification.commitment_states),
         "expansions": len(result.expansions),
     }
@@ -362,7 +367,7 @@ def _metrics(rows: Sequence[Mapping[str, object]]) -> dict[str, float]:
     ]
     expected_insufficient = [row for row in rows if row["expected"] == "INSUFFICIENT_CONTEXT"]
     abstained = [row for row in expected_insufficient if row["state"] == "INSUFFICIENT_CONTEXT"]
-    faithful = sum(bool(row["faithful"]) for row in rows)
+    citation_integrity = sum(bool(row["citation_bundle_ok"]) for row in rows)
     return {
         "support_state_accuracy": correct / total,
         "supported_precision": (len(true_supported) / len(predicted_supported))
@@ -374,7 +379,7 @@ def _metrics(rows: Sequence[Mapping[str, object]]) -> dict[str, float]:
         "insufficient_context_abstention": (len(abstained) / len(expected_insufficient))
         if expected_insufficient
         else 1.0,
-        "passage_rationale_faithfulness": faithful / total,
+        "citation_presence_and_bundle_integrity": citation_integrity / total,
     }
 
 
@@ -384,7 +389,7 @@ async def test_support_verifier_benchmark_matches_baseline() -> None:
     baseline = json.loads(BASELINE_PATH.read_text())
     assert {row["case_id"]: row["state"] for row in rows} == baseline["cases"]
     assert metrics == baseline["metrics"]
-    assert all(row["faithful"] for row in rows)
+    assert all(row["citation_bundle_ok"] for row in rows)
     assert any(row["expansions"] for row in rows), "context cases must exercise expansion"
 
 

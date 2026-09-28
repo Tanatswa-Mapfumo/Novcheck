@@ -14,6 +14,6 @@
     "supported_precision": 1.0,
     "contradiction_recall": 1.0,
     "insufficient_context_abstention": 1.0,
-    "passage_rationale_faithfulness": 1.0
+    "citation_presence_and_bundle_integrity": 1.0
   }
 }
