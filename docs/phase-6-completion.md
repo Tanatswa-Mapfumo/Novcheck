@@ -313,3 +313,56 @@ A fresh local clone at the final repair commit (`git clone --branch phase-6-evid
 **Gate 30 remains OPEN.** Phase 6 is not accepted: a fresh GPT-6 Sol High
 re-review must confirm all Critical and Important findings are closed before
 Phase 6 can be accepted. Phase 7 has not started.
+
+## Round-2 semantic remediation implementation
+
+The independent re-review of `c41b11f` returned **FAIL**: F01-F10 had open
+semantic variants and N01 identified assessment-dependent edge collisions.
+The original review and the first remediation record remain historical; the
+Round-2 implementation is pending a new independent semantic re-review.
+
+- **F01:** Exact ordered statement coverage replaces token-union coverage;
+  uncovered MCU and combination-member meaning becomes an independently
+  verifiable material commitment, with no invented relationship.
+- **F02:** A cited version object and its source owner are mandatory; the
+  version's public date controls eligibility, unknown timing abstains, and
+  contradictory decisive/chronology facts are rejected.
+- **F03:** Explicit complete/truncated/unavailable/unknown context status;
+  locator-aware same-version inspection and bounded neighbors; incomplete
+  context cannot support a decisive edge.
+- **F04:** Unversioned passages beside known versions are explicitly unassessed
+  rather than inheriting the parent's date; bounded source/version work
+  remains visible. Standalone unversioned sources retain source-level dates.
+- **F05-F07:** Canonical verifier citations, exact proposition/mapping/claim
+  joins and a reconstructible semantic chain; graph schema v3 persists and
+  transactionally resolves the chain and cited passages. Unsafe legacy Phase
+  6 edges block migration.
+- **F08:** Patent screening uses the cited version's verified chronology and
+  counts only distinct eligible lineage roots.
+- **F09:** Mapper-only semantic assertions no longer choose precedent class;
+  independently verified commitment states control it.
+- **F10:** Scoped subset support and unsupported remainder survive into local
+  classification, remain nondecisive, and coexist with contradictions.
+- **N01:** Edge and proposition-node IDs include stable assessment/chronology
+  context, permitting two cutoff-specific artifacts to coexist append-only.
+
+`tests/adversarial/test_phase6_sol_rereview_regressions.py` plus focused
+mapping, context, verification, precedent, patent, graph and full-slice tests
+exercise the repaired boundaries. The full lifecycle now tests a combination
+target and verifier-cited expanded passage together through
+`REPORTED`/`COMPLETED`. F11 and M01 remain closed. Contracts and migration are
+documented in ADR-030 through ADR-032; ADR-026/029 have amendments. The
+Round-2 plan path named in the request was absent from the checkout, so the
+attached user instruction supplied its approved scope; no Phase 7 work was
+inferred from that absence.
+
+The deterministic benchmark remains a fixture diagnostic, not empirical
+model accuracy or calibration. A live verifier's semantic entailment and
+prompt-injection resistance remain unproven. Round-2 worktree verification:
+`uv sync --dev`, `uv run python scripts/verify.py` (Ruff/format clean,
+Pyright 0 errors/warnings, **1471 passed, 5 network tests deselected**) and
+`git diff --check` passed. Exact commit and fresh-checkout verification are
+recorded in a follow-up amendment to the review record.
+
+**Gate 30 remains OPEN pending a fresh independent GPT-6 Sol High semantic
+re-review. Phase 7 has not started.**

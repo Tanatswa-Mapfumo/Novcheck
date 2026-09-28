@@ -2,11 +2,12 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine, insert, select, update
+from sqlalchemy import Engine, insert, inspect, select, update
 
-from novelty_harness.evidence.graph.sqlalchemy_models import Base, SchemaVersionRow
+from novelty_harness.evidence.graph.models import PHASE6_EDGE_KINDS
+from novelty_harness.evidence.graph.sqlalchemy_models import Base, GraphEdgeRow, SchemaVersionRow
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def schema_version(engine: Engine) -> int | None:
@@ -26,8 +27,21 @@ def ensure_schema(engine: Engine) -> int:
     reinterpreted by older code.
     """
 
+    existing_tables = set(inspect(engine).get_table_names())
+    current = schema_version(engine) if "schema_version" in existing_tables else None
+    if current in {1, 2} and "graph_edges" in existing_tables:
+        with engine.connect() as connection:
+            unsafe = connection.execute(
+                select(GraphEdgeRow.edge_id).where(
+                    GraphEdgeRow.kind.in_([kind.value for kind in PHASE6_EDGE_KINDS])
+                )
+            ).first()
+        if unsafe is not None:
+            raise ValueError(
+                "Legacy Phase 6 graph edges lack a resolved semantic chain; "
+                "migration is blocked until those edges are reprocessed"
+            )
     Base.metadata.create_all(engine)
-    current = schema_version(engine)
     if current is None:
         with engine.begin() as connection:
             connection.execute(
@@ -42,12 +56,12 @@ def ensure_schema(engine: Engine) -> int:
             f"{SCHEMA_VERSION}; refusing to reinterpret"
         )
     if current < SCHEMA_VERSION:
-        if current == 1:
-            # v1 -> v2 adds the verified_edges table (created by create_all).
+        if current in {1, 2}:
+            # v3 adds immutable semantic chains; legacy Phase 6 edges were blocked above.
             with engine.begin() as connection:
                 connection.execute(
                     update(SchemaVersionRow)
-                    .where(SchemaVersionRow.version == 1)
+                    .where(SchemaVersionRow.version == current)
                     .values(version=SCHEMA_VERSION, applied_at=datetime.now(UTC).isoformat())
                 )
             return SCHEMA_VERSION

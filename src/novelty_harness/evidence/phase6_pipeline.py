@@ -33,6 +33,11 @@ from novelty_harness.evidence.graph.phase6_mapping import (
     verified_edge_graph_fragment,
 )
 from novelty_harness.evidence.graph.repository import EvidenceGraphRepository
+from novelty_harness.evidence.graph.retrieval_mapping import (
+    passage_graph_node,
+    source_graph_node,
+    version_graph_node,
+)
 from novelty_harness.evidence.mapping.dimensions import (
     MCUComparisonProfile,
     build_combination_comparison_profile,
@@ -66,6 +71,7 @@ from novelty_harness.evidence.precedent.patent import (
 )
 from novelty_harness.evidence.quality.models import EvidenceQualityAssessment
 from novelty_harness.evidence.verification.gates import build_verified_evidence_edge
+from novelty_harness.evidence.verification.integrity import VerifiedEvidenceChain
 from novelty_harness.evidence.verification.models import (
     ContextExpansion,
     SupportVerification,
@@ -99,6 +105,7 @@ class Phase6EvidenceResult:
     verifications: tuple[SupportVerification, ...]
     expansions: tuple[ContextExpansion, ...]
     edges: tuple[VerifiedEvidenceEdge, ...]
+    chains: tuple[VerifiedEvidenceChain, ...]
     classifications: tuple[PrecedentClassification, ...]
     multi_source: tuple[MultiSourceAssessment, ...]
     patent_screenings: tuple[PatentScreeningResult, ...]
@@ -186,10 +193,31 @@ def select_versions(
             version.version_id,
         )
     )
-    selected: tuple[SourceVersionRecord | None, ...] = tuple(usable[:max_versions])
-    excluded = tuple(version.version_id for version in usable[max_versions:])
-    if not selected:
-        return (None,), excluded
+    unversioned = tuple(
+        passage.passage_id for passage in passages if passage.source_version_id is None
+    )
+    slots: list[SourceVersionRecord | None] = [*usable]
+    if unversioned and not versions:
+        slots.append(None)
+    selected = tuple(slots[:max_versions])
+    excluded = tuple(
+        version.version_id if version is not None else "unversioned:" + ",".join(unversioned)
+        for version in slots[max_versions:]
+    )
+    if unversioned and versions:
+        excluded += ("unversioned:" + ",".join(unversioned),)
+    known_versions = {version.version_id for version in versions}
+    excluded += tuple(
+        "missing-version-record:" + identity
+        for identity in sorted(
+            {
+                passage.source_version_id
+                for passage in passages
+                if passage.source_version_id is not None
+                and passage.source_version_id not in known_versions
+            }
+        )
+    )
     return selected, excluded
 
 
@@ -217,6 +245,7 @@ class EvidenceVerificationPipeline:
     async def _assess_candidate(
         self,
         *,
+        assessment_id: AssessmentId,
         proposition: EvidenceProposition,
         source: SourceRecord,
         version: SourceVersionRecord | None,
@@ -228,6 +257,7 @@ class EvidenceVerificationPipeline:
         verifications: list[SupportVerification],
         expansions: list[ContextExpansion],
         edges: list[VerifiedEvidenceEdge],
+        chains: list[VerifiedEvidenceChain],
         classifications: list[PrecedentClassification],
         target_classifications: list[PrecedentClassification],
         failures: list[str],
@@ -297,7 +327,6 @@ class EvidenceVerificationPipeline:
             classifications.append(unassessable)
             target_classifications.append(unassessable)
             return
-        claims.append(bundle)
         retry = await verify_with_context_retry(
             self.verifier,
             bundle,
@@ -306,6 +335,7 @@ class EvidenceVerificationPipeline:
             window_chars=self.window_chars,
             clock=clock,
         )
+        claims.append(retry.verified_bundle)
         verifications.append(retry.verification)
         expansions.extend(retry.expansions)
         for expansion in retry.expansions:
@@ -335,9 +365,14 @@ class EvidenceVerificationPipeline:
             verification=retry.verification,
             proposition=proposition,
             source=source,
+            bundle=retry.verified_bundle,
             as_of=as_of,
             observed_at=clock(),
+            assessment_id=assessment_id,
             version=version,
+            context_passages=tuple(
+                item.window_passage for item in retry.expansions if item.window_passage is not None
+            ),
             quality=quality_by_source.get(source.source_id),
         )
         classification = classify_precedent(
@@ -347,6 +382,7 @@ class EvidenceVerificationPipeline:
                 source_version_id=version.version_id if version else None,
                 mapping=mapping,
                 verification=retry.verification,
+                claim=retry.verified_bundle.claim,
                 claim_id=retry.verification.claim_id,
                 decisive=edge.decisive,
                 chronology_state=edge.chronology.state,
@@ -359,13 +395,37 @@ class EvidenceVerificationPipeline:
                 verification=retry.verification,
                 proposition=proposition,
                 source=source,
+                bundle=retry.verified_bundle,
                 as_of=as_of,
                 observed_at=clock(),
+                assessment_id=assessment_id,
                 version=version,
+                context_passages=tuple(
+                    item.window_passage
+                    for item in retry.expansions
+                    if item.window_passage is not None
+                ),
                 quality=quality_by_source.get(source.source_id),
                 relation=classification.relation,
             )
         edges.append(edge)
+        chains.append(
+            VerifiedEvidenceChain(
+                assessment_id=assessment_id,
+                source=source,
+                version=version,
+                proposition=proposition,
+                mapping=mapping,
+                bundle=retry.verified_bundle,
+                verification=retry.verification,
+                context_passages=tuple(
+                    item.window_passage
+                    for item in retry.expansions
+                    if item.window_passage is not None
+                ),
+                edge=edge,
+            )
+        )
         classifications.append(classification)
         target_classifications.append(classification)
         emit(
@@ -455,6 +515,7 @@ class EvidenceVerificationPipeline:
         verifications: list[SupportVerification] = []
         expansions: list[ContextExpansion] = []
         edges: list[VerifiedEvidenceEdge] = []
+        chains: list[VerifiedEvidenceChain] = []
         classifications: list[PrecedentClassification] = []
         multi_source_summaries: list[MultiSourceAssessment] = []
         unassessed_sources: list[SourceId] = []
@@ -487,11 +548,13 @@ class EvidenceVerificationPipeline:
                     source_passages = tuple(
                         passage
                         for passage in all_passages
-                        if version is not None and passage.source_version_id == version.version_id
-                    ) or (all_passages if version is None else ())
+                        if passage.source_version_id
+                        == (version.version_id if version is not None else None)
+                    )
                     if not source_passages:
                         continue
                     await self._assess_candidate(
+                        assessment_id=assessment_id,
                         proposition=proposition,
                         source=source,
                         version=version,
@@ -503,6 +566,7 @@ class EvidenceVerificationPipeline:
                         verifications=verifications,
                         expansions=expansions,
                         edges=edges,
+                        chains=chains,
                         classifications=classifications,
                         target_classifications=target_classifications,
                         failures=failures,
@@ -556,6 +620,7 @@ class EvidenceVerificationPipeline:
                         classification=classification,
                         priority_date=source.dates.patent_priority_date,
                         publication_date=source.dates.patent_publication_date,
+                        chronology=edge.chronology,
                         locators=locators,
                     )
                 )
@@ -604,10 +669,40 @@ class EvidenceVerificationPipeline:
             observed_at=clock(),
             provenance=phase6_graph_provenance(),
         )
+        supplemental_nodes: dict[str, GraphNode] = {}
+        fragment_ids = {node.node_id for node in (*mcu_nodes, *fragment_nodes)}
+        for chain in chains:
+            candidates = (
+                source_graph_node(
+                    chain.source, observed_at=clock(), provenance=_PIPELINE_PROVENANCE
+                ),
+                *(
+                    (
+                        version_graph_node(
+                            chain.version, observed_at=clock(), provenance=_PIPELINE_PROVENANCE
+                        ),
+                    )
+                    if chain.version is not None
+                    else ()
+                ),
+                *(
+                    passage_graph_node(
+                        passage, observed_at=clock(), provenance=_PIPELINE_PROVENANCE
+                    )
+                    for passage in (*chain.bundle.passages, *chain.context_passages)
+                ),
+            )
+            for candidate in candidates:
+                if (
+                    candidate.node_id not in fragment_ids
+                    and repository.get_node(candidate.node_id) is None
+                ):
+                    supplemental_nodes.setdefault(candidate.node_id, candidate)
         repository.upsert(
-            nodes=(*mcu_nodes, *fragment_nodes),
+            nodes=(*mcu_nodes, *fragment_nodes, *supplemental_nodes.values()),
             edges=fragment_edges,
             verified_edges=tuple(edges),
+            verified_chains=tuple(chains),
         )
         emit(
             "PHASE6_GRAPH_PERSISTED",
@@ -647,6 +742,7 @@ class EvidenceVerificationPipeline:
             verifications=tuple(verifications),
             expansions=tuple(expansions),
             edges=tuple(edges),
+            chains=tuple(chains),
             classifications=tuple(classifications),
             multi_source=tuple(multi_source_summaries),
             patent_screenings=tuple(patent_screenings),
@@ -677,6 +773,7 @@ def write_phase6_artifacts(
     writer.write_jsonl(assessment_id, "phase6/support_verifications.jsonl", result.verifications)
     writer.write_jsonl(assessment_id, "phase6/context_expansions.jsonl", result.expansions)
     writer.write_jsonl(assessment_id, "phase6/verified_edges.jsonl", result.edges)
+    writer.write_jsonl(assessment_id, "phase6/verified_chains.jsonl", result.chains)
     writer.write_jsonl(
         assessment_id, "phase6/precedent_classifications.jsonl", result.classifications
     )

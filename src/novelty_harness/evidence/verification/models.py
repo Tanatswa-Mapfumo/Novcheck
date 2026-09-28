@@ -15,6 +15,7 @@ from novelty_harness.domain.base import ContractModel, UTCDateTime
 from novelty_harness.domain.enums import EvidenceTier, PrecedentState, SupportVerificationState
 from novelty_harness.domain.idea import ArtifactProvenance, NonBlankText
 from novelty_harness.domain.ids import (
+    AssessmentId,
     MappingId,
     MCUId,
     PassageId,
@@ -36,6 +37,7 @@ CommitmentState = Literal[
     "SUPPORTED", "PARTIALLY_SUPPORTED", "NOT_SUPPORTED", "CONTRADICTED", "INSUFFICIENT"
 ]
 ChronologyState = Literal["PREDATES_CUTOFF", "POST_CUTOFF", "UNCERTAIN"]
+ContextCompletenessState = Literal["COMPLETE", "TRUNCATED", "UNAVAILABLE", "UNKNOWN"]
 
 
 class PassageSupportClaim(ContractModel):
@@ -132,7 +134,7 @@ class SupportVerification(ContractModel):
     """Verified support state for one claim, with its unsupported remainder."""
 
     model_config = ConfigDict(frozen=True)
-    contract_kind: Literal["support-verification-v1"] = "support-verification-v1"
+    contract_kind: Literal["support-verification-v2"] = "support-verification-v2"
 
     verification_id: VerificationId
     claim_id: SupportClaimId
@@ -147,6 +149,7 @@ class SupportVerification(ContractModel):
     contradictions: tuple[NonBlankText, ...] = ()
     context_needed: tuple[NonBlankText, ...] = ()
     relied_on_passage_ids: tuple[PassageId, ...] = ()
+    context_completeness: ContextCompletenessState = "UNKNOWN"
     context_expansions: int = Field(default=0, ge=0)
     verifier_prompt_version: NonBlankText
     verifier_rubric_version: NonBlankText
@@ -155,6 +158,13 @@ class SupportVerification(ContractModel):
 
     @model_validator(mode="after")
     def state_matches_payload(self) -> Self:
+        canonical_reliance = tuple(
+            dict.fromkeys(
+                passage_id for record in self.commitment_states for passage_id in record.passage_ids
+            )
+        )
+        if self.relied_on_passage_ids != canonical_reliance:
+            raise ValueError("relied_on_passage_ids must equal commitment citation union")
         states = {record.state for record in self.commitment_states}
         if self.state == SupportVerificationState.SUPPORTED:
             if states != {"SUPPORTED"}:
@@ -258,7 +268,7 @@ class VerifiedEvidenceEdge(ContractModel):
     """
 
     model_config = ConfigDict(frozen=True)
-    contract_kind: Literal["verified-evidence-edge-v1"] = "verified-evidence-edge-v1"
+    contract_kind: Literal["verified-evidence-edge-v2"] = "verified-evidence-edge-v2"
 
     edge_id: NonBlankText
     source_id: SourceId
@@ -267,6 +277,9 @@ class VerifiedEvidenceEdge(ContractModel):
     proposition_id: PropositionId
     proposition: NonBlankText
     mapping_id: MappingId
+    claim_id: SupportClaimId
+    claim_digest: NonBlankText
+    assessment_id: AssessmentId | None = None
     verification_id: VerificationId
     passage_ids: tuple[PassageId, ...] = Field(min_length=1)
     comparison: MappingComparison

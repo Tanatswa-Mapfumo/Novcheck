@@ -29,9 +29,12 @@ from novelty_harness.evidence.graph.sqlalchemy_models import (
     GraphNodeRow,
     LineageClusterMemberRow,
     LineageClusterRow,
+    VerifiedChainRow,
     VerifiedEdgeRow,
 )
 from novelty_harness.evidence.provenance.models import EvidenceLineageCluster
+from novelty_harness.evidence.verification.gates import validate_verified_chain
+from novelty_harness.evidence.verification.integrity import VerifiedEvidenceChain
 from novelty_harness.evidence.verification.models import VerifiedEvidenceEdge
 from novelty_harness.runtime.tracing.hashing import canonical_json
 
@@ -74,12 +77,15 @@ class SqlAlchemyEvidenceGraphRepository:
         edges: Sequence[GraphEdge] = (),
         clusters: Sequence[EvidenceLineageCluster] = (),
         verified_edges: Sequence[VerifiedEvidenceEdge] = (),
+        verified_chains: Sequence[VerifiedEvidenceChain] = (),
     ) -> None:
         with Session(self._engine) as session, session.begin():
             self._verify_edge_endpoints(session, nodes, edges)
             for verified in verified_edges:
                 self._persist_verified_edge(session, verified)
-            self._verify_phase6_edges(session, edges, verified_edges)
+            for chain in verified_chains:
+                self._persist_verified_chain(session, chain, nodes)
+            self._verify_phase6_edges(session, edges, verified_edges, verified_chains)
             for node in nodes:
                 self._persist_node(session, node)
             for edge in edges:
@@ -149,15 +155,72 @@ class SqlAlchemyEvidenceGraphRepository:
             return None
         return VerifiedEvidenceEdge.model_validate_json(row.document_json)
 
+    def _resolve_verified_chain(
+        self, session: Session, verified_edge_id: str
+    ) -> VerifiedEvidenceChain | None:
+        row = session.get(VerifiedChainRow, verified_edge_id)
+        return VerifiedEvidenceChain.model_validate_json(row.document_json) if row else None
+
+    def _persist_verified_chain(
+        self,
+        session: Session,
+        chain: VerifiedEvidenceChain,
+        batch_nodes: Sequence[GraphNode],
+    ) -> None:
+        cited = validate_verified_chain(chain)
+        by_id = {node.node_id: node for node in batch_nodes}
+
+        def node(identity: str) -> GraphNode | None:
+            present = by_id.get(identity)
+            if present is not None:
+                return present
+            row = session.get(GraphNodeRow, identity)
+            return GraphNode.model_validate_json(row.document_json) if row else None
+
+        source_node = node(chain.source.source_id)
+        if source_node is None or source_node.kind != GraphNodeKind.SOURCE:
+            raise ValueError("Verified semantic chain has no persisted source node")
+        if chain.version is not None:
+            version_node = node(chain.version.version_id)
+            if (
+                version_node is None
+                or version_node.kind != GraphNodeKind.SOURCE_VERSION
+                or version_node.attributes.get("source_id") != chain.source.source_id
+            ):
+                raise ValueError("Verified semantic chain has no matching source-version node")
+        for passage in cited:
+            passage_node = node(passage.passage_id)
+            if (
+                passage_node is None
+                or passage_node.kind != GraphNodeKind.PASSAGE
+                or passage_node.attributes.get("source_id") != passage.source_id
+                or passage_node.attributes.get("source_version_id") != passage.source_version_id
+                or passage_node.attributes.get("content_hash") != passage.content_hash
+            ):
+                raise ValueError(
+                    f"Verified semantic chain cites unresolved passage {passage.passage_id}"
+                )
+        document = canonical_json(chain)
+        row = session.get(VerifiedChainRow, chain.edge.edge_id)
+        if row is None:
+            session.add(VerifiedChainRow(edge_id=chain.edge.edge_id, document_json=document))
+        elif row.document_json != document:
+            raise ValueError(
+                f"Verified semantic chain {chain.edge.edge_id} already exists "
+                "with different content"
+            )
+
     def _verify_phase6_edges(
         self,
         session: Session,
         edges: Sequence[GraphEdge],
         batch: Sequence[VerifiedEvidenceEdge],
+        chains: Sequence[VerifiedEvidenceChain],
     ) -> None:
         """Resolve every Phase 6 verification reference against a real artifact."""
 
         batch_by_id = {verified.edge_id: verified for verified in batch}
+        chain_by_id = {chain.edge.edge_id: chain for chain in chains}
         expected_relation = {
             GraphEdgeKind.DIRECT_PRECEDENT: PrecedentState.DIRECT_PRECEDENT,
             GraphEdgeKind.STRONG_PARTIAL_PRECEDENT: PrecedentState.STRONG_PARTIAL_PRECEDENT,
@@ -181,6 +244,14 @@ class SqlAlchemyEvidenceGraphRepository:
                     f"Graph edge {edge.edge_id} references unknown verified edge "
                     f"{reference.verified_edge_id}"
                 )
+            chain = chain_by_id.get(reference.verified_edge_id) or self._resolve_verified_chain(
+                session, reference.verified_edge_id
+            )
+            if chain is None:
+                raise ValueError(f"Graph edge {edge.edge_id} has no resolved semantic chain")
+            validate_verified_chain(chain)
+            if chain.edge != verified:
+                raise ValueError("Graph edge semantic chain differs from verified artifact")
             if verified.source_id != edge.source_node_id or verified.mcu_id != edge.target_node_id:
                 raise ValueError(
                     f"Graph edge {edge.edge_id} endpoints do not match the verified artifact"

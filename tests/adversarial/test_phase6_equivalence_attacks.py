@@ -35,7 +35,6 @@ from novelty_harness.evidence.mapping.prompts import (
 )
 from novelty_harness.evidence.normalization.models import SourceType
 from novelty_harness.evidence.precedent.gates import (
-    ClassificationFacts,
     classify_precedent,
     summarize_multi_source,
 )
@@ -50,13 +49,16 @@ from novelty_harness.evidence.verification.gates import (
     build_verified_evidence_edge,
 )
 from novelty_harness.evidence.verification.models import BlindedVerificationInput
-from tests.fixtures.phase5 import make_passage, make_source, phase5_provenance
+from tests.fixtures.phase5 import make_passage, make_source, make_version, phase5_provenance
 from tests.unit.evidence.precedent.test_classification import (
     RELATIONSHIP,
     basic_commitments,
     commitment,
     facts_for,
     verification_for,
+)
+from tests.unit.evidence.precedent.test_classification import (
+    classification_facts as ClassificationFacts,
 )
 from tests.unit.evidence.precedent.test_classification import (
     proposition as classification_proposition,
@@ -68,6 +70,9 @@ from tests.unit.evidence.verification.test_eligibility import (
     NOW,
     build,
     source,
+)
+from tests.unit.evidence.verification.test_eligibility import (
+    bundle as eligibility_bundle,
 )
 from tests.unit.evidence.verification.test_eligibility import (
     mapping as eligibility_mapping,
@@ -229,18 +234,8 @@ def test_attack_04_special_case_only_is_partial() -> None:
 
 def test_attack_05_hidden_negation_in_context_is_caught() -> None:
     target = classification_proposition(*basic_commitments())
-    edge = build_verified_evidence_edge(
-        mapping=eligibility_mapping().model_copy(
-            update={"mcu_id": target.mcu_id, "proposition_id": target.proposition_id}
-        ),
-        verification=eligibility_verification(SupportVerificationState.CONTRADICTED).model_copy(
-            update={"mcu_id": target.mcu_id}
-        ),
-        proposition=target,
-        source=source(),
-        as_of=AS_OF,
-        observed_at=NOW,
-        relation=PrecedentState.CONTRADICTORY_EVIDENCE,
+    edge = build(
+        SupportVerificationState.CONTRADICTED, relation=PrecedentState.CONTRADICTORY_EVIDENCE
     )
     classification = classify_precedent(
         ClassificationFacts(
@@ -407,6 +402,8 @@ def test_attack_10_analogy_inflation_cannot_become_direct() -> None:
             verification=eligibility_verification(SupportVerificationState.PARTIALLY_SUPPORTED),
             proposition=eligibility_proposition(),
             source=source(),
+            bundle=eligibility_bundle(),
+            version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
             as_of=AS_OF,
             observed_at=NOW,
             relation=PrecedentState.DIRECT_PRECEDENT,
@@ -437,6 +434,8 @@ def test_attack_11_source_calling_itself_novel_is_irrelevant() -> None:
         verification=eligibility_verification(SupportVerificationState.NOT_SUPPORTED),
         proposition=eligibility_proposition(),
         source=source(),
+        bundle=eligibility_bundle(),
+        version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
         as_of=AS_OF,
         observed_at=NOW,
     )
@@ -476,6 +475,8 @@ def test_attack_13_low_quality_supported_passage_keeps_support() -> None:
         verification=eligibility_verification(SupportVerificationState.SUPPORTED),
         proposition=eligibility_proposition(),
         source=low_quality_source,
+        bundle=eligibility_bundle(),
+        version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
         as_of=AS_OF,
         observed_at=NOW,
         quality=quality,
@@ -505,6 +506,16 @@ def test_attack_14_contradictory_passages_stay_contradictory() -> None:
 
 def test_attack_15_version_specific_results_do_not_reuse_old_support() -> None:
     first = build(SupportVerificationState.SUPPORTED)
+    original_bundle = eligibility_bundle()
+    revised_bundle = original_bundle.model_copy(
+        update={
+            "claim": original_bundle.claim.model_copy(update={"source_version_id": "srcv_2_v2"}),
+            "passages": tuple(
+                item.model_copy(update={"source_version_id": "srcv_2_v2"})
+                for item in original_bundle.passages
+            ),
+        }
+    )
     second = build_verified_evidence_edge(
         mapping=SourceMCUMapping.model_validate(
             {**eligibility_mapping().model_dump(), "source_version_id": "srcv_2_v2"}
@@ -514,6 +525,8 @@ def test_attack_15_version_specific_results_do_not_reuse_old_support() -> None:
         ),
         proposition=eligibility_proposition(),
         source=source(),
+        bundle=revised_bundle,
+        version=make_version("src_1", version_id="srcv_2_v2", published_date=date(2020, 1, 2)),
         as_of=AS_OF,
         observed_at=NOW,
     )

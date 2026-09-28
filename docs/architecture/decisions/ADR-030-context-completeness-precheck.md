@@ -21,9 +21,14 @@ INSUFFICIENT_CONTEXT-only retry policy is unchanged.
 
 Boundaries are unchanged: expansion never crosses source or version, blocked
 expansions are recorded explicitly, expansion-created windows are not expanded
-again, and exhausted context still yields `INSUFFICIENT_CONTEXT`. A source with
-no stored wider context cannot be expanded, so the excerpt stands as the best
-available evidence and remains subject to all other gates.
+again, and exhausted context still yields `INSUFFICIENT_CONTEXT`.
+
+Round-2 remediation records context completeness as `COMPLETE`, `TRUNCATED`,
+`UNAVAILABLE`, or `UNKNOWN`; unavailable or unknown excerpts are not decisive.
+A full resolved source passage may establish completeness when its locator
+spans the content. Otherwise the precheck uses the mapped occurrence and
+bounded same-version neighbors. A truncated window, ambiguous repeated
+occurrence, or zero precheck budget cannot silently become complete.
 
 ## Consequences
 
@@ -31,4 +36,7 @@ A near negation can no longer be hidden by choosing a short mapped excerpt, and
 the verifier sees material same-source context from the start. The costs are
 one extra expansion pass per claim and a slightly larger verifier input; both
 are bounded and traced. Decisive support still requires verifier-cited
-passages, and the precheck does not upgrade or downgrade any state by itself.
+passages. The completeness gate can conservatively downgrade apparently
+supported evidence to insufficient context, but cannot manufacture support or
+a contradiction. This is deliberately stricter than the initial precheck
+policy; the original decision remains documented above for audit history.

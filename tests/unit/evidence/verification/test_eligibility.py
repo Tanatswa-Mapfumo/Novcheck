@@ -3,6 +3,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from novelty_harness.domain.enums import EvidenceTier, PrecedentState, SupportVerificationState
+from novelty_harness.evidence.context.selection import SupportEvidenceBundle
 from novelty_harness.evidence.mapping.models import (
     ComparisonDimension,
     DimensionMapping,
@@ -24,9 +25,10 @@ from novelty_harness.evidence.verification.gates import (
 )
 from novelty_harness.evidence.verification.models import (
     CommitmentStateRecord,
+    PassageSupportClaim,
     SupportVerification,
 )
-from tests.fixtures.phase5 import make_source, phase5_provenance
+from tests.fixtures.phase5 import make_passage, make_source, make_version, phase5_provenance
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
 AS_OF = date(2026, 9, 28)
@@ -109,6 +111,7 @@ def verification(state: SupportVerificationState, *, relied=CLAIM_PASSAGES) -> S
         "mcu_id": "mcu_1",
         "state": state,
         "commitment_states": records,
+        "context_completeness": "COMPLETE",
         "context_expansions": 0,
         "verifier_prompt_version": "support-verifier-v1",
         "verifier_rubric_version": "support-rubric-v1",
@@ -137,14 +140,44 @@ def source(**overrides: object):
     return make_source("src_1", **overrides)
 
 
+def bundle() -> SupportEvidenceBundle:
+    claim = PassageSupportClaim(
+        claim_id="claim_1",
+        mapping_id="map_1",
+        source_id="src_1",
+        source_version_id="srcv_1_v1",
+        mcu_id="mcu_1",
+        proposition_id="prop_1",
+        proposition_statement=proposition().statement,
+        commitments=COMMITMENTS,
+        passage_ids=CLAIM_PASSAGES,
+    )
+    return SupportEvidenceBundle(
+        claim=claim,
+        passages=(
+            make_passage(
+                "src_1",
+                text="A threshold drives a relay coil and switches a load without an operator.",
+                passage_id="pass_1",
+                source_version_id="srcv_1_v1",
+            ),
+        ),
+    )
+
+
 def build(state: SupportVerificationState, *, relation=None, source_overrides=None, quality=None):
+    dates = (source_overrides or {}).get("dates", {"publication_date": date(2020, 1, 1)})
+    published = dates.get("publication_date") if isinstance(dates, dict) else None
     return build_verified_evidence_edge(
         mapping=mapping(),
         verification=verification(state),
         proposition=proposition(),
         source=source(**(source_overrides or {})),
+        bundle=bundle(),
+        version=make_version("src_1", version_id="srcv_1_v1", published_date=published),
         as_of=AS_OF,
         observed_at=NOW,
+        assessment_id="asm_test",
         quality=quality,
         relation=relation,
     )
@@ -232,6 +265,8 @@ def test_quality_cannot_alter_verification_state_or_decisiveness() -> None:
         verification=verification(SupportVerificationState.SUPPORTED),
         proposition=proposition(),
         source=low_quality_source,
+        bundle=bundle(),
+        version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
         as_of=AS_OF,
         observed_at=NOW,
         quality=low_quality,
@@ -251,6 +286,7 @@ def test_identity_disagreements_are_rejected() -> None:
             ),
             proposition=proposition(),
             source=source(),
+            bundle=bundle(),
             as_of=AS_OF,
             observed_at=NOW,
         )
@@ -260,6 +296,7 @@ def test_identity_disagreements_are_rejected() -> None:
             verification=verification(SupportVerificationState.SUPPORTED),
             proposition=proposition(),
             source=make_source("src_other"),
+            bundle=bundle(),
             as_of=AS_OF,
             observed_at=NOW,
         )
@@ -272,6 +309,16 @@ def test_relied_on_passages_are_preferred_and_edge_ids_are_deterministic() -> No
         verification=verification(SupportVerificationState.SUPPORTED, relied=expanded),
         proposition=proposition(),
         source=source(),
+        bundle=bundle(),
+        version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
+        context_passages=(
+            make_passage(
+                "src_1",
+                text="The full document confirms threshold control of the relay.",
+                passage_id="pass_document",
+                source_version_id="srcv_1_v1",
+            ),
+        ),
         as_of=AS_OF,
         observed_at=NOW,
     )

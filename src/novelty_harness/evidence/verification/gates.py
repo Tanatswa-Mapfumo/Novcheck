@@ -16,11 +16,18 @@ from novelty_harness.domain.enums import (
     SupportVerificationState,
 )
 from novelty_harness.domain.idea import ArtifactProvenance
+from novelty_harness.domain.ids import AssessmentId
 from novelty_harness.evidence.context.selection import SupportEvidenceBundle
 from novelty_harness.evidence.mapping.models import EvidenceProposition, SourceMCUMapping
 from novelty_harness.evidence.normalization.models import SourceRecord, SourceVersionRecord
 from novelty_harness.evidence.passages.hashing import text_hash
+from novelty_harness.evidence.passages.models import PassageRecord
 from novelty_harness.evidence.quality.models import EvidenceQualityAssessment
+from novelty_harness.evidence.verification.integrity import (
+    SemanticIntegrityError,
+    VerifiedEvidenceChain,
+    validate_semantic_chain,
+)
 from novelty_harness.evidence.verification.models import (
     BlindedPassage,
     BlindedVerificationInput,
@@ -315,11 +322,9 @@ def assess_chronology(
 ) -> ChronologyAssessment:
     """Compute the public-disclosure chronology gate for the cited content.
 
-    When a cited source version is supplied, its publication date governs the
-    content actually being assessed (F02): an old source date can never make a
-    later revision eligible, conflicting source-level dates are combined
-    conservatively, and a cited version without a disclosure date stays
-    uncertain rather than inheriting the source date.
+    A cited version's public disclosure governs that version alone. Parent or
+    sibling source dates cannot make a revision earlier or erase an eligible
+    preprint. A cited version without a public date stays uncertain.
     """
 
     candidates = [
@@ -338,14 +343,12 @@ def assess_chronology(
                     "chronology stays uncertain",
                 ),
             )
-        known: list[tuple[date, str]] = [(version.published_date, "version_published_date")]
-        known.extend(candidates)
-        decisive_date, field = max(known)
+        decisive_date, field = version.published_date, "version_published_date"
         state: Literal["PREDATES_CUTOFF", "POST_CUTOFF"] = (
             "PREDATES_CUTOFF" if decisive_date <= as_of else "POST_CUTOFF"
         )
         rationale = (
-            f"Cited version/combined public disclosure is {field}={decisive_date.isoformat()}",
+            f"Cited version public disclosure is {field}={decisive_date.isoformat()}",
             "Post-cutoff evidence cannot negate historical novelty"
             if state == "POST_CUTOFF"
             else "Cited version disclosure is at or before the assessment cutoff",
@@ -410,9 +413,12 @@ def build_verified_evidence_edge(
     verification: SupportVerification,
     proposition: EvidenceProposition,
     source: SourceRecord,
+    bundle: SupportEvidenceBundle,
     as_of: date,
     observed_at: datetime,
+    assessment_id: AssessmentId | None = None,
     version: SourceVersionRecord | None = None,
+    context_passages: tuple[PassageRecord, ...] = (),
     quality: EvidenceQualityAssessment | None = None,
     relation: PrecedentState | None = None,
     provenance: ArtifactProvenance | None = None,
@@ -430,8 +436,26 @@ def build_verified_evidence_edge(
         raise EdgeEligibilityError("Verification, mapping and source identities must agree")
     if mapping.source_version_id != verification.source_version_id:
         raise EdgeEligibilityError("Verification and mapping versions must agree")
+    if mapping.source_version_id is not None and version is None:
+        raise EdgeEligibilityError("Cited source version object is required")
+    if mapping.source_version_id is None and version is not None:
+        raise EdgeEligibilityError("Unversioned evidence cannot cite a version object")
     if version is not None and version.version_id != verification.source_version_id:
         raise EdgeEligibilityError("Cited version does not match the verified version")
+    if version is not None and version.source_id != source.source_id:
+        raise EdgeEligibilityError("Cited version owner does not match the source")
+    try:
+        validate_semantic_chain(
+            source=source,
+            version=version,
+            proposition=proposition,
+            mapping=mapping,
+            bundle=bundle,
+            verification=verification,
+            context_passages=context_passages,
+        )
+    except SemanticIntegrityError as error:
+        raise EdgeEligibilityError(str(error)) from error
     if quality is not None and quality.source_id != source.source_id:
         raise EdgeEligibilityError("Quality assessment belongs to another source")
 
@@ -439,10 +463,15 @@ def build_verified_evidence_edge(
     decisive = (
         verification.state == SupportVerificationState.SUPPORTED
         and chronology.state == "PREDATES_CUTOFF"
+        and verification.context_completeness == "COMPLETE"
     )
     reasons: list[str] = []
     if verification.state != SupportVerificationState.SUPPORTED:
         reasons.append(f"Verification state is {verification.state.value}")
+    if verification.context_completeness != "COMPLETE":
+        reasons.append(
+            f"Verification context is {verification.context_completeness} and cannot be decisive"
+        )
     if chronology.state == "POST_CUTOFF":
         reasons.append("Source is post-cutoff and cannot be decisive precedent")
     elif chronology.state == "UNCERTAIN":
@@ -473,8 +502,17 @@ def build_verified_evidence_edge(
             "mcu_id": proposition.mcu_id,
             "mapping_id": mapping.mapping_id,
             "verification_id": verification.verification_id,
+            "claim_id": bundle.claim.claim_id,
+            "claim_digest": canonical_hash(bundle.claim),
+            "assessment_id": assessment_id or bundle.claim.claim_id,
             "passage_ids": list(passage_ids),
             "relation": relation.value if relation else None,
+            "as_of": as_of.isoformat(),
+            "chronology_state": chronology.state,
+            "context_completeness": verification.context_completeness,
+            "chronology_date": chronology.decisive_date.isoformat()
+            if chronology.decisive_date is not None
+            else None,
         }
     )
     return VerifiedEvidenceEdge(
@@ -485,6 +523,9 @@ def build_verified_evidence_edge(
         proposition_id=proposition.proposition_id,
         proposition=proposition.statement,
         mapping_id=mapping.mapping_id,
+        claim_id=bundle.claim.claim_id,
+        claim_digest=canonical_hash(bundle.claim),
+        assessment_id=assessment_id,
         verification_id=verification.verification_id,
         passage_ids=passage_ids,
         comparison=mapping.aggregate_comparison(),
@@ -508,3 +549,57 @@ def build_verified_evidence_edge(
             detail="Chronology and quality attached without altering verification state.",
         ),
     )
+
+
+def validate_verified_chain(chain: VerifiedEvidenceChain) -> tuple[PassageRecord, ...]:
+    """Reconstruct eligibility from persisted inputs, rejecting self-declared edges."""
+
+    cited = validate_semantic_chain(
+        source=chain.source,
+        version=chain.version,
+        proposition=chain.proposition,
+        mapping=chain.mapping,
+        bundle=chain.bundle,
+        verification=chain.verification,
+        context_passages=chain.context_passages,
+    )
+    if chain.edge.assessment_id != chain.assessment_id:
+        raise SemanticIntegrityError("Verified edge belongs to another assessment")
+    rebuilt = build_verified_evidence_edge(
+        mapping=chain.mapping,
+        verification=chain.verification,
+        proposition=chain.proposition,
+        source=chain.source,
+        bundle=chain.bundle,
+        version=chain.version,
+        context_passages=chain.context_passages,
+        assessment_id=chain.assessment_id,
+        as_of=chain.edge.chronology.as_of,
+        observed_at=chain.edge.observed_at,
+        relation=chain.edge.relation,
+    )
+    for field in (
+        "edge_id",
+        "source_id",
+        "source_version_id",
+        "mcu_id",
+        "proposition_id",
+        "proposition",
+        "mapping_id",
+        "claim_id",
+        "claim_digest",
+        "verification_id",
+        "passage_ids",
+        "comparison",
+        "support_state",
+        "decisive",
+        "chronology",
+        "eligibility",
+        "relation",
+        "mapper_prompt_version",
+        "verifier_prompt_version",
+        "verifier_rubric_version",
+    ):
+        if getattr(chain.edge, field) != getattr(rebuilt, field):
+            raise SemanticIntegrityError(f"Verified edge {field} differs from resolved chain")
+    return cited

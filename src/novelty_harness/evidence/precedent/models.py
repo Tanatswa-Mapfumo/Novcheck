@@ -39,11 +39,24 @@ class CounterfactualDiagnostic(ContractModel):
     diagnostic_only: Literal[True] = True
 
 
+class ScopedCoverage(ContractModel):
+    """Known narrower support that does not establish the whole commitment."""
+
+    model_config = ConfigDict(frozen=True)
+    contract_kind: Literal["scoped-coverage-v1"] = "scoped-coverage-v1"
+
+    commitment_id: NonBlankText
+    dimension: ComparisonDimension
+    supported_subset: NonBlankText
+    unsupported_remainder: NonBlankText
+    passage_ids: tuple[PassageId, ...] = Field(min_length=1)
+
+
 class PrecedentClassification(ContractModel):
     """Local precedent relation for one source/version against one MCU."""
 
     model_config = ConfigDict(frozen=True)
-    contract_kind: Literal["precedent-classification-v1"] = "precedent-classification-v1"
+    contract_kind: Literal["precedent-classification-v2"] = "precedent-classification-v2"
 
     classification_id: ClassificationId
     source_id: SourceId
@@ -59,6 +72,7 @@ class PrecedentClassification(ContractModel):
     basis: tuple[NonBlankText, ...] = Field(min_length=1)
     covered_elements: tuple[NonBlankText, ...] = ()
     covered_relationships: tuple[NonBlankText, ...] = ()
+    scoped_coverage: tuple[ScopedCoverage, ...] = ()
     missing_elements: tuple[NonBlankText, ...] = ()
     missing_relationships: tuple[NonBlankText, ...] = ()
     configuration_gap: NonBlankText | None = None
@@ -77,7 +91,12 @@ class PrecedentClassification(ContractModel):
         if self.relation == PrecedentState.DIRECT_PRECEDENT:
             if not self.single_source or not self.decisive:
                 raise ValueError("Direct precedent must be decisive and single-source")
-            if self.missing_elements or self.missing_relationships or self.configuration_gap:
+            if (
+                self.missing_elements
+                or self.missing_relationships
+                or self.configuration_gap
+                or self.scoped_coverage
+            ):
                 raise ValueError("Direct precedent cannot have missing material elements")
         elif self.relation == PrecedentState.STRONG_PARTIAL_PRECEDENT:
             if not (self.missing_elements or self.missing_relationships or self.configuration_gap):

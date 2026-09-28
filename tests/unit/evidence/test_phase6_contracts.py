@@ -160,6 +160,8 @@ def verification(**overrides: object) -> SupportVerification:
             ),
         ),
         "supported_portions": ("Sensor controls relay",),
+        "relied_on_passage_ids": ("pass_1",),
+        "context_completeness": "COMPLETE",
         "verifier_prompt_version": "support-verifier-v1",
         "verifier_rubric_version": "support-rubric-v1",
         "observed_at": NOW,
@@ -307,6 +309,7 @@ def test_support_verification_states_match_their_payloads() -> None:
                 dimension=ComparisonDimension.MECHANISM,
                 state="SUPPORTED",
                 rationale="supported",
+                passage_ids=("pass_1",),
             ),
             record,
         ),
@@ -337,6 +340,7 @@ def test_support_verification_states_match_their_payloads() -> None:
             ),
         ),
         context_needed=("following sentence",),
+        relied_on_passage_ids=(),
     )
     assert insufficient.context_needed == ("following sentence",)
 
@@ -380,6 +384,8 @@ def test_verified_edge_cannot_be_decisive_without_full_support_or_pre_cutoff_chr
         "proposition_id": "prop_1",
         "proposition": "A sensor controls a relay",
         "mapping_id": "map_1",
+        "claim_id": "claim_1",
+        "claim_digest": "claim-digest-fixture",
         "verification_id": "ver_1",
         "passage_ids": ("pass_1",),
         "comparison": mapping().aggregate_comparison(),

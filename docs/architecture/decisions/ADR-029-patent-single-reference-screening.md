@@ -49,4 +49,17 @@ explicit limitations. Multi-reference combination context requires at least two
 distinct eligible lineage roots, so later versions or family publications of
 one patent count as one root and can never inflate the combination view.
 Priority dates alone still do not establish disclosure, and neither case can
-become one-reference anticipation. This closes GPT-6 Sol High finding F08.
+become one-reference anticipation. This addressed the initial F08 examples;
+the Round-2 review identified a remaining cited-version chronology gap.
+
+## Round-2 clarification: cited-version eligibility
+
+For a classified source version, screening consumes the chronology assessment
+of that cited version. A parent patent publication date cannot make a later
+revision eligible, and missing or uncertain version chronology stays
+ineligible. A known version chronology must identify the version publication
+date and use the screening cutoff. Unversioned entries retain the source-level
+publication-date fallback. The date shown for an eligible version in the
+screening result is its cited disclosure date; priority stays separate. This
+does not change the one-reference anticipation rule or distinct-lineage
+requirement for multi-reference context.

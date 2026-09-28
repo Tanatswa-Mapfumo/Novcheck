@@ -16,11 +16,11 @@ from novelty_harness.evidence.graph.phase6_mapping import (
     phase6_graph_provenance,
     verified_edge_graph_fragment,
 )
+from novelty_harness.evidence.graph.retrieval_mapping import passage_graph_node, version_graph_node
 from novelty_harness.evidence.graph.sqlalchemy_repository import (
     SqlAlchemyEvidenceGraphRepository,
 )
 from novelty_harness.evidence.precedent.gates import (
-    ClassificationFacts,
     classify_precedent,
 )
 from novelty_harness.evidence.precedent.patent import PatentEvidenceEntry
@@ -29,6 +29,7 @@ from novelty_harness.evidence.verification.gates import (
     VerificationValidationError,
     build_verified_evidence_edge,
 )
+from novelty_harness.evidence.verification.integrity import VerifiedEvidenceChain
 from novelty_harness.evidence.verification.models import (
     CommitmentStateRecord,
     SupportVerification,
@@ -38,6 +39,9 @@ from tests.fixtures.phase5 import (
     make_source,
     make_version,
     phase5_provenance,
+)
+from tests.unit.evidence.precedent.test_classification import (
+    classification_facts as ClassificationFacts,
 )
 from tests.unit.evidence.precedent.test_classification import (
     commitment,
@@ -52,6 +56,9 @@ from tests.unit.evidence.verification.test_eligibility import (
     NOW,
     build,
     source,
+)
+from tests.unit.evidence.verification.test_eligibility import (
+    bundle as eligibility_bundle,
 )
 from tests.unit.evidence.verification.test_eligibility import (
     mapping as eligibility_mapping,
@@ -119,6 +126,8 @@ def test_f05_mapper_passages_cannot_substitute_for_verifier_citations() -> None:
             verification=citation_free,
             proposition=eligibility_proposition(),
             source=source(),
+            bundle=eligibility_bundle(),
+            version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
             as_of=AS_OF,
             observed_at=NOW,
         )
@@ -173,6 +182,8 @@ def test_f06_foreign_source_version_proposition_joins_are_rejected() -> None:
             verification=eligibility_verification(SupportVerificationState.SUPPORTED),
             proposition=target,
             source=source(),
+            bundle=eligibility_bundle(),
+            version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
             as_of=AS_OF,
             observed_at=NOW,
         )
@@ -217,6 +228,12 @@ def _persist_phase6_fragment(repository, edge, classified):
             observed_at=NOW,
             provenance=ORIGIN,
         ),
+        version_graph_node(
+            make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
+            observed_at=NOW,
+            provenance=ORIGIN,
+        ),
+        passage_graph_node(eligibility_bundle().passages[0], observed_at=NOW, provenance=ORIGIN),
         GraphNode(
             node_id="mcu_1",
             kind=GraphNodeKind.MCU,
@@ -227,6 +244,19 @@ def _persist_phase6_fragment(repository, edge, classified):
     )
     repository.upsert(nodes=existing)
     return nodes, graph_edges
+
+
+def _valid_chain(edge) -> VerifiedEvidenceChain:
+    return VerifiedEvidenceChain(
+        assessment_id="asm_test",
+        source=source(),
+        version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
+        proposition=eligibility_proposition(),
+        mapping=eligibility_mapping(),
+        bundle=eligibility_bundle(),
+        verification=eligibility_verification(SupportVerificationState.SUPPORTED),
+        edge=edge,
+    )
 
 
 def test_f07_graph_persistence_rejects_unresolved_or_mismatched_verification() -> None:
@@ -241,7 +271,9 @@ def test_f07_graph_persistence_rejects_unresolved_or_mismatched_verification() -
     repository = SqlAlchemyEvidenceGraphRepository()
     _, graph_edges = _persist_phase6_fragment(repository, edge, classified)
     direct = next(item for item in graph_edges if item.kind == GraphEdgeKind.DIRECT_PRECEDENT)
-    repository.upsert(edges=(direct,), verified_edges=(edge,))
+    repository.upsert(
+        edges=(direct,), verified_edges=(edge,), verified_chains=(_valid_chain(edge),)
+    )
     assert repository.get_edge(direct.edge_id) is not None
 
     fake = direct.model_copy(
@@ -262,23 +294,48 @@ def test_f07_graph_persistence_rejects_unresolved_or_mismatched_verification() -
     other_repository = SqlAlchemyEvidenceGraphRepository()
     other_repository.upsert(nodes=_persist_phase6_fragment(other_repository, edge, classified)[0])
     other_mcu_edge = edge.model_copy(update={"mcu_id": "mcu_other"})
-    with pytest.raises(ValueError, match="do not match"):
-        other_repository.upsert(edges=(direct,), verified_edges=(other_mcu_edge,))
+    with pytest.raises(ValueError, match="semantic chain differs"):
+        other_repository.upsert(
+            edges=(direct,),
+            verified_edges=(other_mcu_edge,),
+            verified_chains=(_valid_chain(edge),),
+        )
     other_repository.close()
 
 
-def test_f07_schema_v1_migrates_to_v2(tmp_path) -> None:
+def test_f07_schema_v1_migrates_to_v3(tmp_path) -> None:
     database = tmp_path / "graph.sqlite3"
     repository = SqlAlchemyEvidenceGraphRepository(database)
-    # Simulate a v1 database by recording version 1 after the v2 tables exist.
+    # Simulate a v1 database with no Phase 6 edges.
     with repository.engine.begin() as connection:
-        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 2"))
+        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 3"))
     repository.close()
     migrated = SqlAlchemyEvidenceGraphRepository(database)
     from novelty_harness.evidence.graph.migrations import SCHEMA_VERSION, schema_version
 
-    assert schema_version(migrated.engine) == SCHEMA_VERSION == 2
+    assert schema_version(migrated.engine) == SCHEMA_VERSION == 3
     migrated.close()
+
+
+def test_f07_legacy_direct_edge_cannot_be_reinterpreted_as_verified(tmp_path) -> None:
+    database = tmp_path / "legacy-direct.sqlite3"
+    edge = build(SupportVerificationState.SUPPORTED, relation=PrecedentState.DIRECT_PRECEDENT)
+    from tests.unit.evidence.graph.test_phase6_mapping import (
+        classification as graph_classification,
+    )
+
+    classified = graph_classification(edge, PrecedentState.DIRECT_PRECEDENT, decisive=True)
+    repository = SqlAlchemyEvidenceGraphRepository(database)
+    _, graph_edges = _persist_phase6_fragment(repository, edge, classified)
+    direct = next(item for item in graph_edges if item.kind == GraphEdgeKind.DIRECT_PRECEDENT)
+    repository.upsert(
+        edges=(direct,), verified_edges=(edge,), verified_chains=(_valid_chain(edge),)
+    )
+    with repository.engine.begin() as connection:
+        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 3"))
+    repository.close()
+    with pytest.raises(ValueError, match="Legacy Phase 6 graph edges"):
+        SqlAlchemyEvidenceGraphRepository(database)
 
 
 def test_f06_f05_foundations_hold_on_a_valid_edge() -> None:
@@ -311,6 +368,7 @@ def _f02_edge(*, version_published: date | None, source_overrides: dict | None =
         verification=eligibility_verification(SupportVerificationState.SUPPORTED),
         proposition=eligibility_proposition(),
         source=source(**(source_overrides or {})),
+        bundle=eligibility_bundle(),
         version=make_version("src_1", version_id="srcv_1_v1", published_date=version_published),
         as_of=AS_OF,
         observed_at=NOW,
@@ -350,13 +408,13 @@ def test_f02_older_eligible_version_remains_independently_assessable() -> None:
     assert edge.decisive
 
 
-def test_f02_later_source_level_date_is_combined_conservatively() -> None:
+def test_f02_later_sibling_source_date_does_not_erase_eligible_preprint() -> None:
     edge = _f02_edge(
         version_published=date(2020, 1, 1),
         source_overrides={"dates": {"publication_date": date(2027, 1, 1)}},
     )
-    assert edge.chronology.state == "POST_CUTOFF"
-    assert not edge.decisive
+    assert edge.chronology.state == "PREDATES_CUTOFF"
+    assert edge.decisive
 
 
 # --- F04 ---
@@ -890,7 +948,7 @@ def test_f09_verified_functional_commitment_supports_analogy() -> None:
     assert not classification.decisive
 
 
-def test_f09_mapper_conflict_blocks_direct_until_resolved() -> None:
+def test_f09_verified_relationship_uncertainty_blocks_direct_until_resolved() -> None:
     target = classification_proposition(*basic_commitments())
     all_supported = {
         "mech": "SUPPORTED",
@@ -900,21 +958,21 @@ def test_f09_mapper_conflict_blocks_direct_until_resolved() -> None:
     conflicted = classify_precedent(
         _facts_for(
             target,
-            states=all_supported,
+            states={"mech": "SUPPORTED", "feat": "SUPPORTED", "rel": "INSUFFICIENT"},
             matching=(
                 _Dimension.MECHANISM,
                 _Dimension.FEATURES,
                 _Dimension.RELATIONSHIPS,
             ),
             conflicting=(_Dimension.CONTROL_FLOW,),
-            decisive=True,
+            decisive=False,
             chronology="PREDATES_CUTOFF",
         ),
         clock=lambda: NOW,
     )
     assert conflicted.relation == PrecedentState.UNRESOLVED
     assert conflicted.relation != PrecedentState.DIRECT_PRECEDENT
-    assert any("mapper conflict" in item.lower() for item in conflicted.unresolved)
+    assert conflicted.unresolved
 
     resolved = classify_precedent(
         _facts_for(
@@ -931,6 +989,17 @@ def test_f09_mapper_conflict_blocks_direct_until_resolved() -> None:
         clock=lambda: NOW,
     )
     assert resolved.relation == PrecedentState.DIRECT_PRECEDENT
+    mapper_only_conflict = classify_precedent(
+        _facts_for(
+            target,
+            states=all_supported,
+            conflicting=(_Dimension.CONTROL_FLOW,),
+            decisive=True,
+            chronology="PREDATES_CUTOFF",
+        ),
+        clock=lambda: NOW,
+    )
+    assert mapper_only_conflict.relation == resolved.relation
 
 
 # --- F08 ---

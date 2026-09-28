@@ -26,7 +26,11 @@ from novelty_harness.evidence.mapping.models import (
     EvidenceProposition,
     PropositionCommitment,
 )
-from novelty_harness.evidence.passages.models import PassageRecord
+from novelty_harness.evidence.passages.models import (
+    PassageLocator,
+    PassageLocatorKind,
+    PassageRecord,
+)
 from novelty_harness.evidence.verification.prompts import VERIFIER_PROMPT_VERSION
 from novelty_harness.evidence.verification.verifier import (
     VERIFIER_TASK,
@@ -286,11 +290,21 @@ def _verifier() -> IndependentSupportVerifier:
 
 
 async def run_case(case: SupportCase) -> dict[str, object]:
+    selected_text = " ".join(case.passages)
     passage = make_passage(
         "src_bench",
-        text=" ".join(case.passages),
+        text=selected_text,
         passage_id="pass_bench",
         source_version_id=VERSION,
+        locator=(
+            PassageLocator(
+                kind=PassageLocatorKind.RESOLVED_CONTENT,
+                char_start=0,
+                char_end=len(selected_text),
+            )
+            if not case.expanded_passages
+            else PassageLocator(kind=PassageLocatorKind.BLOCK)
+        ),
     )
     available: list[PassageRecord] = [passage]
     if case.expanded_passages:

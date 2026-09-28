@@ -68,42 +68,24 @@ CONTROL_FLOW_VERBS = frozenset(
 )
 
 
-_STATEMENT_STOPWORDS = frozenset(
-    {
-        "a",
-        "an",
-        "and",
-        "are",
-        "as",
-        "at",
-        "be",
-        "by",
-        "for",
-        "from",
-        "in",
-        "into",
-        "is",
-        "it",
-        "its",
-        "of",
-        "on",
-        "or",
-        "that",
-        "the",
-        "their",
-        "then",
-        "this",
-        "to",
-        "with",
-    }
-)
+_STATEMENT_ARTICLES = frozenset({"a", "an", "the"})
 
 
-def _material_tokens(text: str) -> frozenset[str]:
-    return frozenset(
+def _statement_sequence(text: str) -> tuple[str, ...]:
+    return tuple(
         token
         for token in re.findall(r"[a-z0-9]+", text.casefold())
-        if token not in _STATEMENT_STOPWORDS
+        if token not in _STATEMENT_ARTICLES
+    )
+
+
+def _statement_is_covered(statement: str, candidate_texts: Sequence[str]) -> bool:
+    # A union of words from separate commitments cannot establish a joint,
+    # ordered, conditional, or directed statement. An exact ordered commitment
+    # is a conservative coverage proof; other wording remains to be verified.
+    sequence = _statement_sequence(statement)
+    return not sequence or any(
+        _statement_sequence(candidate) == sequence for candidate in candidate_texts
     )
 
 
@@ -383,6 +365,19 @@ def build_proposition(profile: MCUComparisonProfile) -> EvidenceProposition:
                         relationship=relationship,
                     )
                 )
+            member_texts = (
+                member_detail,
+                *contribution.features,
+                *(relationship.describe() for relationship in contribution.relationships),
+            )
+            if not _statement_is_covered(contribution.statement, member_texts):
+                commitments.append(
+                    PropositionCommitment(
+                        commitment_id=f"member:{contribution.mcu_id}:statement:material",
+                        dimension=ComparisonDimension.CONSTRAINTS,
+                        text=contribution.statement,
+                    )
+                )
         combination_control = {relationship.describe() for relationship in profile.control_flow}
         for index, relationship in enumerate(profile.combination_relationships):
             dimension = (
@@ -407,15 +402,9 @@ def build_proposition(profile: MCUComparisonProfile) -> EvidenceProposition:
             )
         )
     else:
-        # F01: material statement content that structured fields do not cover
-        # becomes an explicit CONSTRAINTS commitment. No relationship is
-        # fabricated, and an unsupported condition blocks direct precedent
-        # because it is material like any other commitment.
-        statement_tokens = _material_tokens(profile.statement)
-        covered_tokens = frozenset(
-            token for commitment in commitments for token in _material_tokens(commitment.text)
-        )
-        if statement_tokens and not statement_tokens <= covered_tokens:
+        if profile.target_kind == "MCU" and not _statement_is_covered(
+            profile.statement, tuple(commitment.text for commitment in commitments)
+        ):
             commitments.append(
                 PropositionCommitment(
                     commitment_id="statement:material",

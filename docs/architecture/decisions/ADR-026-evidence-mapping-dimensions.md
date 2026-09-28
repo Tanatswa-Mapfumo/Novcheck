@@ -44,11 +44,19 @@ makes later anti-stitching enforcement structural rather than heuristic.
 ## Amendment (F01 remediation)
 
 Structured MCU fields remain preferred, but they are no longer assumed to be
-complete. When a statement's material tokens are not covered by the structured
-commitments, `build_proposition` adds an explicit `statement:material`
-CONSTRAINTS commitment carrying the exact statement. It never fabricates a
-directed relationship. Because that commitment is material like any other, a
-source that supports only the generic mechanism cannot be classified direct
-until the statement condition itself is supported; a source whose passages
-support the full stated configuration can still become direct-eligible. This
-closes GPT-6 Sol High finding F01 (material MCU qualifier loss).
+complete. A token union across separate commitments is insufficient evidence
+that the whole statement is represented: it loses conjunction, order and
+direction. `build_proposition` treats a statement as structurally covered only
+when one existing commitment preserves its complete ordered wording, ignoring
+articles and punctuation but retaining semantic operators such as `and`,
+`then`, `only if` and `unless`. Otherwise it adds a `statement:material`
+CONSTRAINTS commitment carrying the exact statement. Combination member
+statements receive the same check; the combination's own statement is already
+carried by `cfg`.
+
+This is a conservative *coverage* check, not an equivalence or entailment
+judgment. It may add a redundant commitment for a paraphrase; the independent
+verifier must assess that commitment against the cited passages. It never
+fabricates a directed relationship. A source supporting only isolated parts
+cannot become direct until the joint statement is supported, while evidence
+supporting the complete configuration remains direct-eligible.

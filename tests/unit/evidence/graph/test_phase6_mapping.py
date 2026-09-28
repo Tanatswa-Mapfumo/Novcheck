@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -15,14 +15,20 @@ from novelty_harness.evidence.graph.phase6_mapping import (
     proposition_node_id,
     verified_edge_graph_fragment,
 )
+from novelty_harness.evidence.graph.retrieval_mapping import passage_graph_node, version_graph_node
 from novelty_harness.evidence.graph.sqlalchemy_repository import (
     SqlAlchemyEvidenceGraphRepository,
 )
 from novelty_harness.evidence.precedent.models import PrecedentClassification
-from tests.fixtures.phase5 import make_passage, phase5_provenance
+from novelty_harness.evidence.verification.integrity import VerifiedEvidenceChain
+from tests.fixtures.phase5 import make_passage, make_version, phase5_provenance
 from tests.unit.evidence.verification.test_eligibility import (
     build,
+    bundle,
+    mapping,
     proposition,
+    source,
+    verification,
 )
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
@@ -169,6 +175,12 @@ def test_repository_persists_phase6_fragment_and_rejects_ineligible_direct_edges
             observed_at=NOW,
             provenance=ORIGIN,
         ),
+        version_graph_node(
+            make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
+            observed_at=NOW,
+            provenance=ORIGIN,
+        ),
+        passage_graph_node(bundle().passages[0], observed_at=NOW, provenance=ORIGIN),
         GraphNode(
             node_id="mcu_1",
             kind=GraphNodeKind.MCU,
@@ -179,7 +191,19 @@ def test_repository_persists_phase6_fragment_and_rejects_ineligible_direct_edges
     )
     repository = SqlAlchemyEvidenceGraphRepository()
     repository.upsert(nodes=existing)
-    repository.upsert(nodes=nodes, edges=graph_edges, verified_edges=(edge,))
+    chain = VerifiedEvidenceChain(
+        assessment_id="asm_test",
+        source=source(),
+        version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
+        proposition=proposition(),
+        mapping=mapping(),
+        bundle=bundle(),
+        verification=verification(SupportVerificationState.SUPPORTED),
+        edge=edge,
+    )
+    repository.upsert(
+        nodes=nodes, edges=graph_edges, verified_edges=(edge,), verified_chains=(chain,)
+    )
     assert (
         repository.get_edge(
             next(

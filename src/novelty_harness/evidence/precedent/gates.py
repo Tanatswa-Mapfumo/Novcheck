@@ -23,14 +23,15 @@ from novelty_harness.evidence.mapping.models import (
     EvidenceProposition,
     SourceMCUMapping,
 )
-from novelty_harness.evidence.precedent.models import PrecedentClassification
+from novelty_harness.evidence.precedent.models import PrecedentClassification, ScopedCoverage
 from novelty_harness.evidence.verification.models import (
     ChronologyState,
+    PassageSupportClaim,
     SupportVerification,
 )
 from novelty_harness.runtime.tracing.hashing import canonical_hash
 
-CLASSIFIER_VERSION = "precedent-classifier-v1"
+CLASSIFIER_VERSION = "precedent-classifier-v2"
 
 FUNCTIONAL_DIMENSIONS = frozenset(
     {
@@ -62,17 +63,32 @@ class ClassificationFacts(ContractModel):
     """Everything the classifier may consider; no quality/rank/verdict."""
 
     model_config = ConfigDict(frozen=True)
-    contract_kind: Literal["classification-facts-v1"] = "classification-facts-v1"
+    contract_kind: Literal["classification-facts-v2"] = "classification-facts-v2"
 
     proposition: EvidenceProposition
     source_id: SourceId
     source_version_id: SourceVersionId | None = None
     mapping: SourceMCUMapping | None = None
     verification: SupportVerification | None = None
+    claim: PassageSupportClaim | None = None
     claim_id: SupportClaimId | None = None
     decisive: bool = False
     chronology_state: ChronologyState = "UNCERTAIN"
     selection_failure: NonBlankText | None = None
+
+    @model_validator(mode="after")
+    def decisive_requires_eligible_chronology(self) -> Self:
+        if self.verification is not None and self.claim is None:
+            raise ValueError("Verified classification requires its support claim")
+        if self.decisive and self.chronology_state != "PREDATES_CUTOFF":
+            raise ValueError("Decisive classification requires eligible chronology")
+        if (
+            self.decisive
+            and self.verification is not None
+            and self.verification.context_completeness != "COMPLETE"
+        ):
+            raise ValueError("Decisive classification requires complete verified context")
+        return self
 
 
 class MultiSourceAssessment(ContractModel):
@@ -118,6 +134,19 @@ def _classification(
     unassessable_reason: str | None = None,
     decisive: bool = False,
 ) -> PrecedentClassification:
+    scoped_coverage = tuple(
+        ScopedCoverage(
+            commitment_id=record.commitment_id,
+            dimension=record.dimension,
+            supported_subset=record.supported_subset,
+            unsupported_remainder=record.unsupported_remainder,
+            passage_ids=record.passage_ids,
+        )
+        for record in (facts.verification.commitment_states if facts.verification else ())
+        if record.state == "PARTIALLY_SUPPORTED"
+        and record.supported_subset is not None
+        and record.unsupported_remainder is not None
+    )
     identity = canonical_hash(
         {
             "source_id": facts.source_id,
@@ -141,6 +170,7 @@ def _classification(
         basis=tuple(basis),
         covered_elements=tuple(covered_elements),
         covered_relationships=tuple(covered_relationships),
+        scoped_coverage=scoped_coverage,
         missing_elements=tuple(missing_elements),
         missing_relationships=tuple(missing_relationships),
         configuration_gap=configuration_gap,
@@ -196,6 +226,20 @@ def classify_precedent(
         raise ValueError("Verification identity does not match the classified mapping")
     if facts.claim_id is not None and verification.claim_id != facts.claim_id:
         raise ValueError("Verification does not answer the declared support claim")
+    claim = facts.claim
+    if claim is None:
+        raise ValueError("Verified classification requires its support claim")
+    if (
+        claim.claim_id != verification.claim_id
+        or claim.mapping_id != mapping.mapping_id
+        or claim.source_id != facts.source_id
+        or claim.source_version_id != facts.source_version_id
+        or claim.mcu_id != proposition.mcu_id
+        or claim.proposition_id != proposition.proposition_id
+        or claim.proposition_statement != proposition.statement
+        or claim.commitments != proposition.commitments
+    ):
+        raise ValueError("Support claim identity or proposition does not match classification")
 
     commitments = {item.commitment_id: item for item in facts.proposition.commitments}
     ordered_ids = [item.commitment_id for item in facts.proposition.commitments]
@@ -213,10 +257,40 @@ def classify_precedent(
             and (commitments[identity].dimension in RELATIONSHIP_DIMENSIONS) is relationships
         )
 
-    covered_elements = texts(supported, relationships=False)
-    covered_relationships = texts(supported, relationships=True)
-    missing_elements = texts(set(ordered_ids) - supported, relationships=False)
-    missing_relationships = texts(set(ordered_ids) - supported, relationships=True)
+    scoped_records = tuple(
+        record for record in verification.commitment_states if record.state == "PARTIALLY_SUPPORTED"
+    )
+    scoped_elements = tuple(
+        record.supported_subset
+        for record in scoped_records
+        if record.dimension not in RELATIONSHIP_DIMENSIONS and record.supported_subset is not None
+    )
+    scoped_relationships = tuple(
+        record.supported_subset
+        for record in scoped_records
+        if record.dimension in RELATIONSHIP_DIMENSIONS and record.supported_subset is not None
+    )
+    missing_ids = set(ordered_ids) - supported - {record.commitment_id for record in scoped_records}
+    covered_elements = (*texts(supported, relationships=False), *scoped_elements)
+    covered_relationships = (*texts(supported, relationships=True), *scoped_relationships)
+    missing_elements = (
+        *texts(missing_ids, relationships=False),
+        *(
+            record.unsupported_remainder
+            for record in scoped_records
+            if record.dimension not in RELATIONSHIP_DIMENSIONS
+            and record.unsupported_remainder is not None
+        ),
+    )
+    missing_relationships = (
+        *texts(missing_ids, relationships=True),
+        *(
+            record.unsupported_remainder
+            for record in scoped_records
+            if record.dimension in RELATIONSHIP_DIMENSIONS
+            and record.unsupported_remainder is not None
+        ),
+    )
 
     configuration_ids = {
         identity
@@ -246,8 +320,6 @@ def classify_precedent(
             if identity in supported and commitments[identity].dimension in FUNCTIONAL_DIMENSIONS
         )
     )
-    mapping_matching = any(dimension.matching for dimension in mapping.dimensions)
-    unresolved_conflicts = mapping.aggregate_comparison().conflicting_elements
 
     if verification.state == SupportVerificationState.CONTRADICTED:
         return _classification(
@@ -276,19 +348,12 @@ def classify_precedent(
             provenance=provenance,
         )
     if verification.state == SupportVerificationState.NOT_SUPPORTED:
-        relation = (
-            PrecedentState.SUPERFICIAL_SIMILARITY
-            if mapping_matching
-            else PrecedentState.NO_DIRECT_PRECEDENT_IDENTIFIED
-        )
         return _classification(
             facts,
-            relation=relation,
+            relation=PrecedentState.NO_DIRECT_PRECEDENT_IDENTIFIED,
             basis=(
                 "No material commitment is supported by the cited passages",
-                "Shared vocabulary or domain labels do not establish a mechanism"
-                if relation == PrecedentState.SUPERFICIAL_SIMILARITY
-                else "This source does not address the claimed proposition",
+                "This local source does not establish the claimed proposition",
             ),
             functional_similarity=functional_verified,
             covered_elements=covered_elements,
@@ -299,22 +364,6 @@ def classify_precedent(
             provenance=provenance,
         )
     if supported == set(ordered_ids):
-        if unresolved_conflicts:
-            return _classification(
-                facts,
-                relation=PrecedentState.UNRESOLVED,
-                basis=(
-                    "Every material commitment is supported but the mapper recorded "
-                    "material conflicts that must be independently resolved",
-                ),
-                unresolved=tuple(
-                    f"Unresolved mapper conflict: {item}" for item in unresolved_conflicts
-                ),
-                covered_elements=covered_elements,
-                covered_relationships=covered_relationships,
-                clock=clock,
-                provenance=provenance,
-            )
         if facts.decisive:
             return _classification(
                 facts,
@@ -348,6 +397,19 @@ def classify_precedent(
         )
 
     # Partial support: configuration-first, then functional analogy, then coverage.
+    if scoped_records and not supported:
+        return _classification(
+            facts,
+            relation=PrecedentState.UNRESOLVED,
+            basis=("A narrower subset is supported, not the unqualified proposition",),
+            unresolved=("The supported subset does not establish the broader claim",),
+            covered_elements=covered_elements,
+            covered_relationships=covered_relationships,
+            missing_elements=missing_elements,
+            missing_relationships=missing_relationships,
+            clock=clock,
+            provenance=provenance,
+        )
     configuration_claimed = bool(configuration_ids)
     if functional_verified and not mechanism_supported and not configuration_supported:
         return _classification(
@@ -438,18 +500,6 @@ def classify_precedent(
                 if configuration_claimed and not configuration_supported and gap_details
                 else None
             ),
-            covered_elements=covered_elements,
-            covered_relationships=covered_relationships,
-            missing_elements=missing_elements,
-            missing_relationships=missing_relationships,
-            clock=clock,
-            provenance=provenance,
-        )
-    if mapping_matching:
-        return _classification(
-            facts,
-            relation=PrecedentState.SUPERFICIAL_SIMILARITY,
-            basis=("Surface overlap without verified material support",),
             covered_elements=covered_elements,
             covered_relationships=covered_relationships,
             missing_elements=missing_elements,

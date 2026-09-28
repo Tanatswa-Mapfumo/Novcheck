@@ -1,3 +1,6 @@
+import pytest
+
+from novelty_harness.domain.enums import PrecedentState
 from novelty_harness.domain.mcu import MCU, MCUCombination, MCUFeature, MCURelationship
 from novelty_harness.evidence.mapping.dimensions import (
     CONTROL_FLOW_VERBS,
@@ -6,7 +9,9 @@ from novelty_harness.evidence.mapping.dimensions import (
     build_proposition,
 )
 from novelty_harness.evidence.mapping.models import ComparisonDimension
+from novelty_harness.evidence.precedent.gates import classify_precedent
 from tests.fixtures.phase5 import phase5_provenance
+from tests.unit.evidence.precedent.test_classification import NOW, facts_for
 
 ORIGIN = phase5_provenance("dimensions-test")
 
@@ -151,3 +156,140 @@ def test_profiles_and_propositions_are_deterministic() -> None:
     assert first == second
     assert build_proposition(first) == build_proposition(second)
     assert build_proposition(first).proposition_id.startswith("prop_")
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "Alpha and beta enable relay",
+        "Alpha then beta enable relay",
+        "Beta then alpha enable relay",
+    ),
+)
+def test_split_features_do_not_cover_joint_or_ordered_statement(statement: str) -> None:
+    profile = build_mcu_comparison_profile(
+        mcu(
+            "mcu_1",
+            statement=statement,
+            mechanism=None,
+            purpose=None,
+            object_or_target=None,
+            intended_effect=None,
+            context=None,
+            features=(
+                MCUFeature(feature_id="F1", concept="alpha enable relay"),
+                MCUFeature(feature_id="F2", concept="beta enable relay"),
+            ),
+            relationships=(),
+        )
+    )
+    proposition = build_proposition(profile)
+    material = next(
+        item for item in proposition.commitments if item.commitment_id == "statement:material"
+    )
+    assert material.text == statement
+    assert material.dimension == ComparisonDimension.CONSTRAINTS
+    assert material.relationship is None
+
+    feature_only = {item.commitment_id: "SUPPORTED" for item in proposition.commitments}
+    feature_only["statement:material"] = "NOT_SUPPORTED"
+    partial = classify_precedent(
+        facts_for(
+            proposition,
+            states=feature_only,
+            matching=(ComparisonDimension.FEATURES,),
+            decisive=False,
+        ),
+        clock=lambda: NOW,
+    )
+    assert partial.relation != PrecedentState.DIRECT_PRECEDENT
+    complete = classify_precedent(
+        facts_for(
+            proposition,
+            states={item.commitment_id: "SUPPORTED" for item in proposition.commitments},
+            matching=(ComparisonDimension.FEATURES, ComparisonDimension.CONSTRAINTS),
+            decisive=True,
+            chronology="PREDATES_CUTOFF",
+        ),
+        clock=lambda: NOW,
+    )
+    assert complete.relation == PrecedentState.DIRECT_PRECEDENT
+
+
+def test_reversed_structured_relation_does_not_cover_statement_direction() -> None:
+    proposition = build_proposition(
+        build_mcu_comparison_profile(
+            mcu(
+                statement="Sensor controls relay",
+                mechanism=None,
+                purpose=None,
+                object_or_target=None,
+                intended_effect=None,
+                context=None,
+                features=(),
+                relationships=(
+                    MCURelationship(subject="relay", relation="controls", object="sensor"),
+                ),
+            )
+        )
+    )
+    assert {item.commitment_id for item in proposition.commitments} == {
+        "rel:0",
+        "statement:material",
+    }
+    assert (
+        next(
+            item for item in proposition.commitments if item.commitment_id == "statement:material"
+        ).relationship
+        is None
+    )
+
+
+def test_combination_member_qualifier_survives_generic_mechanism() -> None:
+    qualified = mcu(
+        statement="A relay activates only after two sensors agree",
+        mechanism="threshold switches relay",
+    )
+    other = mcu("mcu_status", statement="Indicator shows relay state", mechanism=None)
+    combination = MCUCombination(
+        combination_id="C2",
+        label="Qualified control and status",
+        statement="Qualified control also shows relay state",
+        member_ids=(qualified.mcu_id, other.mcu_id),
+        provenance=ORIGIN,
+    )
+    proposition = build_proposition(
+        build_combination_comparison_profile(combination, (qualified, other))
+    )
+    material = next(
+        item
+        for item in proposition.commitments
+        if item.commitment_id == "member:mcu_control:statement:material"
+    )
+    assert material.text == qualified.statement
+    assert material.relationship is None
+    assert any(item.commitment_id == "cfg" for item in proposition.commitments)
+    assert all(
+        item.commitment_id != "member:mcu_status:statement:material"
+        for item in proposition.commitments
+    )
+
+
+def test_exactly_structured_joint_relationship_does_not_duplicate_statement() -> None:
+    proposition = build_proposition(
+        build_mcu_comparison_profile(
+            mcu(
+                statement="Alpha and beta enable relay",
+                mechanism=None,
+                purpose=None,
+                object_or_target=None,
+                intended_effect=None,
+                context=None,
+                features=(),
+                relationships=(
+                    MCURelationship(subject="alpha and beta", relation="enable", object="relay"),
+                ),
+            )
+        )
+    )
+    assert [item.commitment_id for item in proposition.commitments] == ["rel:0"]

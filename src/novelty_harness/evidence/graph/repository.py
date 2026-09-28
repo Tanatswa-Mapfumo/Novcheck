@@ -16,6 +16,7 @@ from novelty_harness.evidence.graph.models import (
     GraphNodeKind,
 )
 from novelty_harness.evidence.provenance.models import EvidenceLineageCluster
+from novelty_harness.evidence.verification.integrity import VerifiedEvidenceChain
 from novelty_harness.evidence.verification.models import VerifiedEvidenceEdge
 
 
@@ -34,6 +35,7 @@ class EvidenceGraphRepository(Protocol):
         edges: Sequence[GraphEdge] = (),
         clusters: Sequence[EvidenceLineageCluster] = (),
         verified_edges: Sequence[VerifiedEvidenceEdge] = (),
+        verified_chains: Sequence[VerifiedEvidenceChain] = (),
     ) -> None:
         """Atomically insert-or-verify nodes, edges, clusters and verified edges.
 

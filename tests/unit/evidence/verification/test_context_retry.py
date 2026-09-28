@@ -177,3 +177,89 @@ async def test_retry_cap_is_enforced() -> None:
     assert capped.verification.state == SupportVerificationState.INSUFFICIENT_CONTEXT
     assert capped.expansion_rounds == 0
     assert capped.expansions == ()
+
+
+async def test_qualifier_beyond_window_cannot_leave_support_decisive() -> None:
+    target = bundle(CLAIM_TEXT)
+    document = expanded_document(*(["filler"] * 20), "However, the operator switches manually.")
+    result = await verify_with_context_retry(
+        retry_verifier(qualifier_aware_response),
+        target,
+        available_passages=(target.passages[0], document),
+        window_chars=20,
+        clock=lambda: NOW,
+    )
+    assert result.context_completeness == "TRUNCATED"
+    assert result.verification.state == SupportVerificationState.INSUFFICIENT_CONTEXT
+    assert any("truncated" in reason.lower() for reason in result.verification.context_needed)
+
+
+async def test_zero_expansion_budget_cannot_make_short_excerpt_decisive() -> None:
+    target = bundle(CLAIM_TEXT)
+    result = await verify_with_context_retry(
+        retry_verifier(judgments(("mech", "SUPPORTED"), ("outcome", "SUPPORTED"))),
+        target,
+        available_passages=(
+            target.passages[0],
+            expanded_document("However, the operator switches manually."),
+        ),
+        max_expansions=0,
+        clock=lambda: NOW,
+    )
+    assert result.context_completeness == "UNKNOWN"
+    assert result.verification.state == SupportVerificationState.INSUFFICIENT_CONTEXT
+    assert result.expansion_rounds == 0
+
+
+async def test_unavailable_context_does_not_count_as_complete() -> None:
+    target = bundle(CLAIM_TEXT)
+    result = await verify_with_context_retry(
+        retry_verifier(judgments(("mech", "SUPPORTED"), ("outcome", "SUPPORTED"))),
+        target,
+        available_passages=(target.passages[0],),
+        clock=lambda: NOW,
+    )
+    assert result.context_completeness == "UNAVAILABLE"
+    assert result.verification.state == SupportVerificationState.INSUFFICIENT_CONTEXT
+
+
+async def test_adjacent_same_version_qualifier_reaches_initial_verifier() -> None:
+    from novelty_harness.evidence.passages.models import PassageLocator, PassageLocatorKind
+
+    target = bundle(CLAIM_TEXT)
+    passage = target.passages[0].model_copy(
+        update={
+            "locator": PassageLocator(
+                kind=PassageLocatorKind.BLOCK, char_start=0, char_end=len(CLAIM_TEXT)
+            )
+        }
+    )
+    target = target.model_copy(update={"passages": (passage,)})
+    qualifier = "However, the operator switches manually."
+    neighbor = make_passage(
+        "src_1",
+        text=qualifier,
+        passage_id="pass_neighbor",
+        source_version_id=VERSION,
+        locator=PassageLocator(
+            kind=PassageLocatorKind.BLOCK,
+            char_start=len(CLAIM_TEXT),
+            char_end=len(CLAIM_TEXT) + len(qualifier),
+        ),
+    )
+
+    def response(context) -> dict[str, object]:
+        payload = json.loads(str(context_payload(context, "verification_input")))
+        seen = {item["passage_id"]: item["text"] for item in payload["passages"]}
+        assert seen["pass_neighbor"] == qualifier
+        return judgments(("mech", "SUPPORTED"), ("outcome", "CONTRADICTED"))
+
+    result = await verify_with_context_retry(
+        retry_verifier(response),
+        target,
+        available_passages=(passage, neighbor),
+        clock=lambda: NOW,
+    )
+    assert result.context_completeness == "COMPLETE"
+    assert result.verification.state == SupportVerificationState.CONTRADICTED
+    assert result.verification_attempts == 1

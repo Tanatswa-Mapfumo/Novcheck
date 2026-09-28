@@ -18,6 +18,8 @@ from novelty_harness.domain.mcu import MCUCombination, MCURelationship
 from novelty_harness.evidence.graph.sqlalchemy_repository import (
     SqlAlchemyEvidenceGraphRepository,
 )
+from novelty_harness.evidence.passages.extraction import extract_span
+from novelty_harness.evidence.passages.models import PassageLocatorKind
 from novelty_harness.intake.pipeline import UnderstandingComponents
 from novelty_harness.research.applicability import EvidenceFamilyApplicabilityAssessor
 from novelty_harness.research.coverage import CoveragePolicy
@@ -34,7 +36,11 @@ from tests.fixtures.phase2 import RecordedLLM, understanding_responses
 from tests.fixtures.phase3 import applicability_response, planning_response
 from tests.fixtures.phase4 import registry, stop_policy, wire
 from tests.fixtures.phase5 import SyntheticContentResolver
-from tests.fixtures.phase6 import scripted_phase6_llm
+from tests.fixtures.phase6 import (
+    StubLLMProvider,
+    context_json,
+    map_evidence_response,
+)
 from tests.unit.research.test_search_critique import critic_response
 
 
@@ -107,6 +113,46 @@ class Phase7FixtureAdjudicator:
         )
 
 
+class ExpandedPhase5EvidenceComponents(Phase5EvidenceComponents):
+    async def execute(self, **kwargs):
+        result = await super().execute(**kwargs)
+        full = next(
+            passage
+            for passage in result.passages
+            if passage.locator.kind == PassageLocatorKind.RESOLVED_CONTENT
+        )
+        excerpt = extract_span(
+            full.source_id,
+            full.text,
+            char_start=0,
+            char_end=min(25, len(full.text)),
+            observed_at=FIXED_TIME,
+            provenance=fixture_provenance("expanded-phase5-slice"),
+            kind=PassageLocatorKind.BLOCK,
+            source_version_id=full.source_version_id,
+        )
+        return replace(result, passages=(excerpt, *result.passages))
+
+
+def verify_expanded_response(context):
+    payload = context_json(context, "verification_input")
+    assert isinstance(payload, dict)
+    cited = payload["passages"][-1]["passage_id"]
+    return {
+        "prompt_version": "support-verifier-v1",
+        "judgments": [
+            {
+                "commitment_id": item["commitment_id"],
+                "state": "SUPPORTED",
+                "rationale": "scripted fixture support over expanded context",
+                "passage_ids": [cited],
+            }
+            for item in payload["commitments"]
+        ],
+        "context_needed": [],
+    }
+
+
 async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path) -> None:
     f = make_fixture()
     understanding = UnderstandingComponents(
@@ -153,8 +199,17 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
             clock=f.clock,
             research=research,
             adaptive_research=adaptive,
-            evidence=Phase5EvidenceComponents(),
-            phase6=Phase6EvidenceComponents(SemanticRunner(scripted_phase6_llm())),
+            evidence=ExpandedPhase5EvidenceComponents(),
+            phase6=Phase6EvidenceComponents(
+                SemanticRunner(
+                    StubLLMProvider(
+                        {
+                            "map_evidence": map_evidence_response,
+                            "verify_support": verify_expanded_response,
+                        }
+                    )
+                )
+            ),
         )
     assert result.record.stage.value == "REPORTED" and result.record.status.value == "COMPLETED"
     assert result.adjudication.provenance.kind == "fixture"
@@ -190,6 +245,21 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
     assert persisted_edges
     # F11: a real Phase 6 combination target must pass the bridge.
     assert any(edge["mcu_id"].startswith("mcu_comb_") for edge in persisted_edges)
+    expansions = [
+        json.loads(line)
+        for line in (phase6 / "context_expansions.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    expanded_ids = {
+        item["window_passage"]["passage_id"]
+        for item in expansions
+        if item["available"] and item["window_passage"] is not None
+    }
+    assert expanded_ids
+    assert any(
+        edge["mcu_id"].startswith("mcu_comb_") and expanded_ids.intersection(edge["passage_ids"])
+        for edge in persisted_edges
+    )
 
     repository = SqlAlchemyEvidenceGraphRepository(run_dir / "phase5" / "evidence_graph.sqlite3")
     kinds = {node.kind.value for node in repository.nodes()}

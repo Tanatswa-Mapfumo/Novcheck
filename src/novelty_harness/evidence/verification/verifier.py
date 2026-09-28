@@ -16,8 +16,9 @@ from novelty_harness.domain.base import utc_now
 from novelty_harness.domain.enums import SupportVerificationState
 from novelty_harness.evidence.context.expansion import (
     DEFAULT_WINDOW_CHARS,
-    expand_passage_context,
+    ContextCompleteness,
     expanded_bundle,
+    inspect_passage_context,
 )
 from novelty_harness.evidence.context.selection import SupportEvidenceBundle
 from novelty_harness.evidence.passages.models import PassageRecord
@@ -39,7 +40,7 @@ from novelty_harness.evidence.verification.prompts import (
 )
 from novelty_harness.ports.models import ContextBlock
 from novelty_harness.runtime.semantic.structured import SemanticRunner, SemanticTaskSpec
-from novelty_harness.runtime.tracing.hashing import canonical_json
+from novelty_harness.runtime.tracing.hashing import canonical_hash, canonical_json
 
 VERIFIER_TASK = "verify_support"
 
@@ -79,6 +80,41 @@ class ContextRetryResult:
     expansions: tuple[ContextExpansion, ...]
     verification_attempts: int
     expansion_rounds: int
+    context_completeness: ContextCompleteness
+    context_reasons: tuple[str, ...]
+    verified_bundle: SupportEvidenceBundle
+
+
+def _bounded_verification(
+    verification: SupportVerification,
+    *,
+    expansions: Sequence[ContextExpansion],
+    completeness: ContextCompleteness,
+    reasons: tuple[str, ...],
+) -> SupportVerification:
+    payload = verification.model_dump(mode="python")
+    payload["context_expansions"] = len(expansions)
+    payload["context_completeness"] = completeness.value
+    if completeness != ContextCompleteness.COMPLETE and verification.state in {
+        SupportVerificationState.SUPPORTED,
+        SupportVerificationState.PARTIALLY_SUPPORTED,
+    }:
+        needed = tuple(dict.fromkeys((*verification.context_needed, *reasons)))
+        payload["state"] = SupportVerificationState.INSUFFICIENT_CONTEXT
+        payload["context_needed"] = needed
+        payload["verification_id"] = "ver_" + canonical_hash(
+            {
+                "original_verification_id": verification.verification_id,
+                "context_completeness": completeness.value,
+                "context_needed": list(needed),
+                "expansion_ids": [
+                    item.window_passage.passage_id
+                    for item in expansions
+                    if item.window_passage is not None
+                ],
+            }
+        )
+    return SupportVerification.model_validate(payload)
 
 
 async def verify_with_context_retry(
@@ -103,14 +139,12 @@ async def verify_with_context_retry(
     current = bundle
     expansions: list[ContextExpansion] = []
     rounds = 0
-    # F03 context-completeness precheck: before the first judgment, bounded
-    # same-source/same-version surrounding context is included when available,
-    # so a nearby qualifier or negation cannot be hidden by a short excerpt.
-    # Expansion is bounded by rounds; the precheck consumes the first round.
+    completeness = ContextCompleteness.UNKNOWN
+    reasons: tuple[str, ...] = ("Context precheck was not run within the expansion budget",)
     if max_expansions > 0:
         rounds = 1
-        precheck = tuple(
-            expand_passage_context(
+        inspections = tuple(
+            inspect_passage_context(
                 passage,
                 available_passages=available_passages,
                 attempt=1,
@@ -119,7 +153,28 @@ async def verify_with_context_retry(
             )
             for passage in bundle.passages
         )
+        precheck = tuple(item for inspection in inspections for item in inspection.expansions)
         expansions.extend(precheck)
+        statuses = {inspection.completeness for inspection in inspections}
+        completeness = next(
+            (
+                status
+                for status in (
+                    ContextCompleteness.TRUNCATED,
+                    ContextCompleteness.UNKNOWN,
+                    ContextCompleteness.UNAVAILABLE,
+                )
+                if status in statuses
+            ),
+            ContextCompleteness.COMPLETE,
+        )
+        reasons = tuple(
+            dict.fromkeys(
+                inspection.reason
+                for inspection in inspections
+                if inspection.completeness != ContextCompleteness.COMPLETE
+            )
+        )
         if any(expansion.available for expansion in precheck):
             current = expanded_bundle(bundle, precheck, attempt=1, clock=clock)
     attempts = 0
@@ -128,44 +183,63 @@ async def verify_with_context_retry(
         verification = await verifier.verify(current, clock=clock)
         if verification.state != SupportVerificationState.INSUFFICIENT_CONTEXT:
             return ContextRetryResult(
-                verification=verification.model_copy(
-                    update={"context_expansions": len(expansions)}
+                verification=_bounded_verification(
+                    verification,
+                    expansions=expansions,
+                    completeness=completeness,
+                    reasons=reasons,
                 ),
                 expansions=tuple(expansions),
                 verification_attempts=attempts,
                 expansion_rounds=rounds,
+                context_completeness=completeness,
+                context_reasons=reasons,
+                verified_bundle=current,
             )
         if rounds >= max_expansions:
             return ContextRetryResult(
-                verification=verification.model_copy(
-                    update={"context_expansions": len(expansions)}
+                verification=_bounded_verification(
+                    verification,
+                    expansions=expansions,
+                    completeness=completeness,
+                    reasons=reasons,
                 ),
                 expansions=tuple(expansions),
                 verification_attempts=attempts,
                 expansion_rounds=rounds,
+                context_completeness=completeness,
+                context_reasons=reasons,
+                verified_bundle=current,
             )
         skip = {expansion.origin_passage_id for expansion in expansions}
         new_expansions = tuple(
-            expand_passage_context(
+            expansion
+            for passage in current.passages
+            if passage.passage_id not in skip and passage.locator.label != "context-window"
+            for expansion in inspect_passage_context(
                 passage,
                 available_passages=available_passages,
                 attempt=rounds + 1,
                 window_chars=window_chars,
                 clock=clock,
-            )
-            for passage in current.passages
-            if passage.passage_id not in skip and passage.locator.label != "context-window"
+            ).expansions
         )
         expansions.extend(new_expansions)
         rounds += 1
         if not any(expansion.available for expansion in new_expansions):
             return ContextRetryResult(
-                verification=verification.model_copy(
-                    update={"context_expansions": len(expansions)}
+                verification=_bounded_verification(
+                    verification,
+                    expansions=expansions,
+                    completeness=completeness,
+                    reasons=reasons,
                 ),
                 expansions=tuple(expansions),
                 verification_attempts=attempts,
                 expansion_rounds=rounds,
+                context_completeness=completeness,
+                context_reasons=reasons,
+                verified_bundle=current,
             )
         current = expanded_bundle(current, new_expansions, attempt=rounds, clock=clock)
 

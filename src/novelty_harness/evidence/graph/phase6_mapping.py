@@ -37,6 +37,7 @@ _CLASSIFICATION_TO_EDGE: dict[PrecedentState, GraphEdgeKind] = {
 def proposition_node_id(edge: VerifiedEvidenceEdge) -> str:
     return "prop_" + canonical_hash(
         {
+            "verified_edge_id": edge.edge_id,
             "proposition_id": edge.proposition_id,
             "source_id": edge.source_id,
             "source_version_id": edge.source_version_id,

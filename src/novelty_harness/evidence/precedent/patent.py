@@ -26,9 +26,10 @@ from novelty_harness.evidence.precedent.models import (
     PatentScreeningResult,
     PrecedentClassification,
 )
+from novelty_harness.evidence.verification.models import ChronologyAssessment
 from novelty_harness.runtime.tracing.hashing import canonical_hash
 
-PATENT_SCREENING_VERSION = "patent-screening-v1"
+PATENT_SCREENING_VERSION = "patent-screening-v2"
 
 CONTRIBUTING_RELATIONS = frozenset(
     {
@@ -43,7 +44,7 @@ class PatentEvidenceEntry(ContractModel):
     """One classified reference considered by patent-mode screening."""
 
     model_config = ConfigDict(frozen=True)
-    contract_kind: Literal["patent-evidence-entry-v1"] = "patent-evidence-entry-v1"
+    contract_kind: Literal["patent-evidence-entry-v2"] = "patent-evidence-entry-v2"
 
     source_id: SourceId
     source_version_id: SourceVersionId | None = None
@@ -52,6 +53,7 @@ class PatentEvidenceEntry(ContractModel):
     classification: PrecedentClassification
     priority_date: date | None = None
     publication_date: date | None = None
+    chronology: ChronologyAssessment | None = None
     locators: tuple[PatentScreeningLocator, ...] = ()
 
     @model_validator(mode="after")
@@ -62,6 +64,13 @@ class PatentEvidenceEntry(ContractModel):
             raise ValueError("Patent entry classification belongs to another version")
         if self.classification.mcu_id != self.mcu_id:
             raise ValueError("Patent entry classification belongs to another MCU")
+        if (
+            self.source_version_id is not None
+            and self.chronology is not None
+            and self.chronology.state != "UNCERTAIN"
+            and self.chronology.decisive_date_field != "version_published_date"
+        ):
+            raise ValueError("Patent entry chronology must describe the cited version")
         return self
 
 
@@ -99,10 +108,9 @@ def screen_patent_references(
 ) -> PatentScreeningResult:
     """Produce a one-reference versus multi-reference screening result.
 
-    Only eligible pre-cutoff publication dates can challenge the historical
-    cutoff, and combination context counts distinct lineage roots so versions
-    or family publications of one patent cannot inflate multi-reference
-    context (F08).
+    A classified version uses its verified chronology, never an older parent
+    publication date. Combination context counts distinct eligible lineage
+    roots so versions or family publications cannot inflate it (F08).
     """
 
     wrong_mcu = [entry.source_id for entry in entries if entry.mcu_id != mcu_id]
@@ -133,16 +141,30 @@ def screen_patent_references(
             provenance=provenance,
         )
 
-    eligible = [
-        entry
-        for entry in patent_entries
-        if entry.publication_date is not None and entry.publication_date <= as_of
-    ]
-    ineligible = [entry for entry in patent_entries if entry not in eligible]
+    eligible: list[PatentEvidenceEntry] = []
+    ineligible: list[PatentEvidenceEntry] = []
+    missing_version_chronology = 0
+    for entry in patent_entries:
+        chronology = entry.chronology
+        if chronology is not None:
+            if chronology.as_of != as_of:
+                raise ValueError("Patent entry chronology uses a different assessment cutoff")
+            is_eligible = chronology.state == "PREDATES_CUTOFF"
+        elif entry.source_version_id is not None:
+            missing_version_chronology += 1
+            is_eligible = False
+        else:
+            is_eligible = entry.publication_date is not None and entry.publication_date <= as_of
+        (eligible if is_eligible else ineligible).append(entry)
     if ineligible:
         limitations.append(
-            f"{len(ineligible)} patent reference(s) are post-cutoff or of unknown "
-            "publication date and cannot challenge the cutoff"
+            f"{len(ineligible)} patent reference(s) have post-cutoff or unknown cited "
+            "disclosure chronology and cannot challenge the cutoff"
+        )
+    if missing_version_chronology:
+        limitations.append(
+            f"{missing_version_chronology} versioned patent reference(s) lack cited-version "
+            "chronology; parent publication dates cannot establish eligibility"
         )
     if not eligible:
         limitations.append(
@@ -166,7 +188,7 @@ def screen_patent_references(
             and entry.classification.decisive
         ),
         key=lambda entry: (
-            entry.priority_date or entry.publication_date or date.max,
+            entry.priority_date or _cited_publication_date(entry) or date.max,
             entry.source_id,
         ),
     )
@@ -193,7 +215,7 @@ def screen_patent_references(
 
     contributing = sorted(
         (entry for entry in eligible if entry.classification.relation in CONTRIBUTING_RELATIONS),
-        key=lambda entry: (entry.publication_date or date.max, entry.source_id),
+        key=lambda entry: (_cited_publication_date(entry) or date.max, entry.source_id),
     )
     contributing_roots = {root_of(entry) for entry in contributing}
     if len(contributing_roots) >= 2:
@@ -238,6 +260,12 @@ def screen_patent_references(
     )
 
 
+def _cited_publication_date(entry: PatentEvidenceEntry) -> date | None:
+    if entry.chronology is not None:
+        return entry.chronology.decisive_date
+    return entry.publication_date
+
+
 def _result(
     *,
     mcu_id: MCUId,
@@ -270,7 +298,7 @@ def _result(
             PatentScreeningDateRecord(
                 source_id=entry.source_id,
                 priority_date=entry.priority_date,
-                publication_date=entry.publication_date,
+                publication_date=_cited_publication_date(entry),
             )
         )
     identity = canonical_hash(

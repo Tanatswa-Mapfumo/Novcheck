@@ -47,6 +47,15 @@ class VerifiedEdgeRow(Base):
     document_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class VerifiedChainRow(Base):
+    __tablename__ = "verified_chains"
+
+    edge_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("verified_edges.edge_id"), primary_key=True
+    )
+    document_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class LineageClusterRow(Base):
     __tablename__ = "lineage_clusters"
 

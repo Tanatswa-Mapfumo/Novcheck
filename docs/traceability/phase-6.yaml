@@ -70,8 +70,14 @@ review:
   required_reviewer: GPT-6 Sol High
   reviewed_commit: e4683fd
   initial_decision: FAIL (F01-F11 open, M01 noted)
-  remediation: F01-F11 and M01 fixed with regressions in tests/adversarial/test_phase6_sol_review_regressions.py
-  status: GATE 30 OPEN - awaiting fresh GPT-6 Sol High re-review of the repaired commit
+  first_remediation: F01-F11 and M01 addressed with tests/adversarial/test_phase6_sol_review_regressions.py
+  second_reviewed_commit: c41b11f
+  second_decision: FAIL (F01-F10 variants and N01 open; F11 and M01 closed)
+  round_2_remediation: F01-F10 and N01 repaired with tests/adversarial/test_phase6_sol_rereview_regressions.py and focused tests
+  round_2_modules: [evidence/verification/integrity.py, evidence/verification/gates.py, evidence/verification/models.py, evidence/context/expansion.py, evidence/precedent/gates.py, evidence/precedent/patent.py, evidence/graph/sqlalchemy_repository.py, evidence/graph/migrations.py, evidence/phase6_pipeline.py]
+  round_2_contracts: [classification-facts-v2, support-verification-v2, verified-evidence-edge-v2, precedent-classification-v2, patent-evidence-entry-v2, verified-evidence-chain-v1, graph-schema-v3]
+  round_2_decisions: [ADR-026, ADR-029, ADR-030, ADR-031, ADR-032]
+  status: GATE 30 OPEN - Round-2 implementation requires fresh independent GPT-6 Sol High semantic re-review
   scope: [mapper/verifier separation, verifier blindness, relationship/control-flow preservation, single-source direct precedent, anti-stitching, chronology gates, context expansion, patent single-reference semantics, graph-edge eligibility, benchmark behavior, adversarial cases, Phase 7 leakage]
 deferred:
   - Phase 7 prosecutor/defender, counterbalanced adjudication, four adjudication gates, verdict permission matrix and abstention

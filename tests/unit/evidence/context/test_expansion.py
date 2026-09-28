@@ -10,7 +10,7 @@ from novelty_harness.evidence.context.selection import (
     PassageSelectionError,
     SupportEvidenceBundle,
 )
-from novelty_harness.evidence.passages.models import PassageLocatorKind
+from novelty_harness.evidence.passages.models import PassageLocator, PassageLocatorKind
 from tests.fixtures.phase5 import make_passage, phase5_provenance
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
@@ -139,6 +139,148 @@ def test_expansion_window_is_bounded_and_deterministic() -> None:
     assert first == second
     assert first.window_passage is not None
     assert len(first.window_passage.text) <= len(target.text) + 100
+
+
+def test_repeated_text_expands_the_located_occurrence() -> None:
+    text = (
+        "The method is effective. An unrelated first observation. "
+        "The method is effective. However, the second observation failed."
+    )
+    position = text.rfind("The method is effective.")
+    target = inner().model_copy(
+        update={
+            "locator": PassageLocator(
+                kind=PassageLocatorKind.BLOCK,
+                char_start=position,
+                char_end=position + len("The method is effective."),
+            )
+        }
+    )
+    outer = document(text).model_copy(
+        update={
+            "locator": PassageLocator(
+                kind=PassageLocatorKind.RESOLVED_CONTENT,
+                char_start=0,
+                char_end=len(text),
+            )
+        }
+    )
+    expansion = expand_passage_context(
+        target, available_passages=(target, outer), attempt=1, window_chars=55, clock=lambda: NOW
+    )
+    assert expansion.window_passage is not None
+    assert "second observation failed" in expansion.window_passage.text
+    assert expansion.window_passage.locator.char_start is not None
+    assert expansion.window_passage.locator.char_start <= position
+
+
+def test_repeated_text_without_locator_does_not_guess_occurrence() -> None:
+    target = inner()
+    outer = document(target.text + " First case. " + target.text + " Second case failed.")
+    expansion = expand_passage_context(
+        target, available_passages=(target, outer), attempt=1, window_chars=25, clock=lambda: NOW
+    )
+    assert not expansion.available
+    assert "ambiguous" in str(expansion.blocked_reason).lower()
+
+
+def test_bounded_window_discloses_truncated_known_context() -> None:
+    from novelty_harness.evidence.context.expansion import inspect_passage_context
+
+    target = inner()
+    full = document(target.text + " " + "filler " * 20 + "However, it failed.")
+    inspection = inspect_passage_context(
+        target, available_passages=(target, full), attempt=1, window_chars=20, clock=lambda: NOW
+    )
+    assert inspection.completeness == "TRUNCATED"
+    assert len(inspection.expansions) == 1
+    assert inspection.expansions[0].window_passage is not None
+    assert "However" not in inspection.expansions[0].window_passage.text
+
+
+def test_entire_stored_context_is_explicitly_complete() -> None:
+    from novelty_harness.evidence.context.expansion import inspect_passage_context
+
+    target = inner()
+    full = document(target.text + " However, it failed.")
+    inspection = inspect_passage_context(
+        target, available_passages=(target, full), attempt=1, clock=lambda: NOW
+    )
+    assert inspection.completeness == "COMPLETE"
+    assert inspection.expansions[0].window_passage is not None
+    assert "However" in inspection.expansions[0].window_passage.text
+
+
+def test_no_stored_context_is_unavailable_not_complete() -> None:
+    from novelty_harness.evidence.context.expansion import inspect_passage_context
+
+    target = inner()
+    inspection = inspect_passage_context(
+        target, available_passages=(target,), attempt=1, clock=lambda: NOW
+    )
+    assert inspection.completeness == "UNAVAILABLE"
+    assert not inspection.expansions[0].available
+
+
+def test_full_resolved_content_with_complete_span_needs_no_expansion() -> None:
+    from novelty_harness.evidence.context.expansion import inspect_passage_context
+
+    text = "The full source text states the entire mechanism."
+    target = document(text).model_copy(
+        update={
+            "locator": PassageLocator(
+                kind=PassageLocatorKind.RESOLVED_CONTENT, char_start=0, char_end=len(text)
+            )
+        }
+    )
+    inspection = inspect_passage_context(
+        target, available_passages=(target,), attempt=1, clock=lambda: NOW
+    )
+    assert inspection.completeness == "COMPLETE"
+
+
+def test_located_same_version_neighbor_is_supplied_as_exact_passage() -> None:
+    from novelty_harness.evidence.context.expansion import inspect_passage_context
+
+    target = inner().model_copy(
+        update={
+            "locator": PassageLocator(
+                kind=PassageLocatorKind.BLOCK,
+                char_start=0,
+                char_end=len(inner().text),
+            )
+        }
+    )
+    neighbor_text = "However, it failed in all cases."
+    neighbor = document(neighbor_text).model_copy(
+        update={
+            "locator": PassageLocator(
+                kind=PassageLocatorKind.BLOCK,
+                char_start=len(target.text),
+                char_end=len(target.text) + len(neighbor_text),
+            )
+        }
+    )
+    inspection = inspect_passage_context(
+        target,
+        available_passages=(target, neighbor),
+        attempt=1,
+        clock=lambda: NOW,
+    )
+    assert inspection.completeness == "COMPLETE"
+    assert tuple(item.window_passage for item in inspection.expansions) == (neighbor,)
+
+
+def test_unlocated_repeated_excerpt_has_unknown_completeness() -> None:
+    from novelty_harness.evidence.context.expansion import inspect_passage_context
+
+    target = inner()
+    full = document(target.text + " First case. " + target.text + " Second case failed.")
+    inspection = inspect_passage_context(
+        target, available_passages=(target, full), attempt=1, clock=lambda: NOW
+    )
+    assert inspection.completeness == "UNKNOWN"
+    assert not inspection.expansions[0].available
 
 
 def test_expanded_bundle_keeps_origin_and_window_passages() -> None:

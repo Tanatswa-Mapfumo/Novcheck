@@ -17,6 +17,7 @@ from novelty_harness.evidence.precedent.gates import (
 )
 from novelty_harness.evidence.verification.models import (
     CommitmentStateRecord,
+    PassageSupportClaim,
     SupportVerification,
 )
 from tests.fixtures.phase5 import phase5_provenance
@@ -144,6 +145,7 @@ def verification_for(
         "source_version_id": "srcv_1_v1",
         "mcu_id": target.mcu_id,
         "commitment_states": records,
+        "context_completeness": "COMPLETE",
         "relied_on_passage_ids": tuple(relied),
         "verifier_prompt_version": "support-verifier-v1",
         "verifier_rubric_version": "support-rubric-v1",
@@ -177,6 +179,38 @@ def verification_for(
     return SupportVerification.model_validate(values)
 
 
+def claim_for(
+    target: EvidenceProposition,
+    mapped: SourceMCUMapping,
+    verified: SupportVerification,
+) -> PassageSupportClaim:
+    return PassageSupportClaim(
+        claim_id=verified.claim_id,
+        mapping_id=mapped.mapping_id,
+        source_id=mapped.source_id,
+        source_version_id=mapped.source_version_id,
+        mcu_id=target.mcu_id,
+        proposition_id=target.proposition_id,
+        proposition_statement=target.statement,
+        commitments=target.commitments,
+        passage_ids=("pass_1",),
+    )
+
+
+def classification_facts(**values: object) -> ClassificationFacts:
+    target = values.get("proposition")
+    mapped = values.get("mapping")
+    verified = values.get("verification")
+    if (
+        "claim" not in values
+        and isinstance(target, EvidenceProposition)
+        and isinstance(mapped, SourceMCUMapping)
+        and isinstance(verified, SupportVerification)
+    ):
+        values["claim"] = claim_for(target, mapped, verified)
+    return ClassificationFacts.model_validate(values)
+
+
 def facts_for(
     target: EvidenceProposition,
     *,
@@ -207,12 +241,13 @@ def facts_for(
         mcu_id=target.mcu_id,
     )
     verified = verification_for(target, states, source_id=source_id)
-    return ClassificationFacts(
+    return classification_facts(
         proposition=target,
         source_id=source_id,
         source_version_id="srcv_1_v1",
         mapping=mapped,
         verification=verified,
+        claim=claim_for(target, mapped, verified),
         decisive=decisive,
         chronology_state=chronology,  # type: ignore[arg-type]
     )
@@ -348,7 +383,7 @@ def test_functional_match_with_missing_mechanism_is_analogous_not_direct() -> No
     assert not classification.decisive
 
 
-def test_surface_overlap_without_material_support_is_superficial() -> None:
+def test_mapper_only_surface_overlap_cannot_change_unverified_precedent() -> None:
     target = proposition(*basic_commitments())
     classification = classify_precedent(
         facts_for(
@@ -362,8 +397,17 @@ def test_surface_overlap_without_material_support_is_superficial() -> None:
         ),
         clock=lambda: NOW,
     )
-    assert classification.relation == PrecedentState.SUPERFICIAL_SIMILARITY
+    assert classification.relation == PrecedentState.NO_DIRECT_PRECEDENT_IDENTIFIED
     assert not classification.decisive
+    without_mapper_match = classify_precedent(
+        facts_for(
+            target,
+            states={"mech": "NOT_SUPPORTED", "feat": "NOT_SUPPORTED", "rel": "NOT_SUPPORTED"},
+            missing=(ComparisonDimension.ARCHITECTURE,),
+        ),
+        clock=lambda: NOW,
+    )
+    assert without_mapper_match.relation == classification.relation
 
 
 def test_no_local_match_never_claims_global_absence() -> None:
