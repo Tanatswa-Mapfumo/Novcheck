@@ -3,9 +3,11 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from novelty_harness.domain.enums import SupportVerificationState
 from novelty_harness.evidence.graph.models import (
     PHASE5_EDGE_KINDS,
-    RESERVED_EDGE_KINDS,
+    PHASE6_EDGE_KINDS,
+    EdgeVerificationRef,
     EvidenceGraph,
     GraphEdge,
     GraphEdgeKind,
@@ -69,15 +71,87 @@ def test_node_identity_must_match_its_kind() -> None:
         node("src_1", GraphNodeKind.SOURCE, unexpected=True)
 
 
-def test_reserved_adjudication_edges_are_rejected_in_phase_5() -> None:
-    assert GraphEdgeKind.DIRECT_PRECEDENT in RESERVED_EDGE_KINDS
-    assert GraphEdgeKind.SUPPORTS in RESERVED_EDGE_KINDS
+def test_phase6_edges_require_eligible_verification_and_phase5_edges_forbid_it() -> None:
+    assert GraphEdgeKind.DIRECT_PRECEDENT in PHASE6_EDGE_KINDS
+    assert GraphEdgeKind.SUPPORTS in PHASE6_EDGE_KINDS
     assert GraphEdgeKind.CITES in PHASE5_EDGE_KINDS
+    # Phase 6 kinds cannot exist without an eligibility reference.
     with pytest.raises(ValidationError):
         edge("gedge_1", GraphEdgeKind.DIRECT_PRECEDENT, "src_a", "src_b")
     with pytest.raises(ValidationError):
         edge("gedge_1", GraphEdgeKind.SUPPORTS, "src_a", "src_b")
-    # Phase 5 kinds are accepted, including the reserved-but-permitted discovery kinds.
+    supported_ref = EdgeVerificationRef(
+        verified_edge_id="edge_1",
+        support_state=SupportVerificationState.SUPPORTED,
+        decisive=True,
+    )
+    partial_ref = EdgeVerificationRef(
+        verified_edge_id="edge_1",
+        support_state=SupportVerificationState.PARTIALLY_SUPPORTED,
+        decisive=False,
+    )
+    contradicted_ref = EdgeVerificationRef(
+        verified_edge_id="edge_1",
+        support_state=SupportVerificationState.CONTRADICTED,
+        decisive=False,
+    )
+    assert (
+        edge(
+            "gedge_ok",
+            GraphEdgeKind.DIRECT_PRECEDENT,
+            "src_a",
+            "src_b",
+            verification=supported_ref,
+        ).kind
+        == GraphEdgeKind.DIRECT_PRECEDENT
+    )
+    assert (
+        edge(
+            "gedge_ok",
+            GraphEdgeKind.STRONG_PARTIAL_PRECEDENT,
+            "src_a",
+            "src_b",
+            verification=partial_ref,
+        ).kind
+        == GraphEdgeKind.STRONG_PARTIAL_PRECEDENT
+    )
+    assert (
+        edge(
+            "gedge_ok",
+            GraphEdgeKind.CONTRADICTS,
+            "src_a",
+            "src_b",
+            verification=contradicted_ref,
+        ).kind
+        == GraphEdgeKind.CONTRADICTS
+    )
+    # A non-decisive reference cannot create a direct-precedent graph edge.
+    with pytest.raises(ValidationError):
+        edge(
+            "gedge_bad",
+            GraphEdgeKind.DIRECT_PRECEDENT,
+            "src_a",
+            "src_b",
+            verification=partial_ref,
+        )
+    with pytest.raises(ValidationError):
+        edge(
+            "gedge_bad",
+            GraphEdgeKind.SUPPORTS,
+            "src_a",
+            "src_b",
+            verification=partial_ref,
+        )
+    # Phase 5 provenance edges must not carry verification refs.
+    with pytest.raises(ValidationError):
+        edge(
+            "gedge_bad",
+            GraphEdgeKind.CITES,
+            "src_a",
+            "src_b",
+            verification=supported_ref,
+        )
+    # Phase 5 kinds are accepted without verification.
     accepted = edge("gedge_1", GraphEdgeKind.DISCOVERED_BY, "src_a", "qry_1")
     assert accepted.kind == GraphEdgeKind.DISCOVERED_BY
 

@@ -12,6 +12,7 @@ from typing import Literal, Self
 from pydantic import ConfigDict, Field, JsonValue, model_validator
 
 from novelty_harness.domain.base import ContractModel, UTCDateTime
+from novelty_harness.domain.enums import PrecedentState, SupportVerificationState
 from novelty_harness.domain.idea import ArtifactProvenance, NonBlankText
 from novelty_harness.domain.ids import GraphEdgeId
 from novelty_harness.runtime.tracing.hashing import canonical_hash
@@ -67,7 +68,21 @@ PHASE5_EDGE_KINDS = frozenset(
     }
 )
 
-RESERVED_EDGE_KINDS = frozenset(GraphEdgeKind) - PHASE5_EDGE_KINDS
+#: Phase 6 verified evidence edges; each requires an eligible verification ref.
+PHASE6_EDGE_KINDS = frozenset(GraphEdgeKind) - PHASE5_EDGE_KINDS
+
+PRECEDENT_EDGE_KINDS = frozenset(
+    {
+        GraphEdgeKind.DIRECT_PRECEDENT,
+        GraphEdgeKind.STRONG_PARTIAL_PRECEDENT,
+        GraphEdgeKind.COMPONENT_PRECEDENT,
+        GraphEdgeKind.ANALOGOUS,
+        GraphEdgeKind.NO_MATCH,
+    }
+)
+
+#: Backwards-compatible Phase 5 name: edge kinds Phase 5 must never create.
+RESERVED_EDGE_KINDS = PHASE6_EDGE_KINDS
 
 _NODE_ID_PREFIXES: dict[GraphNodeKind, str] = {
     GraphNodeKind.IDEA: "idea_",
@@ -126,6 +141,19 @@ class GraphNode(ContractModel):
         return self
 
 
+class EdgeVerificationRef(ContractModel):
+    """Eligibility evidence required for every Phase 6 verified graph edge."""
+
+    model_config = ConfigDict(frozen=True)
+    contract_kind: Literal["edge-verification-ref-v1"] = "edge-verification-ref-v1"
+
+    verified_edge_id: NonBlankText
+    support_state: SupportVerificationState
+    decisive: bool
+    precedent_relation: PrecedentState | None = None
+    scope: Literal["LOCAL_SOURCE_MCU"] = "LOCAL_SOURCE_MCU"
+
+
 class GraphEdge(ContractModel):
     model_config = ConfigDict(frozen=True)
     contract_kind: Literal["evidence-graph-edge-v1"] = "evidence-graph-edge-v1"
@@ -135,18 +163,46 @@ class GraphEdge(ContractModel):
     source_node_id: NonBlankText
     target_node_id: NonBlankText
     attributes: dict[str, JsonValue] = Field(default_factory=dict)
+    verification: EdgeVerificationRef | None = None
     observed_at: UTCDateTime
     provenance: ArtifactProvenance
 
     @model_validator(mode="after")
-    def phase5_only_and_distinct(self) -> Self:
-        if self.kind in RESERVED_EDGE_KINDS:
-            raise ValueError(
-                f"{self.kind.value} is reserved for Phase 6+ adjudication and cannot "
-                "be created as a Phase 5 graph edge"
-            )
+    def phase_boundaries_and_eligibility(self) -> Self:
         if self.source_node_id == self.target_node_id:
             raise ValueError("A graph edge cannot point at a single node")
+        if self.kind in PHASE5_EDGE_KINDS:
+            if self.verification is not None:
+                raise ValueError("Phase 5 provenance edges must not carry verification refs")
+            return self
+        if self.verification is None:
+            raise ValueError(f"{self.kind.value} requires an eligible verification reference")
+        if self.kind == GraphEdgeKind.DIRECT_PRECEDENT:
+            if not self.verification.decisive:
+                raise ValueError("DIRECT_PRECEDENT requires decisive verified evidence")
+            if self.verification.support_state != SupportVerificationState.SUPPORTED:
+                raise ValueError("DIRECT_PRECEDENT requires fully supported evidence")
+            if self.verification.precedent_relation not in {
+                None,
+                PrecedentState.DIRECT_PRECEDENT,
+            }:
+                raise ValueError("DIRECT_PRECEDENT ref carries another relation")
+        elif self.kind == GraphEdgeKind.SUPPORTS:
+            if self.verification.support_state != SupportVerificationState.SUPPORTED:
+                raise ValueError("SUPPORTS requires verified support")
+        elif self.kind == GraphEdgeKind.CONTRADICTS:
+            if self.verification.support_state != SupportVerificationState.CONTRADICTED:
+                raise ValueError("CONTRADICTS requires a verified contradiction")
+        elif self.kind in {
+            GraphEdgeKind.STRONG_PARTIAL_PRECEDENT,
+            GraphEdgeKind.COMPONENT_PRECEDENT,
+            GraphEdgeKind.ANALOGOUS,
+        }:
+            if self.verification.support_state not in {
+                SupportVerificationState.SUPPORTED,
+                SupportVerificationState.PARTIALLY_SUPPORTED,
+            }:
+                raise ValueError(f"{self.kind.value} requires verified partial or full support")
         return self
 
 

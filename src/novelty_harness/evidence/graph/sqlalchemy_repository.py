@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 from novelty_harness.domain.ids import SourceId
 from novelty_harness.evidence.graph.migrations import ensure_schema
 from novelty_harness.evidence.graph.models import (
+    PHASE6_EDGE_KINDS,
     GraphEdge,
     GraphEdgeKind,
     GraphNode,
@@ -115,6 +116,11 @@ class SqlAlchemyEvidenceGraphRepository:
             )
 
     def _persist_edge(self, session: Session, edge: GraphEdge) -> None:
+        if edge.kind in PHASE6_EDGE_KINDS:
+            if edge.verification is None or (
+                edge.kind == GraphEdgeKind.DIRECT_PRECEDENT and not edge.verification.decisive
+            ):
+                raise ValueError("Phase 6 graph edges require an eligible verification reference")
         document = canonical_json(edge)
         row = session.get(GraphEdgeRow, edge.edge_id)
         if row is None:
