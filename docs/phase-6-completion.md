@@ -361,8 +361,10 @@ model accuracy or calibration. A live verifier's semantic entailment and
 prompt-injection resistance remain unproven. Round-2 worktree verification:
 `uv sync --dev`, `uv run python scripts/verify.py` (Ruff/format clean,
 Pyright 0 errors/warnings, **1471 passed, 5 network tests deselected**) and
-`git diff --check` passed. Exact commit and fresh-checkout verification are
-recorded in a follow-up amendment to the review record.
+`git diff --check` passed. Implementation commit
+`54364bac8a58493ccbd87e26867d4f419be94226` was verified from a fresh
+local checkout with the same 1471/5 result and clean Ruff/format/Pyright and
+`git diff --check`; details are appended to the review record.
 
 **Gate 30 remains OPEN pending a fresh independent GPT-6 Sol High semantic
 re-review. Phase 7 has not started.**

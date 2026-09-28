@@ -310,3 +310,21 @@ A fresh independent GPT-6 Sol High reviewer must replay the attacks and
 decide Gate 30; implementer tests cannot self-certify semantic acceptance.
 
 Gate 30 remains OPEN pending a fresh independent GPT-6 Sol High semantic re-review.
+
+### Round-2 verification amendment
+
+- **Implementation commit:** `54364bac8a58493ccbd87e26867d4f419be94226`.
+- **Worktree:** `uv sync --dev` passed. `uv run python scripts/verify.py`
+  passed: Ruff check clean, Ruff format clean (287 files), Pyright 0
+  errors/0 warnings, pytest **1471 passed, 5 opt-in network tests
+  deselected**. `git diff --check` and staged-diff whitespace checks passed.
+- **Fresh exact-commit checkout:** local no-network clone at
+  `/private/tmp/novcheck-phase6-round2-54364ba`, HEAD exactly
+  `54364bac8a58493ccbd87e26867d4f419be94226`. `uv sync --dev`,
+  `uv run python scripts/verify.py` (same 1471/5 result and clean
+  Ruff/format/Pyright), and `git diff --check` all passed.
+- **Decision:** This is implementer verification, not the required independent
+  semantic re-review. The `c41b11f` FAIL record remains in force until a
+  fresh GPT-6 Sol High reviewer independently closes F01-F10 and N01.
+
+Gate 30 remains OPEN pending a fresh independent GPT-6 Sol High semantic re-review.
