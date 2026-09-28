@@ -42,6 +42,9 @@ record's commit on `phase-6-evidence-verification`.
 
 ## 3. Files changed
 
+59 paths differ from `3974b4c` (+10,645/−52) on the
+`phase-6-evidence-verification` branch.
+
 New production packages: `evidence/mapping/{models,dimensions,mapper,prompts}.py`,
 `evidence/context/{selection,expansion}.py`,
 `evidence/verification/{models,gates,verifier,prompts}.py`,
@@ -67,7 +70,11 @@ FR-EVID-001…005; FR-EQ-001…004; FR-EXP-002/003 chronology gates; sections
 
 1389 deterministic tests pass (5 opt-in network cases deselected); baseline was
 1259, so Phase 6 adds 130 tests (including 21 adversarial and 2 benchmark
-tests).
+tests). The final code commit `ebb398f` was also verified from a fresh local
+clone (`git clone --branch phase-6-evidence-verification`): `uv sync --dev`
+and `uv run python scripts/verify.py` passed with 1389 tests and clean
+Ruff/format/Pyright, and `git diff --check` was clean. This record's finalizing
+documentation commit contains no code changes.
 
 ## 6. Support-verifier benchmark results
 
