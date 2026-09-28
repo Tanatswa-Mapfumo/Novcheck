@@ -71,8 +71,10 @@ async def test_insufficient_context_then_supported_after_same_source_expansion()
         available_passages=(target.passages[0], document),
         clock=lambda: NOW,
     )
+    # The F03 completeness precheck supplies the bounded window before the
+    # first judgment, so a single verification already sees the full context.
     assert result.verification.state == SupportVerificationState.SUPPORTED
-    assert result.verification_attempts == 2
+    assert result.verification_attempts == 1
     assert result.verification.context_expansions == 1
     assert len(result.expansions) == 1 and result.expansions[0].available
     window = result.expansions[0].window_passage
@@ -90,7 +92,7 @@ async def test_expansion_can_reveal_a_contradiction() -> None:
         clock=lambda: NOW,
     )
     assert result.verification.state == SupportVerificationState.CONTRADICTED
-    assert result.verification_attempts == 2
+    assert result.verification_attempts == 1
     assert result.expansions[0].available
     assert any(
         "However" in item or OUTCOME.text in item for item in result.verification.contradictions
@@ -128,7 +130,8 @@ async def test_unsupported_and_partial_results_are_never_retried() -> None:
         )
         assert result.verification.state.value == state
         assert result.verification_attempts == 1
-        assert result.expansions == ()
+        # Only the precheck expansion may be recorded; no retry round runs.
+        assert len(result.expansions) <= 1
 
 
 async def test_retry_cap_is_enforced() -> None:
@@ -160,5 +163,17 @@ async def test_retry_cap_is_enforced() -> None:
         clock=lambda: NOW,
     )
     assert result.verification.state == SupportVerificationState.INSUFFICIENT_CONTEXT
-    assert result.verification_attempts == 2
+    assert result.verification_attempts == 1
+    assert result.expansion_rounds == 1
     assert len(result.expansions) == 1
+
+    capped = await verify_with_context_retry(
+        retry_verifier(always_insufficient),
+        bundle(CLAIM_TEXT),
+        available_passages=(bundle(CLAIM_TEXT).passages[0], document),
+        max_expansions=0,
+        clock=lambda: NOW,
+    )
+    assert capped.verification.state == SupportVerificationState.INSUFFICIENT_CONTEXT
+    assert capped.expansion_rounds == 0
+    assert capped.expansions == ()

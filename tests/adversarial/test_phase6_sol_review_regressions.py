@@ -737,3 +737,107 @@ async def test_f10_partial_commitment_requires_a_citation_and_scoped_fields() ->
     }
     with pytest.raises((_VVE, ValueError)):
         await verifier(uncited).verify(bundle(), clock=lambda: NOW)
+
+
+# --- F03 ---
+
+
+async def test_f03_nearby_negation_cannot_be_hidden_by_a_short_excerpt() -> None:
+    from novelty_harness.evidence.verification.verifier import (
+        verify_with_context_retry as _retry,
+    )
+    from tests.unit.evidence.verification.test_context_retry import (
+        CLAIM_TEXT,
+        expanded_document,
+        qualifier_aware_response,
+        retry_verifier,
+    )
+
+    target = bundle(CLAIM_TEXT)
+    document = expanded_document("However, the operator must always switch it manually.")
+    result = await _retry(
+        retry_verifier(qualifier_aware_response),
+        target,
+        available_passages=(target.passages[0], document),
+        clock=lambda: NOW,
+    )
+    assert result.verification.state == SupportVerificationState.CONTRADICTED
+    assert result.verification_attempts == 1
+    assert any(expansion.available for expansion in result.expansions)
+
+
+async def test_f03_benign_nearby_context_preserves_support() -> None:
+    from novelty_harness.evidence.verification.verifier import (
+        verify_with_context_retry as _retry,
+    )
+    from tests.unit.evidence.verification.test_context_retry import (
+        CLAIM_TEXT,
+        expanded_document,
+        qualifier_aware_response,
+        retry_verifier,
+    )
+
+    target = bundle(CLAIM_TEXT)
+    document = expanded_document("Additional detail supports the same claim.")
+    result = await _retry(
+        retry_verifier(qualifier_aware_response),
+        target,
+        available_passages=(target.passages[0], document),
+        clock=lambda: NOW,
+    )
+    assert result.verification.state == SupportVerificationState.SUPPORTED
+    assert result.verification_attempts == 1
+    assert any(expansion.available for expansion in result.expansions)
+
+
+async def test_f03_no_expandable_context_is_explicit_and_bounded() -> None:
+    from novelty_harness.evidence.verification.verifier import (
+        verify_with_context_retry as _retry,
+    )
+    from tests.unit.evidence.verification.test_context_retry import (
+        CLAIM_TEXT,
+        qualifier_aware_response,
+        retry_verifier,
+    )
+
+    target = bundle(CLAIM_TEXT)
+    result = await _retry(
+        retry_verifier(qualifier_aware_response),
+        target,
+        available_passages=(target.passages[0],),
+        clock=lambda: NOW,
+    )
+    assert result.verification.state == SupportVerificationState.INSUFFICIENT_CONTEXT
+    assert result.expansions and not any(item.available for item in result.expansions)
+    assert result.expansions[0].blocked_reason is not None
+
+
+def test_f03_expansion_never_crosses_source_or_version() -> None:
+    from novelty_harness.evidence.context.expansion import (
+        expand_passage_context as _expand,
+    )
+
+    target = make_passage(
+        "src_1",
+        text="The method is effective.",
+        passage_id="pass_inner",
+        source_version_id="srcv_1_v1",
+    )
+    other_version = make_passage(
+        "src_1",
+        text="The method is effective. However it failed.",
+        passage_id="pass_doc",
+        source_version_id="srcv_other",
+    )
+    other_source = make_passage(
+        "src_other",
+        text="The method is effective. However it failed.",
+        passage_id="pass_doc2",
+        source_version_id="srcv_1_v1",
+    )
+    for outsider in (other_version, other_source):
+        expansion = _expand(
+            target, available_passages=(target, outsider), attempt=1, clock=lambda: NOW
+        )
+        assert not expansion.available
+        assert expansion.blocked_reason is not None

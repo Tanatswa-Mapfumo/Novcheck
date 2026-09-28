@@ -78,6 +78,7 @@ class ContextRetryResult:
     verification: SupportVerification
     expansions: tuple[ContextExpansion, ...]
     verification_attempts: int
+    expansion_rounds: int
 
 
 async def verify_with_context_retry(
@@ -101,6 +102,26 @@ async def verify_with_context_retry(
     check_passage_integrity(bundle)
     current = bundle
     expansions: list[ContextExpansion] = []
+    rounds = 0
+    # F03 context-completeness precheck: before the first judgment, bounded
+    # same-source/same-version surrounding context is included when available,
+    # so a nearby qualifier or negation cannot be hidden by a short excerpt.
+    # Expansion is bounded by rounds; the precheck consumes the first round.
+    if max_expansions > 0:
+        rounds = 1
+        precheck = tuple(
+            expand_passage_context(
+                passage,
+                available_passages=available_passages,
+                attempt=1,
+                window_chars=window_chars,
+                clock=clock,
+            )
+            for passage in bundle.passages
+        )
+        expansions.extend(precheck)
+        if any(expansion.available for expansion in precheck):
+            current = expanded_bundle(bundle, precheck, attempt=1, clock=clock)
     attempts = 0
     while True:
         attempts += 1
@@ -112,26 +133,31 @@ async def verify_with_context_retry(
                 ),
                 expansions=tuple(expansions),
                 verification_attempts=attempts,
+                expansion_rounds=rounds,
             )
-        if len(expansions) >= max_expansions:
+        if rounds >= max_expansions:
             return ContextRetryResult(
                 verification=verification.model_copy(
                     update={"context_expansions": len(expansions)}
                 ),
                 expansions=tuple(expansions),
                 verification_attempts=attempts,
+                expansion_rounds=rounds,
             )
+        skip = {expansion.origin_passage_id for expansion in expansions}
         new_expansions = tuple(
             expand_passage_context(
                 passage,
                 available_passages=available_passages,
-                attempt=len(expansions) + 1,
+                attempt=rounds + 1,
                 window_chars=window_chars,
                 clock=clock,
             )
             for passage in current.passages
+            if passage.passage_id not in skip and passage.locator.label != "context-window"
         )
         expansions.extend(new_expansions)
+        rounds += 1
         if not any(expansion.available for expansion in new_expansions):
             return ContextRetryResult(
                 verification=verification.model_copy(
@@ -139,8 +165,9 @@ async def verify_with_context_retry(
                 ),
                 expansions=tuple(expansions),
                 verification_attempts=attempts,
+                expansion_rounds=rounds,
             )
-        current = expanded_bundle(current, new_expansions, attempt=len(expansions), clock=clock)
+        current = expanded_bundle(current, new_expansions, attempt=rounds, clock=clock)
 
 
 __all__ = [
