@@ -47,6 +47,24 @@ def _evidence_modules() -> list[Path]:
     return sorted(path for path in EVIDENCE.rglob("*.py"))
 
 
+#: Phase 6 owns these packages/files; the Phase 5 guards stay scoped to the
+#: Phase 5 substrate so Phase 6 may build its verified edge kinds.
+_PHASE6_PACKAGES = frozenset({"mapping", "context", "verification", "precedent"})
+_PHASE6_FILES = frozenset({"phase6_pipeline.py", "graph/phase6_mapping.py"})
+
+
+def _phase5_modules() -> list[Path]:
+    modules: list[Path] = []
+    for path in _evidence_modules():
+        relative = path.relative_to(EVIDENCE)
+        if relative.parts and relative.parts[0] in _PHASE6_PACKAGES:
+            continue
+        if str(relative) in _PHASE6_FILES:
+            continue
+        modules.append(path)
+    return modules
+
+
 def test_evidence_domain_packages_do_not_import_storage_or_infrastructure() -> None:
     domain_packages = (
         "evidence/normalization",
@@ -99,7 +117,7 @@ def test_phase_5_never_constructs_reserved_adjudication_graph_edges() -> None:
         "NO_MATCH",
         "CONTRADICTS",
     }
-    for path in _evidence_modules():
+    for path in _phase5_modules():
         if path.name == "models.py":
             continue
         tree = ast.parse(path.read_text())
@@ -114,7 +132,7 @@ def test_phase_5_never_constructs_reserved_adjudication_graph_edges() -> None:
 
 
 def test_phase_5_contains_no_phase_6_adjudication_symbols() -> None:
-    for path in _evidence_modules():
+    for path in _phase5_modules():
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Name) and node.id in PHASE6_ADJUDICATION_SYMBOLS:
