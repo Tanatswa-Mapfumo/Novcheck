@@ -30,7 +30,7 @@ from novelty_harness.evidence.mapping.models import (
     MappingComparison,
     PropositionCommitment,
 )
-from novelty_harness.evidence.passages.models import PassageLocator
+from novelty_harness.evidence.passages.models import PassageRecord
 
 CommitmentState = Literal["SUPPORTED", "NOT_SUPPORTED", "CONTRADICTED", "INSUFFICIENT"]
 ChronologyState = Literal["PREDATES_CUTOFF", "POST_CUTOFF", "UNCERTAIN"]
@@ -173,8 +173,7 @@ class ContextExpansion(ContractModel):
     source_version_id: SourceVersionId | None
     attempt: int = Field(ge=1)
     available: bool
-    window_passage_id: PassageId | None = None
-    locator: PassageLocator | None = None
+    window_passage: PassageRecord | None = None
     blocked_reason: NonBlankText | None = None
     observed_at: UTCDateTime
     provenance: ArtifactProvenance
@@ -182,11 +181,15 @@ class ContextExpansion(ContractModel):
     @model_validator(mode="after")
     def availability_matches_payload(self) -> Self:
         if self.available:
-            if self.window_passage_id is None or self.locator is None:
-                raise ValueError("Available expansion requires a window passage and locator")
+            if self.window_passage is None:
+                raise ValueError("Available expansion requires a window passage")
             if self.blocked_reason is not None:
                 raise ValueError("Available expansion cannot be blocked")
-        elif self.window_passage_id is not None or self.blocked_reason is None:
+            if self.window_passage.source_id != self.source_id:
+                raise ValueError("Context expansion cannot cross sources")
+            if self.window_passage.source_version_id != self.source_version_id:
+                raise ValueError("Context expansion cannot cross source versions")
+        elif self.window_passage is not None or self.blocked_reason is None:
             raise ValueError("Blocked expansion requires a reason and no window passage")
         return self
 

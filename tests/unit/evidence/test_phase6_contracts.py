@@ -355,7 +355,7 @@ def test_context_expansion_availability_is_consistent() -> None:
     assert ContextExpansion.model_validate(blocked.model_dump(mode="json")) == blocked
     with pytest.raises(ValidationError):
         ContextExpansion.model_validate(
-            {**blocked.model_dump(), "available": True, "window_passage_id": None}
+            {**blocked.model_dump(), "available": True, "window_passage": None}
         )
 
 
