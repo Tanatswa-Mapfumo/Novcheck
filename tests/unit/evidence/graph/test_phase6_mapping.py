@@ -179,7 +179,7 @@ def test_repository_persists_phase6_fragment_and_rejects_ineligible_direct_edges
     )
     repository = SqlAlchemyEvidenceGraphRepository()
     repository.upsert(nodes=existing)
-    repository.upsert(nodes=nodes, edges=graph_edges)
+    repository.upsert(nodes=nodes, edges=graph_edges, verified_edges=(edge,))
     assert (
         repository.get_edge(
             next(
@@ -193,7 +193,7 @@ def test_repository_persists_phase6_fragment_and_rejects_ineligible_direct_edges
     tampered = GraphEdge.model_construct(
         **{**direct.model_dump(mode="python"), "verification": None}
     )
-    with pytest.raises(ValueError, match="eligible verification"):
+    with pytest.raises(ValueError, match="verification reference"):
         repository.upsert(edges=(tampered,))
     repository.close()
 

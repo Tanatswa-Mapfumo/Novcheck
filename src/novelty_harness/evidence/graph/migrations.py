@@ -2,11 +2,11 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine, insert, select
+from sqlalchemy import Engine, insert, select, update
 
 from novelty_harness.evidence.graph.sqlalchemy_models import Base, SchemaVersionRow
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def schema_version(engine: Engine) -> int | None:
@@ -42,6 +42,15 @@ def ensure_schema(engine: Engine) -> int:
             f"{SCHEMA_VERSION}; refusing to reinterpret"
         )
     if current < SCHEMA_VERSION:
+        if current == 1:
+            # v1 -> v2 adds the verified_edges table (created by create_all).
+            with engine.begin() as connection:
+                connection.execute(
+                    update(SchemaVersionRow)
+                    .where(SchemaVersionRow.version == 1)
+                    .values(version=SCHEMA_VERSION, applied_at=datetime.now(UTC).isoformat())
+                )
+            return SCHEMA_VERSION
         raise ValueError(
             f"Evidence graph schema version {current} requires migration to {SCHEMA_VERSION}"
         )

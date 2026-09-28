@@ -524,6 +524,7 @@ def test_attack_16_stitched_patents_are_never_anticipation() -> None:
     entries = (
         PatentEvidenceEntry(
             source_id="src_patent_a",
+            mcu_id="mcu_1",
             is_patent=True,
             classification=patent_classification(
                 "src_patent_a", PrecedentState.STRONG_PARTIAL_PRECEDENT
@@ -531,6 +532,7 @@ def test_attack_16_stitched_patents_are_never_anticipation() -> None:
         ),
         PatentEvidenceEntry(
             source_id="src_patent_b",
+            mcu_id="mcu_1",
             is_patent=True,
             classification=patent_classification(
                 "src_patent_b", PrecedentState.STRONG_PARTIAL_PRECEDENT
@@ -613,8 +615,10 @@ def test_attack_19_mapper_invented_relationship_is_not_supported() -> None:
             source_id="src_1",
             mapping=mapping,
             verification=verification_for(
-                target, {"mech": "NOT_SUPPORTED", "outcome": "NOT_SUPPORTED"}
-            ),
+                target,
+                {"mech": "NOT_SUPPORTED", "outcome": "NOT_SUPPORTED"},
+                mapping_id=mapping.mapping_id,
+            ).model_copy(update={"source_version_id": None}),
             decisive=False,
             chronology_state="UNCERTAIN",
         ),

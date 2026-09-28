@@ -72,6 +72,9 @@ def mapping_for(
     missing: Sequence[ComparisonDimension] = (),
     conflicting: Sequence[ComparisonDimension] = (),
     source_id: str = "src_1",
+    proposition_id: str = "prop_1",
+    mcu_id: str = "mcu_1",
+    mapping_id: str = "map_1",
 ) -> SourceMCUMapping:
     grouped: dict[ComparisonDimension, dict[str, list[object]]] = {}
     for dimension in matching:
@@ -102,11 +105,11 @@ def mapping_for(
         for dimension, values in grouped.items()
     ]
     return SourceMCUMapping(
-        mapping_id="map_1",
+        mapping_id=mapping_id,
         source_id=source_id,
         source_version_id="srcv_1_v1",
-        mcu_id="mcu_1",
-        proposition_id="prop_1",
+        mcu_id=mcu_id,
+        proposition_id=proposition_id,
         dimensions=tuple(dimensions),
         mapper_prompt_version="evidence-mapper-v1",
         mapper_rubric_version="mapping-rubric-v1",
@@ -120,6 +123,8 @@ def verification_for(
     states: Mapping[str, str],
     *,
     relied: Sequence[str] = ("pass_1",),
+    source_id: str = "src_1",
+    mapping_id: str = "map_1",
 ) -> SupportVerification:
     records = tuple(
         CommitmentStateRecord(
@@ -134,10 +139,10 @@ def verification_for(
     values: dict[str, object] = {
         "verification_id": "ver_1",
         "claim_id": "claim_1",
-        "mapping_id": "map_1",
-        "source_id": "src_1",
+        "mapping_id": mapping_id,
+        "source_id": source_id,
         "source_version_id": "srcv_1_v1",
-        "mcu_id": "mcu_1",
+        "mcu_id": target.mcu_id,
         "commitment_states": records,
         "relied_on_passage_ids": tuple(relied),
         "verifier_prompt_version": "support-verifier-v1",
@@ -194,9 +199,14 @@ def facts_for(
             selection_failure=selection_failure,
         )
     mapped = mapping_for(
-        matching=matching, missing=missing, conflicting=conflicting, source_id=source_id
+        matching=matching,
+        missing=missing,
+        conflicting=conflicting,
+        source_id=source_id,
+        proposition_id=target.proposition_id,
+        mcu_id=target.mcu_id,
     )
-    verified = verification_for(target, states)
+    verified = verification_for(target, states, source_id=source_id)
     return ClassificationFacts(
         proposition=target,
         source_id=source_id,

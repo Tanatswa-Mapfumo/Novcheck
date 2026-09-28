@@ -13,6 +13,7 @@ from sqlalchemy import Engine, create_engine, event, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from novelty_harness.domain.enums import PrecedentState
 from novelty_harness.domain.ids import SourceId
 from novelty_harness.evidence.graph.migrations import ensure_schema
 from novelty_harness.evidence.graph.models import (
@@ -28,8 +29,10 @@ from novelty_harness.evidence.graph.sqlalchemy_models import (
     GraphNodeRow,
     LineageClusterMemberRow,
     LineageClusterRow,
+    VerifiedEdgeRow,
 )
 from novelty_harness.evidence.provenance.models import EvidenceLineageCluster
+from novelty_harness.evidence.verification.models import VerifiedEvidenceEdge
 from novelty_harness.runtime.tracing.hashing import canonical_json
 
 
@@ -70,9 +73,13 @@ class SqlAlchemyEvidenceGraphRepository:
         nodes: Sequence[GraphNode] = (),
         edges: Sequence[GraphEdge] = (),
         clusters: Sequence[EvidenceLineageCluster] = (),
+        verified_edges: Sequence[VerifiedEvidenceEdge] = (),
     ) -> None:
         with Session(self._engine) as session, session.begin():
             self._verify_edge_endpoints(session, nodes, edges)
+            for verified in verified_edges:
+                self._persist_verified_edge(session, verified)
+            self._verify_phase6_edges(session, edges, verified_edges)
             for node in nodes:
                 self._persist_node(session, node)
             for edge in edges:
@@ -114,6 +121,90 @@ class SqlAlchemyEvidenceGraphRepository:
                 f"Graph node {node.node_id} already exists with different content; "
                 "history is append-only"
             )
+
+    def _persist_verified_edge(self, session: Session, verified: VerifiedEvidenceEdge) -> None:
+        document = canonical_json(verified)
+        row = session.get(VerifiedEdgeRow, verified.edge_id)
+        if row is None:
+            session.add(
+                VerifiedEdgeRow(
+                    edge_id=verified.edge_id,
+                    source_id=verified.source_id,
+                    mcu_id=verified.mcu_id,
+                    document_json=document,
+                )
+            )
+            return
+        if row.document_json != document:
+            raise ValueError(
+                f"Verified edge {verified.edge_id} already exists with different content; "
+                "history is append-only"
+            )
+
+    def _resolve_verified_edge(
+        self, session: Session, verified_edge_id: str
+    ) -> VerifiedEvidenceEdge | None:
+        row = session.get(VerifiedEdgeRow, verified_edge_id)
+        if row is None:
+            return None
+        return VerifiedEvidenceEdge.model_validate_json(row.document_json)
+
+    def _verify_phase6_edges(
+        self,
+        session: Session,
+        edges: Sequence[GraphEdge],
+        batch: Sequence[VerifiedEvidenceEdge],
+    ) -> None:
+        """Resolve every Phase 6 verification reference against a real artifact."""
+
+        batch_by_id = {verified.edge_id: verified for verified in batch}
+        expected_relation = {
+            GraphEdgeKind.DIRECT_PRECEDENT: PrecedentState.DIRECT_PRECEDENT,
+            GraphEdgeKind.STRONG_PARTIAL_PRECEDENT: PrecedentState.STRONG_PARTIAL_PRECEDENT,
+            GraphEdgeKind.COMPONENT_PRECEDENT: PrecedentState.COMPONENT_PRECEDENT_ONLY,
+            GraphEdgeKind.ANALOGOUS: PrecedentState.ANALOGOUS_PRECEDENT,
+            GraphEdgeKind.NO_MATCH: PrecedentState.NO_DIRECT_PRECEDENT_IDENTIFIED,
+        }
+        for edge in edges:
+            if edge.kind not in PHASE6_EDGE_KINDS:
+                continue
+            reference = edge.verification
+            if reference is None:
+                raise ValueError(
+                    f"Phase 6 graph edge {edge.edge_id} lacks a verification reference"
+                )
+            verified = batch_by_id.get(reference.verified_edge_id) or self._resolve_verified_edge(
+                session, reference.verified_edge_id
+            )
+            if verified is None:
+                raise ValueError(
+                    f"Graph edge {edge.edge_id} references unknown verified edge "
+                    f"{reference.verified_edge_id}"
+                )
+            if verified.source_id != edge.source_node_id or verified.mcu_id != edge.target_node_id:
+                raise ValueError(
+                    f"Graph edge {edge.edge_id} endpoints do not match the verified artifact"
+                )
+            if (
+                verified.support_state != reference.support_state
+                or verified.decisive != reference.decisive
+                or verified.relation != reference.precedent_relation
+            ):
+                raise ValueError(
+                    f"Graph edge {edge.edge_id} support state, decisiveness or relation "
+                    "does not match the verified artifact"
+                )
+            relation_expected = expected_relation.get(edge.kind)
+            if relation_expected is not None and verified.relation != relation_expected:
+                raise ValueError(
+                    f"Graph edge {edge.edge_id} kind does not match the verified relation"
+                )
+            if reference.decisive and (
+                not verified.eligibility.decisive or verified.chronology.state != "PREDATES_CUTOFF"
+            ):
+                raise ValueError(
+                    f"Graph edge {edge.edge_id} claims decisiveness without eligible chronology"
+                )
 
     def _persist_edge(self, session: Session, edge: GraphEdge) -> None:
         if edge.kind in PHASE6_EDGE_KINDS:

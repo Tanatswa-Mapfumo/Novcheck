@@ -462,6 +462,7 @@ class EvidenceVerificationPipeline:
                     PatentEvidenceEntry(
                         source_id=edge.source_id,
                         source_version_id=edge.source_version_id,
+                        mcu_id=profile.target_id,
                         is_patent=source.source_type == SourceType.PATENT,
                         classification=classification,
                         priority_date=source.dates.patent_priority_date,
@@ -515,6 +516,7 @@ class EvidenceVerificationPipeline:
         repository.upsert(
             nodes=(*mcu_nodes, *fragment_nodes),
             edges=fragment_edges,
+            verified_edges=tuple(edges),
         )
         emit(
             "PHASE6_GRAPH_PERSISTED",

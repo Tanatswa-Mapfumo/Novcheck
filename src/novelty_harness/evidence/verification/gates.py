@@ -109,6 +109,11 @@ def validate_judgments(blinded: BlindedVerificationInput, proposal: VerifierProp
             raise VerificationValidationError(
                 f"Verifier cited passages that were not supplied: {invented}"
             )
+        if judgment.state in EVIDENTIAL_JUDGMENT_STATES and not judgment.passage_ids:
+            raise VerificationValidationError(
+                f"Evidential judgment for {judgment.commitment_id} must cite at least "
+                "one supplied passage"
+            )
 
 
 def aggregate_verification(
@@ -120,6 +125,14 @@ def aggregate_verification(
 ) -> SupportVerification:
     """Deterministically aggregate commitment judgments into one state."""
 
+    claim = bundle.claim
+    if (
+        blinded.claim_id != claim.claim_id
+        or blinded.source_id != claim.source_id
+        or blinded.source_version_id != claim.source_version_id
+        or tuple(passage.passage_id for passage in blinded.passages) != claim.passage_ids
+    ):
+        raise VerificationValidationError("Blinded input does not match the support claim")
     validate_judgments(blinded, proposal)
     commitment_text = {commitment.commitment_id: commitment for commitment in blinded.commitments}
     states = {judgment.commitment_id: judgment.state for judgment in proposal.judgments}
@@ -259,6 +272,11 @@ class EdgeEligibilityError(ValueError):
     """A verified edge violated chronology, support or identity eligibility."""
 
 
+#: Judgment states that assert something about the evidence and therefore
+#: require at least one cited passage (F05).
+EVIDENTIAL_JUDGMENT_STATES = frozenset({"SUPPORTED", "PARTIALLY_SUPPORTED", "CONTRADICTED"})
+
+
 #: Public-disclosure date fields; creation/priority dates never establish
 #: disclosure (ADR-020) so they cannot make a source pre-cutoff.
 PUBLIC_DISCLOSURE_FIELDS = (
@@ -348,6 +366,7 @@ def build_verified_evidence_edge(
         or verification.source_id != source.source_id
         or verification.mcu_id != proposition.mcu_id
         or mapping.mcu_id != proposition.mcu_id
+        or mapping.proposition_id != proposition.proposition_id
     ):
         raise EdgeEligibilityError("Verification, mapping and source identities must agree")
     if mapping.source_version_id != verification.source_version_id:
@@ -370,7 +389,19 @@ def build_verified_evidence_edge(
     if relation is not None:
         check_relation_eligible(relation, verification, decisive=decisive)
 
-    passage_ids = verification.relied_on_passage_ids or mapping.mapped_passage_ids()
+    support_bearing = verification.state in {
+        SupportVerificationState.SUPPORTED,
+        SupportVerificationState.PARTIALLY_SUPPORTED,
+        SupportVerificationState.CONTRADICTED,
+    }
+    if support_bearing:
+        passage_ids = verification.relied_on_passage_ids
+        if not passage_ids:
+            raise EdgeEligibilityError(
+                "Support-bearing evidence must use verifier-cited passages only"
+            )
+    else:
+        passage_ids = verification.relied_on_passage_ids or mapping.mapped_passage_ids()
     if not passage_ids:
         raise EdgeEligibilityError("A verified edge requires at least one exact passage")
 

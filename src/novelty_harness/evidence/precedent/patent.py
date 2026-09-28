@@ -47,6 +47,7 @@ class PatentEvidenceEntry(ContractModel):
 
     source_id: SourceId
     source_version_id: SourceVersionId | None = None
+    mcu_id: MCUId
     is_patent: bool
     classification: PrecedentClassification
     priority_date: date | None = None
@@ -54,9 +55,13 @@ class PatentEvidenceEntry(ContractModel):
     locators: tuple[PatentScreeningLocator, ...] = ()
 
     @model_validator(mode="after")
-    def classification_matches_source(self) -> Self:
+    def classification_matches_entry(self) -> Self:
         if self.classification.source_id != self.source_id:
             raise ValueError("Patent entry classification belongs to another source")
+        if self.classification.source_version_id != self.source_version_id:
+            raise ValueError("Patent entry classification belongs to another version")
+        if self.classification.mcu_id != self.mcu_id:
+            raise ValueError("Patent entry classification belongs to another MCU")
         return self
 
 
@@ -92,6 +97,9 @@ def screen_patent_references(
 ) -> PatentScreeningResult:
     """Produce a one-reference versus multi-reference screening result."""
 
+    wrong_mcu = [entry.source_id for entry in entries if entry.mcu_id != mcu_id]
+    if wrong_mcu:
+        raise ValueError(f"Patent screening entries belong to another MCU: {wrong_mcu}")
     patent_entries = [entry for entry in entries if entry.is_patent]
     limitations: list[str] = []
     if not patent_entries:

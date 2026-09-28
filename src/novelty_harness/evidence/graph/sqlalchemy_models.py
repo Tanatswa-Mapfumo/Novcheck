@@ -38,6 +38,15 @@ class GraphEdgeRow(Base):
     document_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class VerifiedEdgeRow(Base):
+    __tablename__ = "verified_edges"
+
+    edge_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    mcu_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    document_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class LineageClusterRow(Base):
     __tablename__ = "lineage_clusters"
 

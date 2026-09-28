@@ -16,6 +16,7 @@ from novelty_harness.evidence.graph.models import (
     GraphNodeKind,
 )
 from novelty_harness.evidence.provenance.models import EvidenceLineageCluster
+from novelty_harness.evidence.verification.models import VerifiedEvidenceEdge
 
 
 class GraphDirection(StrEnum):
@@ -32,12 +33,14 @@ class EvidenceGraphRepository(Protocol):
         nodes: Sequence[GraphNode] = (),
         edges: Sequence[GraphEdge] = (),
         clusters: Sequence[EvidenceLineageCluster] = (),
+        verified_edges: Sequence[VerifiedEvidenceEdge] = (),
     ) -> None:
-        """Atomically insert-or-verify nodes, edges and lineage clusters.
+        """Atomically insert-or-verify nodes, edges, clusters and verified edges.
 
-        Re-persisting identical content is idempotent. Persisting different
-        content under an existing identity is an error; history is append-only
-        and is never silently overwritten.
+        Phase 6 graph edges must resolve their verification reference against a
+        persisted verified artifact inside the same transaction. Re-persisting
+        identical content is idempotent; different content under an existing
+        identity is an error because history is append-only.
         """
         ...
 

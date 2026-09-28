@@ -66,6 +66,7 @@ def entry(
 ) -> PatentEvidenceEntry:
     return PatentEvidenceEntry(
         source_id=source_id,
+        mcu_id="mcu_1",
         is_patent=is_patent,
         classification=classification(source_id, relation, decisive=decisive),
         priority_date=priority,

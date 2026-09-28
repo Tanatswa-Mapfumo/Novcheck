@@ -17,7 +17,7 @@ from pydantic import ConfigDict, Field, model_validator
 from novelty_harness.domain.base import ContractModel, utc_now
 from novelty_harness.domain.enums import PrecedentState, SupportVerificationState
 from novelty_harness.domain.idea import ArtifactProvenance, NonBlankText
-from novelty_harness.domain.ids import MCUId, SourceId, SourceVersionId
+from novelty_harness.domain.ids import MCUId, SourceId, SourceVersionId, SupportClaimId
 from novelty_harness.evidence.mapping.models import (
     ComparisonDimension,
     EvidenceProposition,
@@ -69,6 +69,7 @@ class ClassificationFacts(ContractModel):
     source_version_id: SourceVersionId | None = None
     mapping: SourceMCUMapping | None = None
     verification: SupportVerification | None = None
+    claim_id: SupportClaimId | None = None
     decisive: bool = False
     chronology_state: ChronologyState = "UNCERTAIN"
     selection_failure: NonBlankText | None = None
@@ -178,8 +179,23 @@ def classify_precedent(
             clock=clock,
             provenance=provenance,
         )
-    if verification.mcu_id != facts.proposition.mcu_id:
-        raise ValueError("Verification does not belong to this proposition")
+    proposition = facts.proposition
+    if (
+        mapping.source_id != facts.source_id
+        or mapping.source_version_id != facts.source_version_id
+        or mapping.mcu_id != proposition.mcu_id
+        or mapping.proposition_id != proposition.proposition_id
+    ):
+        raise ValueError("Mapping identity does not match the classified source/proposition")
+    if (
+        verification.source_id != facts.source_id
+        or verification.source_version_id != facts.source_version_id
+        or verification.mcu_id != proposition.mcu_id
+        or verification.mapping_id != mapping.mapping_id
+    ):
+        raise ValueError("Verification identity does not match the classified mapping")
+    if facts.claim_id is not None and verification.claim_id != facts.claim_id:
+        raise ValueError("Verification does not answer the declared support claim")
 
     commitments = {item.commitment_id: item for item in facts.proposition.commitments}
     ordered_ids = [item.commitment_id for item in facts.proposition.commitments]
