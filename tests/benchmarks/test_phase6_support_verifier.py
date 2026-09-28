@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from novelty_harness.evidence.context.selection import SupportEvidenceBundle
 from novelty_harness.evidence.mapping.models import (
@@ -107,7 +108,7 @@ CASES: tuple[SupportCase, ...] = (
         commitment_text="the method works for all workloads",
         dimension=ComparisonDimension.CONSTRAINTS,
         passages=("The method works only for read-only workloads.",),
-        expected_state="INSUFFICIENT_CONTEXT",
+        expected_state="PARTIALLY_SUPPORTED",
     ),
     SupportCase(
         case_id="negative-qualifier",
@@ -175,11 +176,18 @@ def _missing_terms(terms: Sequence[str], text: str) -> list[str]:
     return sorted({_stem(term) for term in terms if not present(term)})
 
 
+class BaselineJudgment(NamedTuple):
+    state: str
+    rationale: str
+    supported_subset: str | None = None
+    unsupported_remainder: str | None = None
+
+
 def baseline_judge(
     commitment_text: str,
     passages: Sequence[str],
     relationship: tuple[str, str, str] | None = None,
-) -> tuple[str, str]:
+) -> BaselineJudgment:
     """Documented lexical baseline judgment; no model or network is involved."""
 
     combined = " ".join(passages).casefold()
@@ -188,13 +196,16 @@ def baseline_judge(
     if relationship is not None:
         subject, relation, obj = (part.casefold() for part in relationship)
         if not all(part in combined for part in (subject, relation, obj)):
-            return "NOT_SUPPORTED", "relationship subject/relation/object is not stated"
+            return BaselineJudgment(
+                "NOT_SUPPORTED", "relationship subject/relation/object is not stated"
+            )
         if re.search(
-            rf"\b{re.escape(subject)}\b[^.]*?\b{re.escape(relation)}\b[^.]*?\b{re.escape(obj)}\b",
+            rf"\b{re.escape(subject)}\b[^.]*?\b{re.escape(relation)}\b[^.]*?"
+            rf"\b{re.escape(obj)}\b",
             combined,
         ):
-            return "SUPPORTED", "directed relationship stated"
-        return "NOT_SUPPORTED", "relationship direction is not stated"
+            return BaselineJudgment("SUPPORTED", "directed relationship stated")
+        return BaselineJudgment("NOT_SUPPORTED", "relationship direction is not stated")
     if missing_terms:
         population_terms = _POPULATION.findall(commitment_text.casefold())
         passage_population = _POPULATION.findall(combined)
@@ -203,18 +214,31 @@ def baseline_judge(
             and passage_population
             and not set(population_terms) & set(passage_population)
         ):
-            return "NOT_SUPPORTED", "population/context mismatch"
-        # A condition, special case or unsatisfied qualifier leaves the claim open.
+            return BaselineJudgment("NOT_SUPPORTED", "population/context mismatch")
+        # A known narrower scope is scoped partial support, not missing context:
+        # preserve the supported subset and the unsupported universal remainder.
+        scope = re.search(r"\bonly (?:for|in|with|when|if)\s+([^.;]+)", combined)
+        if scope is not None:
+            return BaselineJudgment(
+                "PARTIALLY_SUPPORTED",
+                "passage supports a narrower scope than the commitment",
+                supported_subset=f"only {scope.group(1).strip()}",
+                unsupported_remainder="unrestricted claim; missing " + ", ".join(missing_terms),
+            )
         if _CONDITION.search(combined):
-            return "INSUFFICIENT", "claim condition is not satisfied by the passages"
+            return BaselineJudgment(
+                "INSUFFICIENT", "claim condition is not satisfied by the passages"
+            )
         if {_stem(term) for term in missing_terms} & {_stem(term) for term in _QUALIFIER_TERMS}:
-            return "INSUFFICIENT", "claim qualifier is not satisfied by the passages"
-        return "NOT_SUPPORTED", f"missing claim terms: {missing_terms}"
+            return BaselineJudgment(
+                "INSUFFICIENT", "claim qualifier is not satisfied by the passages"
+            )
+        return BaselineJudgment("NOT_SUPPORTED", f"missing claim terms: {missing_terms}")
     if _NEGATION.search(combined):
-        return "CONTRADICTED", "passage negates the claimed commitment"
+        return BaselineJudgment("CONTRADICTED", "passage negates the claimed commitment")
     if _CONDITION.search(combined):
-        return "INSUFFICIENT", "claim condition is not satisfied by the passages"
-    return "SUPPORTED", "passage states the claimed commitment"
+        return BaselineJudgment("INSUFFICIENT", "claim condition is not satisfied by the passages")
+    return BaselineJudgment("SUPPORTED", "passage states the claimed commitment")
 
 
 def _response_for(context) -> Mapping[str, object]:
@@ -232,15 +256,17 @@ def _response_for(context) -> Mapping[str, object]:
             if commitment.get("relationship")
             else None
         )
-        state, rationale = baseline_judge(commitment["text"], texts, relationship=relationship)
-        judgments.append(
-            {
-                "commitment_id": commitment["commitment_id"],
-                "state": state,
-                "rationale": rationale,
-                "passage_ids": [payload["passages"][0]["passage_id"]],
-            }
-        )
+        judgment = baseline_judge(commitment["text"], texts, relationship=relationship)
+        entry: dict[str, object] = {
+            "commitment_id": commitment["commitment_id"],
+            "state": judgment.state,
+            "rationale": judgment.rationale,
+            "passage_ids": [payload["passages"][0]["passage_id"]],
+        }
+        if judgment.state == "PARTIALLY_SUPPORTED":
+            entry["supported_subset"] = judgment.supported_subset
+            entry["unsupported_remainder"] = judgment.unsupported_remainder
+        judgments.append(entry)
     return {
         "prompt_version": VERIFIER_PROMPT_VERSION,
         "judgments": judgments,
@@ -371,4 +397,4 @@ def test_baseline_judge_is_documented_and_deterministic() -> None:
         "the controller reduces operator checks",
         ("The controller reduces operator checks in the field trial.",),
     )
-    assert first == second == ("SUPPORTED", "passage states the claimed commitment")
+    assert first == second == BaselineJudgment("SUPPORTED", "passage states the claimed commitment")

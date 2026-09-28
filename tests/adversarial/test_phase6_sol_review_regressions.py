@@ -658,3 +658,82 @@ def test_f01_structured_statement_coverage_does_not_add_material_noise() -> None
     )
     proposition = _build_prop(_build_profile(mcu))
     assert all(item.commitment_id != "statement:material" for item in proposition.commitments)
+
+
+# --- F10 ---
+
+
+async def test_f10_narrower_special_case_is_scoped_partial_support() -> None:
+    from tests.unit.evidence.verification.test_verifier import OUTCOME, bundle, verifier
+
+    scoped = {
+        "prompt_version": "support-verifier-v1",
+        "judgments": [
+            {
+                "commitment_id": "mech",
+                "state": "SUPPORTED",
+                "rationale": "mechanism stated",
+                "passage_ids": ["pass_1"],
+            },
+            {
+                "commitment_id": "outcome",
+                "state": "PARTIALLY_SUPPORTED",
+                "rationale": "only the read-only subset is stated",
+                "passage_ids": ["pass_1"],
+                "supported_subset": "read-only workloads",
+                "unsupported_remainder": "all workloads",
+            },
+        ],
+        "context_needed": [],
+    }
+    verification = await verifier(scoped).verify(bundle(), clock=lambda: NOW)
+    assert verification.state == SupportVerificationState.PARTIALLY_SUPPORTED
+    assert any("read-only workloads" in item for item in verification.supported_portions)
+    assert any("all workloads" in item for item in verification.unsupported_portions)
+    assert any(item.state == "PARTIALLY_SUPPORTED" for item in verification.commitment_states)
+    assert OUTCOME.text
+
+    universal = {
+        "prompt_version": "support-verifier-v1",
+        "judgments": [
+            {
+                "commitment_id": "mech",
+                "state": "SUPPORTED",
+                "rationale": "stated",
+                "passage_ids": ["pass_1"],
+            },
+            {
+                "commitment_id": "outcome",
+                "state": "SUPPORTED",
+                "rationale": "unqualified statement",
+                "passage_ids": ["pass_1"],
+            },
+        ],
+        "context_needed": [],
+    }
+    fully = await verifier(universal).verify(bundle(), clock=lambda: NOW)
+    assert fully.state == SupportVerificationState.SUPPORTED
+
+
+async def test_f10_partial_commitment_requires_a_citation_and_scoped_fields() -> None:
+    from novelty_harness.evidence.verification.gates import (
+        VerificationValidationError as _VVE,
+    )
+    from tests.unit.evidence.verification.test_verifier import bundle, verifier
+
+    uncited = {
+        "prompt_version": "support-verifier-v1",
+        "judgments": [
+            {
+                "commitment_id": "mech",
+                "state": "PARTIALLY_SUPPORTED",
+                "rationale": "subset only",
+                "passage_ids": [],
+                "supported_subset": "subset",
+                "unsupported_remainder": "remainder",
+            },
+        ],
+        "context_needed": [],
+    }
+    with pytest.raises((_VVE, ValueError)):
+        await verifier(uncited).verify(bundle(), clock=lambda: NOW)

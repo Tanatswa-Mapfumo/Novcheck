@@ -35,9 +35,25 @@ class CommitmentJudgmentProposal(ContractModel):
     contract_kind: Literal["commitment-judgment-proposal-v1"] = "commitment-judgment-proposal-v1"
 
     commitment_id: NonBlankText
-    state: Literal["SUPPORTED", "NOT_SUPPORTED", "CONTRADICTED", "INSUFFICIENT"]
+    state: Literal[
+        "SUPPORTED", "PARTIALLY_SUPPORTED", "NOT_SUPPORTED", "CONTRADICTED", "INSUFFICIENT"
+    ]
     rationale: NonBlankText
     passage_ids: tuple[PassageId, ...] = ()
+    supported_subset: NonBlankText | None = None
+    unsupported_remainder: NonBlankText | None = None
+
+    @model_validator(mode="after")
+    def scoped_partial_support(self) -> Self:
+        if self.state == "PARTIALLY_SUPPORTED":
+            if not self.supported_subset or not self.unsupported_remainder:
+                raise ValueError(
+                    "PARTIALLY_SUPPORTED requires the supported subset and the "
+                    "unsupported remainder"
+                )
+        elif self.supported_subset is not None or self.unsupported_remainder is not None:
+            raise ValueError("Scoped support fields belong only to PARTIALLY_SUPPORTED judgments")
+        return self
 
 
 class VerifierProposal(ContractModel):

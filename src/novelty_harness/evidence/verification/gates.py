@@ -143,6 +143,8 @@ def aggregate_verification(
             state=judgment.state,
             rationale=judgment.rationale,
             passage_ids=judgment.passage_ids,
+            supported_subset=judgment.supported_subset,
+            unsupported_remainder=judgment.unsupported_remainder,
         )
         for judgment in sorted(proposal.judgments, key=lambda item: item.commitment_id)
     )
@@ -153,14 +155,30 @@ def aggregate_verification(
         if judgment.state == "CONTRADICTED"
     )
     supported = tuple(
-        commitment_text[judgment.commitment_id].text
+        portion
         for judgment in proposal.judgments
-        if judgment.state == "SUPPORTED"
+        if judgment.state in {"SUPPORTED", "PARTIALLY_SUPPORTED"}
+        for portion in (
+            (commitment_text[judgment.commitment_id].text,)
+            if judgment.state == "SUPPORTED"
+            else (
+                f"{commitment_text[judgment.commitment_id].text} "
+                f"(supported subset: {judgment.supported_subset})",
+            )
+        )
     )
     unsupported = tuple(
-        commitment_text[judgment.commitment_id].text
+        portion
         for judgment in proposal.judgments
-        if judgment.state == "NOT_SUPPORTED"
+        if judgment.state in {"NOT_SUPPORTED", "PARTIALLY_SUPPORTED"}
+        for portion in (
+            (commitment_text[judgment.commitment_id].text,)
+            if judgment.state == "NOT_SUPPORTED"
+            else (
+                f"{commitment_text[judgment.commitment_id].text} "
+                f"(unsupported remainder: {judgment.unsupported_remainder})",
+            )
+        )
     )
     context_needed = tuple(proposal.context_needed) or tuple(
         f"More context needed for: {commitment_text[judgment.commitment_id].text}"

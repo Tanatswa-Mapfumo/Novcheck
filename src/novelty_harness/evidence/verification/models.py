@@ -32,7 +32,9 @@ from novelty_harness.evidence.mapping.models import (
 )
 from novelty_harness.evidence.passages.models import PassageRecord
 
-CommitmentState = Literal["SUPPORTED", "NOT_SUPPORTED", "CONTRADICTED", "INSUFFICIENT"]
+CommitmentState = Literal[
+    "SUPPORTED", "PARTIALLY_SUPPORTED", "NOT_SUPPORTED", "CONTRADICTED", "INSUFFICIENT"
+]
 ChronologyState = Literal["PREDATES_CUTOFF", "POST_CUTOFF", "UNCERTAIN"]
 
 
@@ -110,6 +112,20 @@ class CommitmentStateRecord(ContractModel):
     state: CommitmentState
     rationale: NonBlankText
     passage_ids: tuple[PassageId, ...] = ()
+    supported_subset: NonBlankText | None = None
+    unsupported_remainder: NonBlankText | None = None
+
+    @model_validator(mode="after")
+    def scoped_partial_support(self) -> Self:
+        if self.state == "PARTIALLY_SUPPORTED":
+            if not self.supported_subset or not self.unsupported_remainder:
+                raise ValueError(
+                    "PARTIALLY_SUPPORTED requires the supported subset and the "
+                    "unsupported remainder"
+                )
+        elif self.supported_subset is not None or self.unsupported_remainder is not None:
+            raise ValueError("Scoped support fields belong only to PARTIALLY_SUPPORTED records")
+        return self
 
 
 class SupportVerification(ContractModel):
@@ -148,8 +164,8 @@ class SupportVerification(ContractModel):
         elif self.state == SupportVerificationState.PARTIALLY_SUPPORTED:
             if not self.unsupported_portions:
                 raise ValueError("PARTIALLY_SUPPORTED must identify the unsupported remainder")
-            if "SUPPORTED" not in states:
-                raise ValueError("PARTIALLY_SUPPORTED requires at least one supported commitment")
+            if not self.supported_portions:
+                raise ValueError("PARTIALLY_SUPPORTED requires a supported subset")
         elif self.state == SupportVerificationState.NOT_SUPPORTED:
             if self.supported_portions:
                 raise ValueError("NOT_SUPPORTED cannot claim supported portions")

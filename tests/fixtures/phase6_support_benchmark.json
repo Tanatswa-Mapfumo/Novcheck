@@ -3,7 +3,7 @@
     "support": "SUPPORTED",
     "contradiction": "CONTRADICTED",
     "insufficient-evidence": "INSUFFICIENT_CONTEXT",
-    "special-case-only": "INSUFFICIENT_CONTEXT",
+    "special-case-only": "PARTIALLY_SUPPORTED",
     "negative-qualifier": "CONTRADICTED",
     "conditional-claim": "INSUFFICIENT_CONTEXT",
     "context-population-mismatch": "NOT_SUPPORTED",
