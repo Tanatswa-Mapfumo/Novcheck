@@ -215,6 +215,62 @@ See [Phase 4 completion](docs/phase-4-completion.md),
 and [known-item baseline](tests/fixtures/known_items/baseline.json).
 No Phase 5 source/provenance/evidence engine or later novelty intelligence is implemented.
 
+## Phase 6: Evidence mapping, support verification and precedent classification
+
+Phase 6 turns the Phase 5 evidence substrate into passage-grounded, independently
+verified and locally classified source-to-MCU evidence. It performs no Phase 7
+adjudication, prosecutor/defender reasoning or novelty verdict.
+
+Four stages remain separate. MCU comparison profiles preserve mechanism,
+relationships and control flow separately and never invent absent dimensions
+(ADR-026). The mapper proposes dimension matches with exact passage citations
+and is validated deterministically (ADR-026). Passage selection starts only
+from the mapper's exact same-source/version passages; bounded context expansion
+stays inside that source/version and records explicit blocks (ADR-027). The
+blinded independent verifier receives only the proposition, material
+commitments, claimed dimensions, exact passage text/locator and minimal
+source/version identity — never a verdict, precedent proposal, prosecutor or
+defender role, quality tier, retrieval rank, provider score, user novelty claim
+or report wording (ADR-027). Commitment-level aggregation is deterministic:
+`SUPPORTED` requires every material commitment, `PARTIALLY_SUPPORTED` records
+the remainder, contradictions dominate, and insufficient evidence abstains and
+names the missing context.
+
+Chronology and quality gates run after verification and never change its state
+(ADR-028). Local precedent classification covers direct, strong partial,
+component-only, analogous, superficial, no-local-match, contradictory,
+unresolved and unassessable states; `NO_DIRECT_PRECEDENT_IDENTIFIED` is local
+only. Direct precedent requires exactly one eligible source/version with every
+material commitment including contribution-bearing relationships and
+configuration verified. Multi-source component evidence is summarized as
+`MULTI_SOURCE_COMBINATION_ONLY` with stitching structurally forbidden; lineage
+duplicates count once. Patent mode distinguishes one-reference
+anticipation-like screening from multi-reference combination context and
+retains claim/specification locators, priority and publication dates
+(ADR-029).
+
+```bash
+uv run pytest tests/integration/test_phase5_slice_with_phase6_evidence.py -v
+uv run pytest tests/adversarial/test_phase6_equivalence_attacks.py -v
+uv run pytest tests/benchmarks/test_phase6_support_verifier.py -v
+```
+
+The slice reaches REPORTED/COMPLETED with real Phases 2-6; Phase 7+
+adjudication stays visibly fixture-backed and consumes the real verified
+edges. Phase 6 persists `phase6/profiles.jsonl`, `propositions.jsonl`,
+`mappings.jsonl`, `support_claims.jsonl`, `support_verifications.jsonl`,
+`context_expansions.jsonl`, `verified_edges.jsonl`,
+`precedent_classifications.jsonl`, `multi_source_assessments.jsonl`,
+`patent_screenings.jsonl` and `phase6_result.json`, and extends the SQLite
+evidence graph with MCU, evidence-proposition and verified/precedent edges that
+carry eligibility references. The deterministic support-verifier benchmark is
+a diagnostic baseline, not calibration. Phase 6 is **not accepted** until the
+mandatory independent GPT-6 Sol High semantic review is closed; see
+[traceability](docs/traceability/phase-6.yaml) and
+[completion record](docs/phase-6-completion.md).
+
+### Earlier phases at a glance
+
 ## Phase 5: Source normalization, provenance and evidence graph
 
 Phase 5 turns retrieved candidates into an auditable evidence substrate. It is

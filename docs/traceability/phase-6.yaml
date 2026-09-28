@@ -1,0 +1,77 @@
+phase: 6
+scope: Evidence mapping, independent support verification, chronology/quality eligibility and local precedent classification only
+requirements:
+  - ids: [FR-EVID-001]
+    sections: [27]
+    status: Decisive edges require exact hashed passages; titles/snippets/metadata have no passage path and cannot ground support
+    modules: [evidence/mapping/mapper.py, evidence/context/selection.py, evidence/passages/models.py]
+    tests: [tests/unit/evidence/mapping/test_mapper.py, tests/unit/evidence/context/test_selection.py]
+  - ids: [FR-EVID-002]
+    sections: [24, 27]
+    status: Abstract-only and blocked access remain explicit; completeness lowers quality tier but cannot change the blinded support state
+    modules: [evidence/quality/assessment.py, evidence/context/selection.py]
+    tests: [tests/unit/evidence/context/test_selection.py, tests/unit/evidence/quality/test_assessment.py]
+  - ids: [FR-EVID-003]
+    sections: [27]
+    status: Retrieval relevance is a discovery proxy only; mapping consumes discovery routing without rank/score, and verification consumes only exact passage evidence
+    modules: [evidence/phase6_pipeline.py, evidence/mapping/mapper.py, evidence/verification/verifier.py]
+    tests: [tests/unit/test_phase6_architecture_guards.py]
+  - ids: [FR-EVID-004]
+    sections: [28]
+    status: NOT_SUPPORTED/INSUFFICIENT_CONTEXT cannot create decisive supportive edges; repository rejects ineligible Phase 6 graph edges
+    modules: [evidence/verification/gates.py, evidence/graph/models.py, evidence/graph/sqlalchemy_repository.py]
+    tests: [tests/unit/evidence/verification/test_eligibility.py, tests/unit/evidence/graph/test_phase6_mapping.py]
+  - ids: [FR-EVID-005]
+    sections: [28]
+    status: INSUFFICIENT_CONTEXT triggers bounded same-source context expansion; exhausted expansion stays insufficient; contradictions are final
+    modules: [evidence/context/expansion.py, evidence/verification/verifier.py]
+    tests: [tests/unit/evidence/context/test_expansion.py, tests/unit/evidence/verification/test_context_retry.py]
+  - ids: [FR-EQ-001]
+    sections: [30]
+    status: Terminology differences are handled by the mapper/verifier on exact passages; different wording with a verified equivalent relationship is direct-eligible
+    modules: [evidence/mapping/mapper.py, evidence/verification/verifier.py]
+    tests: [tests/adversarial/test_phase6_equivalence_attacks.py]
+  - ids: [FR-EQ-002, FR-EQ-003]
+    sections: [29, 30]
+    status: Analogy cannot upgrade to direct without relationship-level verified support; A+B+C components across sources never form a one-source direct precedent, and lineage duplicates count once
+    modules: [evidence/precedent/gates.py, evidence/precedent/classifier.py]
+    tests: [tests/unit/evidence/precedent/test_anti_stitching.py, tests/unit/evidence/precedent/test_classification.py]
+  - ids: [FR-EQ-004]
+    sections: [30]
+    status: Counterfactual removal is a diagnostic-only localization of the remaining distinction; it never mutates a classification
+    modules: [evidence/precedent/counterfactuals.py]
+    tests: [tests/unit/evidence/precedent/test_anti_stitching.py]
+  - ids: [FR-EXP-002, FR-EXP-003]
+    sections: [20]
+    status: Public-disclosure chronology gates decisiveness; post-cutoff or uncertain evidence cannot be decisive; priority/creation dates never establish disclosure
+    modules: [evidence/verification/gates.py]
+    tests: [tests/unit/evidence/verification/test_eligibility.py, tests/adversarial/test_phase6_equivalence_attacks.py]
+  - sections: [29]
+    status: All nine local precedent states implemented with relationship/configuration-first classification; NO_DIRECT_PRECEDENT_IDENTIFIED is local-only and cannot become a global absence claim
+    modules: [evidence/precedent/models.py, evidence/precedent/gates.py]
+    tests: [tests/unit/evidence/precedent/test_classification.py]
+  - sections: [39.1]
+    status: Patent mode distinguishes one-reference anticipation-like screening from multi-reference combination context; priority/publication dates and claim/specification locators retained; missing evidence stays limited/unassessable
+    modules: [evidence/precedent/patent.py]
+    tests: [tests/unit/evidence/precedent/test_patent.py, tests/adversarial/test_phase6_equivalence_attacks.py]
+  - sections: [26, 44]
+    status: Phase 6 propositions and verified/precedent graph edges persist with eligibility refs; Phase 5 provenance edges cannot carry verification refs; no adjudication edges or verdicts stored
+    modules: [evidence/graph/models.py, evidence/graph/phase6_mapping.py, evidence/graph/sqlalchemy_repository.py]
+    tests: [tests/unit/evidence/graph/test_models.py, tests/unit/evidence/graph/test_phase6_mapping.py]
+  - sections: [60 Phase 6]
+    status: Real Phase 6 pipeline in the vertical slice (REPORTED/COMPLETED) with real Phases 2-5 and fixture-backed Phase 7 adjudication
+    modules: [evidence/phase6_pipeline.py, application/evidence_phase6.py, application/vertical_slice.py]
+    tests: [tests/integration/test_phase6_evidence_pipeline.py, tests/integration/test_phase5_slice_with_phase6_evidence.py]
+  - sections: [48, 49]
+    status: Deterministic offline support-verifier benchmark and all 20 mandatory adversarial cases; no live network in default tests
+    modules: [tests/benchmarks/test_phase6_support_verifier.py, tests/adversarial/test_phase6_equivalence_attacks.py]
+    tests: [tests/benchmarks/test_phase6_support_verifier.py, tests/adversarial/test_phase6_equivalence_attacks.py]
+review:
+  required_reviewer: GPT-6 Sol High
+  status: REQUIRED - not yet completed
+  scope: [mapper/verifier separation, verifier blindness, relationship/control-flow preservation, single-source direct precedent, anti-stitching, chronology gates, context expansion, patent single-reference semantics, graph-edge eligibility, benchmark behavior, adversarial cases, Phase 7 leakage]
+deferred:
+  - Phase 7 prosecutor/defender, counterbalanced adjudication, four adjudication gates, verdict permission matrix and abstention
+  - Phase 7 final novelty verdict, strong-positive novelty permission and novelty probability
+  - Phase 8 full narrative report compiler
+  - Live LLM semantic quality and calibration; Phase 6 benchmark is a deterministic diagnostic baseline
