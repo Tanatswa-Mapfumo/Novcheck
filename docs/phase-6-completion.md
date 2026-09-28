@@ -308,7 +308,7 @@ Summary of fixes:
 Post-remediation verification in this worktree: `uv sync --dev`,
 `uv run python scripts/verify.py` (Ruff, Ruff format, Pyright 0 errors,
 **1426 passed, 5 network cases deselected**) and `git diff --check` all pass.
-Fresh-checkout verification at the final repair commit is recorded below.
+A fresh local clone at the final repair commit (`git clone --branch phase-6-evidence-verification`) also passed `uv sync --dev`, `uv run python scripts/verify.py` (1426 tests, Ruff/format/Pyright clean) and `git diff --check`.
 
 **Gate 30 remains OPEN.** Phase 6 is not accepted: a fresh GPT-6 Sol High
 re-review must confirm all Critical and Important findings are closed before

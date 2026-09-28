@@ -184,7 +184,9 @@ preserved.
 Policy/contract changes made for the fixes are recorded in ADR-026 (statement
 material commitments), ADR-027 scope (citation requirements), ADR-029
 (patent eligibility/lineage) and the new ADR-030 (context-completeness
-precheck). The graph schema was migrated to v2 with a `verified_edges` table.
+precheck). The graph schema was migrated to v2 with a `verified_edges` table. Full and
+fresh-checkout verification of the repaired commit passed (1426 deterministic
+tests, Ruff/format/Pyright clean, `git diff --check` clean).
 
 **Gate 30 remains OPEN.** The mandatory GPT-6 Sol High re-review must re-run
 the F01–F11 reproductions, inspect the changed code, attempt fresh variants,
