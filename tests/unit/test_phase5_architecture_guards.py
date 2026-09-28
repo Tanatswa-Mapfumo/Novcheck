@@ -47,21 +47,21 @@ def _evidence_modules() -> list[Path]:
     return sorted(path for path in EVIDENCE.rglob("*.py"))
 
 
-#: Phase 6 owns these packages/files; the Phase 5 guards stay scoped to the
-#: Phase 5 substrate so Phase 6 may build its verified edge kinds.
-_PHASE6_PACKAGES = frozenset({"mapping", "context", "verification", "precedent"})
-_PHASE6_FILES = frozenset({"phase6_pipeline.py", "graph/phase6_mapping.py"})
+#: Phase 5's semantic substrate. The shared evidence-graph domain now also
+#: supports Phase 6 verified edges under an explicit eligibility reference, so
+#: the Phase 5 no-Phase-6-names guard scopes to these Phase 5-owned modules.
+_PHASE5_PACKAGES = frozenset({"normalization", "passages", "provenance", "quality"})
+_PHASE5_FILES = frozenset({"pipeline.py"})
 
 
 def _phase5_modules() -> list[Path]:
     modules: list[Path] = []
     for path in _evidence_modules():
         relative = path.relative_to(EVIDENCE)
-        if relative.parts and relative.parts[0] in _PHASE6_PACKAGES:
-            continue
-        if str(relative) in _PHASE6_FILES:
-            continue
-        modules.append(path)
+        if relative.parts and relative.parts[0] in _PHASE5_PACKAGES:
+            modules.append(path)
+        elif str(relative) in _PHASE5_FILES:
+            modules.append(path)
     return modules
 
 
