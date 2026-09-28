@@ -68,7 +68,10 @@ requirements:
     tests: [tests/benchmarks/test_phase6_support_verifier.py, tests/adversarial/test_phase6_equivalence_attacks.py]
 review:
   required_reviewer: GPT-6 Sol High
-  status: REQUIRED - not yet completed
+  reviewed_commit: e4683fd
+  initial_decision: FAIL (F01-F11 open, M01 noted)
+  remediation: F01-F11 and M01 fixed with regressions in tests/adversarial/test_phase6_sol_review_regressions.py
+  status: GATE 30 OPEN - awaiting fresh GPT-6 Sol High re-review of the repaired commit
   scope: [mapper/verifier separation, verifier blindness, relationship/control-flow preservation, single-source direct precedent, anti-stitching, chronology gates, context expansion, patent single-reference semantics, graph-edge eligibility, benchmark behavior, adversarial cases, Phase 7 leakage]
 deferred:
   - Phase 7 prosecutor/defender, counterbalanced adjudication, four adjudication gates, verdict permission matrix and abstention

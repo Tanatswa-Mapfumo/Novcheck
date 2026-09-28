@@ -68,9 +68,10 @@ FR-EVID-001…005; FR-EQ-001…004; FR-EXP-002/003 chronology gates; sections
 
 ## 5. Total tests
 
-1389 deterministic tests pass (5 opt-in network cases deselected); baseline was
-1259, so Phase 6 adds 130 tests (including 21 adversarial and 2 benchmark
-tests). The final code commit `ebb398f` was also verified from a fresh local
+1389 deterministic tests passed at the reviewed commit `e4683fd` (5 opt-in
+network cases deselected); baseline was 1259, so Phase 6 added 130 tests then.
+After the F01-F11 remediation the suite is **1426 tests** (37 review-derived
+regressions added). The final code commit `ebb398f` was also verified from a fresh local
 clone (`git clone --branch phase-6-evidence-verification`): `uv sync --dev`
 and `uv run python scripts/verify.py` passed with 1389 tests and clean
 Ruff/format/Pyright, and `git diff --check` was clean. This record's finalizing
@@ -255,3 +256,60 @@ not started) is satisfied. The review scope and required follow-up are recorded
 in [the review request](reviews/phase-6-review-request.md); findings must be
 reproduced, regression-tested, fixed, fully re-verified and documented in
 `docs/reviews/phase-6-final-review.md` before acceptance.
+
+## Semantic review remediation (F01–F11, M01)
+
+The mandatory GPT-6 Sol High review of commit `e4683fd` returned **FAIL** with
+findings F01–F11 and minor observation M01
+(`docs/reviews/phase-6-final-review.md`, preserved unmodified). The
+remediation plan (`docs/superpowers/plans/2026-09-28-phase-6-semantic-review-remediation-plan.md`)
+was implemented in its recommended order. Fix commits: F05/F06/F07 `6e416a4`;
+F02/F04 `f54917c`; F01 `bdcd688`; F10 `266aa00`; F03 `07d892d`; F09 `9f39ccc`;
+F08 `e2722d9`; F11 `e952ad1`; M01 `f4a6f93`. Regression suite:
+`tests/adversarial/test_phase6_sol_review_regressions.py` (37 stable
+reproductions, one or more per finding), plus the strengthened accepted slice
+test and the updated benchmark fixture.
+
+Summary of fixes:
+
+- **F01** — uncovered material statement content becomes an explicit
+  `statement:material` CONSTRAINTS commitment; no relationship is fabricated
+  and an unsupported condition blocks direct precedent (ADR-026 amendment).
+- **F02** — the cited source version's public disclosure date governs
+  eligibility, combined conservatively with source-level dates; unknown
+  version timing stays uncertain.
+- **F03** — bounded same-source/same-version context-completeness precheck
+  before the first judgment; ADR-030 records the policy change.
+- **F04** — bounded source/version coverage is recorded explicitly
+  (`phase6/coverage.json`, `unassessed_sources`, `unassessed_versions`) and a
+  documented oldest-first multi-version policy assesses relevant versions.
+- **F05** — evidential judgments require at least one cited passage; decisive
+  or support-bearing edges use verifier-cited passages only.
+- **F06** — complete source/version/MCU/proposition/mapping/claim identity
+  joins at the aggregation, edge, classifier and patent boundaries.
+- **F07** — schema v2 `verified_edges` table; graph persistence resolves and
+  validates every verification reference against a real artifact
+  transactionally.
+- **F08** — only known pre-cutoff publication dates can challenge the cutoff,
+  and multi-reference context counts distinct eligible lineage roots
+  (ADR-029 amendment).
+- **F09** — functional analogy requires independently verified functional
+  commitments; unresolved mapper conflicts block direct until resolved.
+- **F10** — commitment-level scoped partial support preserves the supported
+  subset and the unsupported broader remainder (nondecisive).
+- **F11** — the slice identity bridge accepts explicit Phase 6 combination
+  targets and context-expansion passage IDs while still rejecting foreign
+  identities; the accepted slice now carries a real combination contribution
+  through `REPORTED/COMPLETED`.
+- **M01** — benchmark metric renamed to
+  `citation_presence_and_bundle_integrity` and documented as
+  citation/reference integrity only, not model faithfulness or calibration.
+
+Post-remediation verification in this worktree: `uv sync --dev`,
+`uv run python scripts/verify.py` (Ruff, Ruff format, Pyright 0 errors,
+**1426 passed, 5 network cases deselected**) and `git diff --check` all pass.
+Fresh-checkout verification at the final repair commit is recorded below.
+
+**Gate 30 remains OPEN.** Phase 6 is not accepted: a fresh GPT-6 Sol High
+re-review must confirm all Critical and Important findings are closed before
+Phase 6 can be accepted. Phase 7 has not started.

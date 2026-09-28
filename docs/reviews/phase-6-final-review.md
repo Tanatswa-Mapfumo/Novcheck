@@ -150,3 +150,44 @@ Read `AGENTS.md`, the master spec, Phase 5 completion, the approved Phase 6 plan
 - **After-review artifact checks:** `uv run python scripts/verify.py` passed after this review document was added: Ruff check passed, Ruff format check passed (284 files), Pyright reported 0 errors/0 warnings, and pytest reported **1389 passed, 5 deselected** in 23.38 s. `git diff --check` passed. The review file is untracked, so `git diff --no-index --check /dev/null docs/reviews/phase-6-final-review.md` was also run; it produced no whitespace diagnostics (exit 1 denotes the expected content difference).
 - **Fresh checkout:** Not run. It is an acceptance prerequisite after findings are fixed, not evidence that can cure open findings.
 - **Acceptance gate 30:** **FAIL**. The mandatory independent GPT-6 Sol High review is complete, but open Critical and Important findings remain. Phase 6 is **not semantically accepted**. Phase 7 was neither started nor designed by this review.
+
+---
+
+## Remediation record (post-FAIL)
+
+The **FAIL decision, findings F01–F11, the Minor observation M01 and all
+verification evidence above remain the authoritative record of reviewed commit
+`e4683fd` and have not been overwritten.** This section records the implementer
+fixes made under
+`docs/superpowers/plans/2026-09-28-phase-6-semantic-review-remediation-plan.md`.
+Every Critical/Important finding has a stable regression in
+`tests/adversarial/test_phase6_sol_review_regressions.py` (37 tests) plus
+focused module tests. The mapper -> verifier -> eligibility -> classifier
+separation, conservative abstention and the no-novelty-score rules are
+preserved.
+
+| Finding | Fix commit | Regression test(s) | Focused verification | Status |
+| --- | --- | --- | --- | --- |
+| F05 empty evidential citations | `6e416a4` | `test_f05_supported_without_citations_is_rejected`, `test_f05_mapper_passages_cannot_substitute_for_verifier_citations` | regression suite; `tests/unit/evidence/verification` | Awaiting re-review |
+| F06 incomplete identity joins | `6e416a4` | `test_f06_foreign_source_version_proposition_joins_are_rejected`, `test_f06_patent_entry_mcu_and_version_joins_are_rejected` | regression suite; `tests/unit/evidence/precedent`, `tests/unit/evidence/verification` | Awaiting re-review |
+| F07 self-declared verification refs | `6e416a4` | `test_f07_graph_persistence_rejects_unresolved_or_mismatched_verification`, `test_f07_schema_v1_migrates_to_v2` | regression suite; `tests/unit/evidence/graph` | Awaiting re-review |
+| F02 post-cutoff version laundering | `f54917c` | `test_f02_post_cutoff_revision_of_old_source_is_not_decisive`, `test_f02_unknown_version_timing_stays_uncertain`, `test_f02_older_eligible_version_remains_independently_assessable`, `test_f02_later_source_level_date_is_combined_conservatively` | regression suite; `tests/unit/evidence/verification` | Awaiting re-review |
+| F04 candidate/version truncation | `f54917c` | `test_f04_fourth_source_is_explicitly_unassessed`, `test_f04_older_version_is_assessed_not_silently_dropped`, `test_f04_selection_helpers_report_bounds` | regression suite; `tests/integration/test_phase6_evidence_pipeline.py` | Awaiting re-review |
+| F01 statement-only material qualifier | `bdcd688` | `test_f01_statement_only_condition_is_material_and_blocks_generic_direct`, `test_f01_conditional_conjunction_quantified_sequence_and_only_if_conditions` (6 variants), `test_f01_structured_statement_coverage_does_not_add_material_noise` | regression suite; `tests/unit/evidence/mapping` | Awaiting re-review |
+| F10 narrower special case | `266aa00` | `test_f10_narrower_special_case_is_scoped_partial_support`, `test_f10_partial_commitment_requires_a_citation_and_scoped_fields` | regression suite; benchmark `special-case-only` now expects scoped partial support | Awaiting re-review |
+| F03 hidden nearby negation | `07d892d` | `test_f03_nearby_negation_cannot_be_hidden_by_a_short_excerpt`, `test_f03_benign_nearby_context_preserves_support`, `test_f03_no_expandable_context_is_explicit_and_bounded`, `test_f03_expansion_never_crosses_source_or_version` | regression suite; `tests/unit/evidence/verification/test_context_retry.py` | Awaiting re-review |
+| F09 unverified mapper influence | `9f39ccc` | `test_f09_unverified_purpose_match_cannot_upgrade_to_analogy`, `test_f09_verified_functional_commitment_supports_analogy`, `test_f09_mapper_conflict_blocks_direct_until_resolved` | regression suite; `tests/unit/evidence/precedent` | Awaiting re-review |
+| F08 patent future/duplicate references | `e2722d9` | `test_f08_future_patent_references_cannot_challenge_the_cutoff`, `test_f08_family_publications_count_as_one_lineage_root`, `test_f08_independent_pre_cutoff_partials_remain_combination_context`, `test_f08_future_decisive_reference_is_not_selected_over_eligible_one` | regression suite; `tests/unit/evidence/precedent/test_patent.py` | Awaiting re-review |
+| F11 slice identity bridge | `e952ad1` | `test_f11_bridge_accepts_combination_and_expanded_passage_identities`, `test_f11_pipeline_projection_passes_the_bridge_with_combination_and_window`; accepted slice now carries a real combination contribution through `REPORTED/COMPLETED` | regression suite; `tests/integration/test_phase5_slice_with_phase6_evidence.py` | Awaiting re-review |
+| M01 benchmark metric labeling | `f4a6f93` | metric renamed to `citation_presence_and_bundle_integrity`; benchmark docstring states citation/bundle integrity only | `tests/benchmarks/test_phase6_support_verifier.py` | Closed, pending re-review |
+
+Policy/contract changes made for the fixes are recorded in ADR-026 (statement
+material commitments), ADR-027 scope (citation requirements), ADR-029
+(patent eligibility/lineage) and the new ADR-030 (context-completeness
+precheck). The graph schema was migrated to v2 with a `verified_edges` table.
+
+**Gate 30 remains OPEN.** The mandatory GPT-6 Sol High re-review must re-run
+the F01–F11 reproductions, inspect the changed code, attempt fresh variants,
+verify no regression was introduced, run full and fresh-checkout verification,
+and explicitly set Gate 30 PASS or FAIL. Phase 6 is **not accepted** and
+Phase 7 remains blocked.
