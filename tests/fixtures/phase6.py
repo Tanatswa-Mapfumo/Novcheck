@@ -78,3 +78,63 @@ def context_json(context: Sequence[ContextBlock], label: str) -> object:
 
 def canonical_context_dump(context: Sequence[ContextBlock]) -> str:
     return canonical_json([item.model_dump(mode="json") for item in context])
+
+
+def map_evidence_response(context: Sequence[ContextBlock]) -> Mapping[str, JsonValue]:
+    """Scripted mapper: match every proposition commitment to the first passage."""
+
+    proposition = context_json(context, "proposition")
+    passages = context_json(context, "passages")
+    assert isinstance(proposition, dict) and isinstance(passages, list)
+    if not passages:
+        return {"prompt_version": "evidence-mapper-v1", "dimensions": [], "unresolved": []}
+    first_passage = passages[0]["passage_id"]
+    grouped: dict[str, dict[str, object]] = {}
+    for commitment in proposition["commitments"]:
+        dimension = commitment["dimension"]
+        entry = grouped.setdefault(
+            dimension, {"dimension": dimension, "matching": [], "missing": [], "conflicting": []}
+        )
+        statement: dict[str, object] = {
+            "statement": commitment["text"],
+            "passage_ids": [first_passage],
+        }
+        if commitment.get("relationship"):
+            statement["relationship"] = commitment["relationship"]
+        entry["matching"].append(statement)
+    return {
+        "prompt_version": "evidence-mapper-v1",
+        "dimensions": list(grouped.values()),
+        "unresolved": [],
+    }
+
+
+def verify_support_response(context: Sequence[ContextBlock]) -> Mapping[str, JsonValue]:
+    """Scripted verifier: mark every commitment supported by the first passage."""
+
+    payload = context_json(context, "verification_input")
+    assert isinstance(payload, dict)
+    first_passage = payload["passages"][0]["passage_id"]
+    return {
+        "prompt_version": "support-verifier-v1",
+        "judgments": [
+            {
+                "commitment_id": commitment["commitment_id"],
+                "state": "SUPPORTED",
+                "rationale": "scripted fixture support",
+                "passage_ids": [first_passage],
+            }
+            for commitment in payload["commitments"]
+        ],
+        "context_needed": [],
+    }
+
+
+def scripted_phase6_llm(name: str = "scripted-phase6") -> StubLLMProvider:
+    return StubLLMProvider(
+        {
+            "map_evidence": map_evidence_response,
+            "verify_support": verify_support_response,
+        },
+        name=name,
+    )
