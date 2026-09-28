@@ -47,7 +47,7 @@ class PrecedentClassification(ContractModel):
 
     classification_id: ClassificationId
     source_id: SourceId
-    source_version_id: SourceVersionId | None
+    source_version_id: SourceVersionId | None = None
     mcu_id: MCUId
     mapping_id: MappingId
     verification_id: VerificationId | None
