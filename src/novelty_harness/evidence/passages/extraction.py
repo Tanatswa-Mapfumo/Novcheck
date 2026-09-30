@@ -11,20 +11,56 @@ from collections.abc import Sequence
 from novelty_harness.domain.base import UTCDateTime
 from novelty_harness.domain.idea import ArtifactProvenance
 from novelty_harness.domain.ids import PassageId, SourceId, SourceVersionId
-from novelty_harness.evidence.normalization.models import SourceAccessState
+from novelty_harness.evidence.normalization.models import (
+    SourceAccessState,
+    SourceRecord,
+    SourceVersionRecord,
+)
 from novelty_harness.evidence.passages.hashing import normalize_text, text_hash
 from novelty_harness.evidence.passages.models import (
     EvidenceUnitBoundary,
     EvidenceUnitScope,
+    PassageAttestation,
     PassageLocator,
     PassageLocatorKind,
     PassageRecord,
+    ResolvedVersionContent,
 )
 from novelty_harness.runtime.tracing.hashing import canonical_hash
 
 
 class PassageExtractionError(ValueError):
     """The requested locator does not identify a valid passage."""
+
+
+def resolve_version_content(
+    *,
+    source: SourceRecord,
+    version: SourceVersionRecord | None,
+    text: str,
+    retrieved_at: UTCDateTime | None = None,
+) -> ResolvedVersionContent:
+    """Bind resolved text to the immutable owned source/version digest."""
+
+    normalized = normalize_text(text)
+    digest = text_hash(normalized)
+    if version is not None and version.source_id != source.source_id:
+        raise PassageExtractionError("Resolved version belongs to another source")
+    authoritative = version.content_hash if version is not None else source.content_hash
+    if authoritative is not None and authoritative != digest:
+        raise PassageExtractionError("Resolved content digest conflicts with source/version hash")
+    access = version.access_state if version is not None else source.access_state
+    if access not in {SourceAccessState.FULL_TEXT, SourceAccessState.ABSTRACT_ONLY}:
+        raise PassageExtractionError("Unresolved source cannot supply passage content")
+    return ResolvedVersionContent(
+        source_id=source.source_id,
+        source_version_id=version.version_id if version is not None else None,
+        content_digest=digest,
+        content_kind="ABSTRACT" if access == SourceAccessState.ABSTRACT_ONLY else "DOCUMENT",
+        access_state=access,
+        text=normalized,
+        retrieved_at=retrieved_at,
+    )
 
 
 def passage_id_for(
@@ -56,6 +92,7 @@ def _make_passage(
     provenance: ArtifactProvenance,
     limitations: Sequence[str] = (),
     unit_boundary: EvidenceUnitBoundary | None = None,
+    attestation: PassageAttestation | None = None,
 ) -> PassageRecord:
     normalized = normalize_text(text)
     if not normalized:
@@ -70,6 +107,7 @@ def _make_passage(
         access_state=access_state,
         locator=locator,
         unit_boundary=unit_boundary,
+        attestation=attestation,
         limitations=tuple(limitations),
         observed_at=observed_at,
         provenance=provenance,
@@ -77,8 +115,8 @@ def _make_passage(
 
 
 def extract_span(
-    source_id: SourceId,
-    document_text: str,
+    source_id: SourceId | ResolvedVersionContent,
+    document_text: str | None = None,
     *,
     char_start: int,
     char_end: int,
@@ -93,6 +131,8 @@ def extract_span(
     limitations: Sequence[str] = (),
     notes: Sequence[str] = (),
     unit_boundary: EvidenceUnitBoundary | None = None,
+    _unit_scope: EvidenceUnitScope | None = None,
+    _unit_span: tuple[int, int] | None = None,
 ) -> PassageRecord:
     """Extract an explicit half-open character span from normalized document text.
 
@@ -100,7 +140,21 @@ def extract_span(
     source text always yields byte-identical passages.
     """
 
-    normalized = normalize_text(document_text)
+    if unit_boundary is not None:
+        raise PassageExtractionError("Caller-provided unit boundary is not an attestation")
+    resolved = source_id if isinstance(source_id, ResolvedVersionContent) else None
+    if resolved is not None:
+        if document_text is not None and normalize_text(document_text) != resolved.text:
+            raise PassageExtractionError("Extracted document differs from resolved content")
+        normalized = resolved.text
+        source_version_id = resolved.source_version_id
+        actual_source_id = resolved.source_id
+    else:
+        if document_text is None:
+            raise PassageExtractionError("Document text is required")
+        normalized = normalize_text(document_text)
+        assert isinstance(source_id, str)
+        actual_source_id = source_id
     if char_start < 0 or char_end > len(normalized) or char_start >= char_end:
         raise PassageExtractionError(
             f"Character span [{char_start}, {char_end}) is outside the normalized document"
@@ -115,22 +169,52 @@ def extract_span(
         char_end=char_end,
         notes=tuple(notes),
     )
+    attestation = None
+    if resolved is not None:
+        unit_start, unit_end = _unit_span if _unit_span is not None else (None, None)
+        attestation = PassageAttestation(
+            parent=resolved,
+            parent_content_digest=resolved.content_digest,
+            source_id=resolved.source_id,
+            source_version_id=resolved.source_version_id,
+            start_offset=char_start,
+            end_offset=char_end,
+            unit_type=_unit_scope,
+            unit_start=unit_start,
+            unit_end=unit_end,
+            passage_digest=text_hash(normalized[char_start:char_end]),
+        )
+    if resolved is not None and _unit_scope is not None and _unit_span is not None:
+        unit_boundary = EvidenceUnitBoundary(
+            unit_id="unit_"
+            + canonical_hash(
+                {
+                    "parent": resolved.content_digest,
+                    "scope": _unit_scope.value,
+                    "span": list(_unit_span),
+                }
+            ),
+            scope=_unit_scope,
+            starts_unit=char_start == _unit_span[0],
+            ends_unit=char_end == _unit_span[1],
+        )
     return _make_passage(
-        source_id=source_id,
+        source_id=actual_source_id,
         source_version_id=source_version_id,
         text=normalized[char_start:char_end],
         locator=locator,
-        access_state=SourceAccessState.FULL_TEXT,
+        access_state=resolved.access_state if resolved is not None else SourceAccessState.FULL_TEXT,
         observed_at=observed_at,
         provenance=provenance,
         limitations=limitations,
         unit_boundary=unit_boundary,
+        attestation=attestation,
     )
 
 
 def extract_abstract(
-    source_id: SourceId,
-    abstract: str,
+    source_id: SourceId | ResolvedVersionContent,
+    abstract: str | None = None,
     *,
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
@@ -140,41 +224,40 @@ def extract_abstract(
 ) -> PassageRecord:
     """Extract an abstract that stays explicitly abstract-only."""
 
+    if isinstance(source_id, ResolvedVersionContent):
+        resolved = source_id
+        if resolved.content_kind != "ABSTRACT":
+            raise PassageExtractionError("Abstract extraction requires resolved abstract content")
+        return extract_span(
+            resolved,
+            char_start=0,
+            char_end=len(resolved.text),
+            observed_at=observed_at,
+            provenance=provenance,
+            kind=PassageLocatorKind.ABSTRACT,
+            label=label,
+            limitations=(*limitations, "Abstract-only access limits completeness"),
+            _unit_scope=EvidenceUnitScope.ABSTRACT,
+            _unit_span=(0, len(resolved.text)),
+        )
+    if abstract is None:
+        raise PassageExtractionError("Abstract text is required")
+    normalized = normalize_text(abstract)
     return _make_passage(
         source_id=source_id,
         source_version_id=source_version_id,
-        text=abstract,
-        locator=PassageLocator(
-            kind=PassageLocatorKind.ABSTRACT,
-            label=label,
-            notes=("Abstract-only access; full text was not available",),
-        ),
+        text=normalized,
+        locator=PassageLocator(kind=PassageLocatorKind.ABSTRACT, label=label),
         access_state=SourceAccessState.ABSTRACT_ONLY,
         observed_at=observed_at,
         provenance=provenance,
-        limitations=tuple(
-            dict.fromkeys((*limitations, "Abstract-only access limits completeness"))
-        ),
-        unit_boundary=EvidenceUnitBoundary(
-            unit_id="unit_"
-            + canonical_hash(
-                {
-                    "source": source_id,
-                    "version": source_version_id,
-                    "scope": "abstract",
-                    "text": normalize_text(abstract),
-                }
-            ),
-            scope=EvidenceUnitScope.ABSTRACT,
-            starts_unit=True,
-            ends_unit=True,
-        ),
+        limitations=(*limitations, "Abstract-only access limits completeness"),
     )
 
 
 def extract_resolved_content(
-    source_id: SourceId,
-    text: str,
+    source_id: SourceId | ResolvedVersionContent,
+    text: str | None = None,
     *,
     observed_at: UTCDateTime,
     provenance: ArtifactProvenance,
@@ -183,7 +266,14 @@ def extract_resolved_content(
 ) -> PassageRecord:
     """Whole resolved content as one exact passage."""
 
-    normalized = normalize_text(text)
+    if isinstance(source_id, ResolvedVersionContent):
+        normalized = source_id.text
+        if source_id.content_kind != "DOCUMENT":
+            raise PassageExtractionError("Document extraction requires resolved document content")
+    else:
+        if text is None:
+            raise PassageExtractionError("Resolved text is required")
+        normalized = normalize_text(text)
     return extract_span(
         source_id,
         normalized,
@@ -194,26 +284,16 @@ def extract_resolved_content(
         kind=PassageLocatorKind.RESOLVED_CONTENT,
         source_version_id=source_version_id,
         limitations=limitations,
-        unit_boundary=EvidenceUnitBoundary(
-            unit_id="unit_"
-            + canonical_hash(
-                {
-                    "source": source_id,
-                    "version": source_version_id,
-                    "scope": "document",
-                    "text": normalized,
-                }
-            ),
-            scope=EvidenceUnitScope.DOCUMENT,
-            starts_unit=True,
-            ends_unit=True,
-        ),
+        _unit_scope=EvidenceUnitScope.DOCUMENT
+        if isinstance(source_id, ResolvedVersionContent)
+        else None,
+        _unit_span=(0, len(normalized)) if isinstance(source_id, ResolvedVersionContent) else None,
     )
 
 
 def extract_readme(
-    source_id: SourceId,
-    text: str,
+    source_id: SourceId | ResolvedVersionContent,
+    text: str | None = None,
     *,
     path: str,
     observed_at: UTCDateTime,
@@ -223,7 +303,12 @@ def extract_readme(
 ) -> PassageRecord:
     """Repository documentation file content with its path as locator label."""
 
-    normalized = normalize_text(text)
+    if isinstance(source_id, ResolvedVersionContent):
+        normalized = source_id.text
+    elif text is not None:
+        normalized = normalize_text(text)
+    else:
+        raise PassageExtractionError("README text is required")
     return extract_span(
         source_id,
         normalized,
@@ -235,21 +320,10 @@ def extract_readme(
         label=path,
         source_version_id=source_version_id,
         limitations=limitations,
-        unit_boundary=EvidenceUnitBoundary(
-            unit_id="unit_"
-            + canonical_hash(
-                {
-                    "source": source_id,
-                    "version": source_version_id,
-                    "scope": "readme",
-                    "path": path,
-                    "text": normalized,
-                }
-            ),
-            scope=EvidenceUnitScope.DOCUMENT,
-            starts_unit=True,
-            ends_unit=True,
-        ),
+        _unit_scope=EvidenceUnitScope.DOCUMENT
+        if isinstance(source_id, ResolvedVersionContent)
+        else None,
+        _unit_span=(0, len(normalized)) if isinstance(source_id, ResolvedVersionContent) else None,
     )
 
 
@@ -318,8 +392,8 @@ def _paragraph_spans(text: str) -> list[tuple[int, int]]:
 
 
 def extract_section(
-    source_id: SourceId,
-    document_text: str,
+    source_id: SourceId | ResolvedVersionContent,
+    document_text: str | None = None,
     *,
     section: str,
     observed_at: UTCDateTime,
@@ -332,7 +406,12 @@ def extract_section(
 
     if occurrence < 0:
         raise PassageExtractionError("Section occurrence must be non-negative")
-    normalized = normalize_text(document_text)
+    if isinstance(source_id, ResolvedVersionContent):
+        normalized = source_id.text
+    elif document_text is not None:
+        normalized = normalize_text(document_text)
+    else:
+        raise PassageExtractionError("Document text is required")
     headings = _headings(normalized)
     wanted = " ".join(section.split()).casefold()
     matching = [heading for heading in headings if heading.title.casefold() == wanted]
@@ -348,6 +427,7 @@ def extract_section(
         if heading.start > selected.start and heading.level <= selected.level:
             end = heading.start
             break
+    end = len(normalized[:end].rstrip())
     notes = (
         (f"Multiple headings match; occurrence {occurrence} selected",) if len(matching) > 1 else ()
     )
@@ -363,28 +443,16 @@ def extract_section(
         source_version_id=source_version_id,
         limitations=limitations,
         notes=notes,
-        unit_boundary=EvidenceUnitBoundary(
-            unit_id="unit_"
-            + canonical_hash(
-                {
-                    "source": source_id,
-                    "version": source_version_id,
-                    "scope": "section",
-                    "start": selected.start,
-                    "end": end,
-                    "text": normalized[selected.start : end],
-                }
-            ),
-            scope=EvidenceUnitScope.README_SECTION,
-            starts_unit=True,
-            ends_unit=True,
-        ),
+        _unit_scope=EvidenceUnitScope.README_SECTION
+        if isinstance(source_id, ResolvedVersionContent)
+        else None,
+        _unit_span=(selected.start, end) if isinstance(source_id, ResolvedVersionContent) else None,
     )
 
 
 def extract_paragraph_window(
-    source_id: SourceId,
-    document_text: str,
+    source_id: SourceId | ResolvedVersionContent,
+    document_text: str | None = None,
     *,
     start_paragraph: int,
     end_paragraph: int,
@@ -397,7 +465,12 @@ def extract_paragraph_window(
 
     if start_paragraph < 0 or end_paragraph < start_paragraph:
         raise PassageExtractionError("Invalid paragraph window")
-    normalized = normalize_text(document_text)
+    if isinstance(source_id, ResolvedVersionContent):
+        normalized = source_id.text
+    elif document_text is not None:
+        normalized = normalize_text(document_text)
+    else:
+        raise PassageExtractionError("Document text is required")
     spans = _paragraph_spans(normalized)
     if not spans:
         raise PassageExtractionError("Document contains no paragraphs")
@@ -420,4 +493,53 @@ def extract_paragraph_window(
         source_version_id=source_version_id,
         limitations=limitations,
         notes=(f"Paragraph window {start_paragraph}-{end_paragraph}",),
+        _unit_scope=EvidenceUnitScope.PARAGRAPH
+        if isinstance(source_id, ResolvedVersionContent) and start_paragraph == end_paragraph
+        else None,
+        _unit_span=spans[start_paragraph]
+        if isinstance(source_id, ResolvedVersionContent) and start_paragraph == end_paragraph
+        else None,
+    )
+
+
+def extract_patent_claim(
+    resolved: ResolvedVersionContent,
+    *,
+    claim_number: int,
+    observed_at: UTCDateTime,
+    provenance: ArtifactProvenance,
+    limitations: Sequence[str] = (),
+) -> PassageRecord:
+    """Extract one numbered claim from resolved text with proven claim limits."""
+
+    if claim_number < 1 or resolved.content_kind != "DOCUMENT":
+        raise PassageExtractionError("Patent claim requires a numbered resolved document")
+    headings = list(
+        re.finditer(
+            r"^(?:claim[ \t]+)?(\d+)[.):][ \t]+",
+            resolved.text,
+            re.MULTILINE | re.IGNORECASE,
+        )
+    )
+    found = [
+        (index, match)
+        for index, match in enumerate(headings)
+        if int(match.group(1)) == claim_number
+    ]
+    if len(found) != 1:
+        raise PassageExtractionError("Patent claim number is missing or ambiguous")
+    index, match = found[0]
+    next_start = headings[index + 1].start() if index + 1 < len(headings) else len(resolved.text)
+    end = len(resolved.text[:next_start].rstrip())
+    return extract_span(
+        resolved,
+        char_start=match.start(),
+        char_end=end,
+        observed_at=observed_at,
+        provenance=provenance,
+        kind=PassageLocatorKind.SECTION,
+        section=f"Claim {claim_number}",
+        limitations=limitations,
+        _unit_scope=EvidenceUnitScope.PATENT_CLAIM,
+        _unit_span=(match.start(), end),
     )

@@ -17,7 +17,13 @@ from pydantic import ConfigDict, Field, model_validator
 from novelty_harness.domain.base import ContractModel, utc_now
 from novelty_harness.domain.enums import PrecedentState, SupportVerificationState
 from novelty_harness.domain.idea import ArtifactProvenance, NonBlankText
-from novelty_harness.domain.ids import MCUId, SourceId, SourceVersionId, SupportClaimId
+from novelty_harness.domain.ids import (
+    AssessmentId,
+    MCUId,
+    SourceId,
+    SourceVersionId,
+    SupportClaimId,
+)
 from novelty_harness.evidence.mapping.models import (
     ComparisonDimension,
     EvidenceProposition,
@@ -124,6 +130,7 @@ def classify_verified_comparison(
 ) -> PrecedentClassification:
     """Classify only the identities and verified facts in a resolved chain."""
 
+    comparison = VerifiedComparison.model_validate(comparison.model_dump(mode="json"))
     chain = comparison.chain
     edge = chain.edge
     return _classify_facts(
@@ -594,16 +601,20 @@ def classify_precedent(
 
     if isinstance(comparison, VerifiedComparison):
         return classify_verified_comparison(comparison, clock=clock, provenance=provenance)
+    comparison = ClassificationFacts.model_validate(comparison.model_dump(mode="json"))
     if comparison.verification is not None:
         raise ValueError("Verified classification requires an authoritative VerifiedComparison")
     return _classify_facts(comparison, clock=clock, provenance=provenance)
 
 
 def summarize_multi_source(
-    classifications: Sequence[PrecedentClassification],
+    classifications: Sequence[PrecedentClassification | ClassifiedComparison],
     *,
     mcu_id: MCUId,
     independent_root_of: Mapping[SourceId, SourceId] | None = None,
+    assessment_id: AssessmentId | None = None,
+    target_kind: Literal["MCU", "COMBINATION"] | None = None,
+    combination_id: str | None = None,
 ) -> MultiSourceAssessment:
     """Summarize local classifications without ever stitching a direct precedent.
 
@@ -611,6 +622,32 @@ def summarize_multi_source(
     count as one contributing lineage.
     """
 
+    if (target_kind == "COMBINATION") != (combination_id is not None):
+        raise ValueError("Combination target requires its exact combination identity")
+    if target_kind == "COMBINATION" and mcu_id != (
+        "mcu_comb_" + canonical_hash(combination_id)[:24]
+    ):
+        raise ValueError("Combination target identity does not match its MCU target")
+    if target_kind == "MCU" and mcu_id.startswith("mcu_comb_"):
+        raise ValueError("Combination target cannot be summarized as a plain MCU")
+    validated: list[PrecedentClassification] = []
+    for item in classifications:
+        if isinstance(item, ClassifiedComparison):
+            authoritative = ClassifiedComparison.model_validate(item.model_dump(mode="json"))
+            if (
+                assessment_id is not None
+                and authoritative.comparison.assessment_id != assessment_id
+            ):
+                raise ValueError("Multi-source summary contains a foreign assessment")
+            validated.append(authoritative.classification)
+        else:
+            if assessment_id is not None:
+                raise ValueError("Assessment-bound summary requires classified comparisons")
+            validated.append(PrecedentClassification.model_validate(item.model_dump(mode="json")))
+    classifications = tuple(validated)
+    foreign = [item.classification_id for item in classifications if item.mcu_id != mcu_id]
+    if foreign:
+        raise ValueError(f"Multi-source summary contains a foreign MCU target: {foreign}")
     roots = independent_root_of or {}
     contributing = [
         classification

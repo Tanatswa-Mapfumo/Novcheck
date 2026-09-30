@@ -2,7 +2,11 @@ import json
 from datetime import UTC, datetime
 
 from novelty_harness.domain.enums import SupportVerificationState
-from novelty_harness.evidence.passages.models import EvidenceUnitBoundary, EvidenceUnitScope
+from novelty_harness.evidence.passages.extraction import (
+    extract_resolved_content,
+    resolve_version_content,
+)
+from novelty_harness.evidence.passages.hashing import text_hash
 from novelty_harness.evidence.verification.prompts import VERIFIER_PROMPT_VERSION
 from novelty_harness.evidence.verification.verifier import (
     VERIFIER_TASK,
@@ -10,7 +14,7 @@ from novelty_harness.evidence.verification.verifier import (
     verify_with_context_retry,
 )
 from novelty_harness.runtime.semantic.structured import SemanticRunner
-from tests.fixtures.phase5 import make_passage
+from tests.fixtures.phase5 import make_passage, make_source, make_version, phase5_provenance
 from tests.fixtures.phase6 import StubLLMProvider, context_payload
 from tests.unit.evidence.verification.test_verifier import (
     MECHANISM,
@@ -41,21 +45,14 @@ def judgments(*states: tuple[str, str]) -> dict[str, object]:
 
 def expanded_document(*extra: str):
     text = CLAIM_TEXT + " " + " ".join(extra)
-    return make_passage(
-        "src_1",
-        text=text,
-        passage_id="pass_document",
-        source_version_id=VERSION,
-    ).model_copy(
-        update={
-            "unit_boundary": EvidenceUnitBoundary(
-                unit_id="unit_retry_document",
-                scope=EvidenceUnitScope.DOCUMENT,
-                starts_unit=True,
-                ends_unit=True,
-            )
-        }
-    )
+    source = make_source("src_1", content_hash=text_hash(text))
+    version = make_version("src_1", version_id=VERSION, content_hash=text_hash(text))
+    resolved = resolve_version_content(source=source, version=version, text=text)
+    return extract_resolved_content(
+        resolved,
+        observed_at=NOW,
+        provenance=phase5_provenance(),
+    ).model_copy(update={"passage_id": "pass_document"})
 
 
 def qualifier_aware_response(context) -> dict[str, object]:

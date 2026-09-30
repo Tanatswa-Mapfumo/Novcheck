@@ -98,6 +98,7 @@ def test_f05_mapper_passages_cannot_substitute_for_verifier_citations() -> None:
         source_version_id="srcv_1_v1",
         mcu_id="mcu_1",
         state=SupportVerificationState.SUPPORTED,
+        material_commitment_ids=("mech", "outcome"),
         commitment_states=(
             CommitmentStateRecord(
                 commitment_id="mech",
@@ -468,36 +469,46 @@ def _f04_mcu() -> _MCU:
 
 
 def _f04_evidence(sources_count: int, versions_per_source: int):
+    from novelty_harness.evidence.passages.extraction import (
+        extract_resolved_content,
+        resolve_version_content,
+    )
+    from novelty_harness.evidence.passages.hashing import text_hash
+
     sources: list = []
     versions: list = []
     passages: list = []
     for index in range(sources_count):
         sid = f"src_{index:02d}"
-        sources.append(
-            make_source(
-                sid,
-                discovery_paths=(
-                    _make_path(provider_source_id=f"W{index}", query_id="qry_1", mcu_id="mcu_1"),
-                ),
-            )
+        source_record = make_source(
+            sid,
+            discovery_paths=(
+                _make_path(provider_source_id=f"W{index}", query_id="qry_1", mcu_id="mcu_1"),
+            ),
         )
+        sources.append(source_record)
         for version_index in range(versions_per_source):
             vid = f"srcv_{index:02d}_v{version_index}"
-            versions.append(
-                _make_version(
-                    sid,
-                    version_id=vid,
-                    version_label=f"v{version_index}",
-                    published_date=date(2019 + version_index, 1, 1),
-                )
+            content = f"threshold switches relay source {index} version {version_index}"
+            version_record = _make_version(
+                sid,
+                version_id=vid,
+                version_label=f"v{version_index}",
+                published_date=date(2019 + version_index, 1, 1),
+                content_hash=text_hash(content),
+            )
+            versions.append(version_record)
+            resolved = resolve_version_content(
+                source=source_record,
+                version=version_record,
+                text=content,
             )
             passages.append(
-                make_passage(
-                    sid,
-                    text=f"threshold switches relay source {index} version {version_index}",
-                    passage_id=f"pass_{index:02d}_{version_index}",
-                    source_version_id=vid,
-                )
+                extract_resolved_content(
+                    resolved,
+                    observed_at=NOW,
+                    provenance=ORIGIN,
+                ).model_copy(update={"passage_id": f"pass_{index:02d}_{version_index}"})
             )
     return _EvidenceResult(
         sources=tuple(sources),
@@ -1283,6 +1294,12 @@ async def test_f11_pipeline_projection_passes_the_bridge_with_combination_and_wi
         MCURelationship as _Relationship,
     )
     from novelty_harness.evidence.graph.models import GraphNode, GraphNodeKind
+    from novelty_harness.evidence.passages.extraction import (
+        extract_resolved_content,
+        extract_span,
+        resolve_version_content,
+    )
+    from novelty_harness.evidence.passages.hashing import text_hash
     from novelty_harness.evidence.phase6_pipeline import (
         verify_evidence_against_mcus as _verify,
     )
@@ -1314,26 +1331,34 @@ async def test_f11_pipeline_projection_passes_the_bridge_with_combination_and_wi
             "context_needed": [],
         }
 
+    content = "The method is effective. However, it failed after a week."
     source = make_source(
         "src_1",
+        content_hash=text_hash(content),
         discovery_paths=(
             _make_path(provider_source_id="W1", query_id="qry_1", mcu_id="mcu_1"),
             _make_path(provider_source_id="W1", query_id="qry_1", mcu_id="mcu_2"),
         ),
     )
-    version = make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1))
-    section = make_passage(
+    version = make_version(
         "src_1",
-        text="The method is effective.",
-        passage_id="pass_section",
-        source_version_id="srcv_1_v1",
+        version_id="srcv_1_v1",
+        published_date=date(2020, 1, 1),
+        content_hash=text_hash(content),
     )
-    document = make_passage(
-        "src_1",
-        text="The method is effective. However, it failed after a week.",
-        passage_id="pass_document",
-        source_version_id="srcv_1_v1",
-    )
+    resolved = resolve_version_content(source=source, version=version, text=content)
+    section = extract_span(
+        resolved,
+        char_start=0,
+        char_end=len("The method is effective."),
+        observed_at=NOW,
+        provenance=ORIGIN,
+    ).model_copy(update={"passage_id": "pass_section"})
+    document = extract_resolved_content(
+        resolved,
+        observed_at=NOW,
+        provenance=ORIGIN,
+    ).model_copy(update={"passage_id": "pass_document"})
     evidence = _EvidenceResult(
         sources=(source,),
         versions=(version,),

@@ -14,11 +14,18 @@ from novelty_harness.domain.enums import (
     SupportVerificationState,
     VerdictState,
 )
+from novelty_harness.domain.evidence import SourceDates
 from novelty_harness.domain.mcu import MCUCombination, MCURelationship
 from novelty_harness.evidence.graph.sqlalchemy_repository import (
     SqlAlchemyEvidenceGraphRepository,
 )
-from novelty_harness.evidence.passages.extraction import extract_span
+from novelty_harness.evidence.normalization.models import CanonicalIdentifiers, SourceType
+from novelty_harness.evidence.passages.extraction import (
+    extract_resolved_content,
+    extract_span,
+    resolve_version_content,
+)
+from novelty_harness.evidence.passages.hashing import text_hash
 from novelty_harness.evidence.passages.models import PassageLocatorKind
 from novelty_harness.intake.pipeline import UnderstandingComponents
 from novelty_harness.research.applicability import EvidenceFamilyApplicabilityAssessor
@@ -121,9 +128,9 @@ class ExpandedPhase5EvidenceComponents(Phase5EvidenceComponents):
             for passage in result.passages
             if passage.locator.kind == PassageLocatorKind.RESOLVED_CONTENT
         )
+        assert full.attestation is not None
         excerpt = extract_span(
-            full.source_id,
-            full.text,
+            full.attestation.parent,
             char_start=0,
             char_end=min(25, len(full.text)),
             observed_at=FIXED_TIME,
@@ -132,6 +139,99 @@ class ExpandedPhase5EvidenceComponents(Phase5EvidenceComponents):
             source_version_id=full.source_version_id,
         )
         return replace(result, passages=(excerpt, *result.passages))
+
+
+class MixedProvenancePhase5EvidenceComponents(ExpandedPhase5EvidenceComponents):
+    async def execute(self, **kwargs):
+        result = await super().execute(**kwargs)
+        base = next(passage for passage in result.passages if passage.attestation is not None)
+        base_source = next(
+            source for source in result.sources if source.source_id == base.source_id
+        )
+        base_version = next(
+            version for version in result.versions if version.version_id == base.source_version_id
+        )
+        sources = list(result.sources)
+        versions = list(result.versions)
+        passages = list(result.passages)
+        for label in ("direct", "patent_partial", "contradiction", "mapper_failure"):
+            source_id = f"src_lifecycle_{label}"
+            text = f"{label.upper()} authenticated evidence for the relay configuration."
+            source = base_source.model_copy(
+                update={
+                    "source_id": source_id,
+                    "canonical_title": label,
+                    "identifiers": CanonicalIdentifiers(),
+                    "source_type": SourceType.PATENT
+                    if label == "patent_partial"
+                    else SourceType.PAPER,
+                    "dates": SourceDates(
+                        publication_date=base_version.published_date,
+                        patent_publication_date=base_version.published_date
+                        if label == "patent_partial"
+                        else None,
+                    ),
+                    "content_hash": text_hash(text),
+                }
+            )
+            version = base_version.model_copy(
+                update={
+                    "version_id": f"srcv_lifecycle_{label}",
+                    "source_id": source_id,
+                    "content_hash": text_hash(text),
+                }
+            )
+            resolved = resolve_version_content(source=source, version=version, text=text)
+            passage = extract_resolved_content(
+                resolved,
+                observed_at=FIXED_TIME,
+                provenance=fixture_provenance("mixed-provenance-lifecycle"),
+            )
+            sources.append(source)
+            versions.append(version)
+            passages.append(passage)
+        return replace(
+            result, sources=tuple(sources), versions=tuple(versions), passages=tuple(passages)
+        )
+
+
+def mixed_map_response(context):
+    identity = context_json(context, "source_identity")
+    assert isinstance(identity, dict)
+    if identity["source_id"] == "src_lifecycle_mapper_failure":
+        return {"prompt_version": "evidence-mapper-v1", "dimensions": [], "unresolved": []}
+    return map_evidence_response(context)
+
+
+def mixed_verify_response(context):
+    payload = context_json(context, "verification_input")
+    assert isinstance(payload, dict)
+    passage = payload["passages"][-1]
+    text = passage["text"]
+    if "CONTRADICTION" in text:
+        state = "CONTRADICTED"
+    elif "PATENT_PARTIAL" in text:
+        state = "PARTIALLY_SUPPORTED"
+    else:
+        state = "SUPPORTED"
+    return {
+        "prompt_version": "support-verifier-v1",
+        "judgments": [
+            {
+                "commitment_id": item["commitment_id"],
+                "state": state,
+                "rationale": "scripted authenticated lifecycle case",
+                "passage_ids": [passage["passage_id"]],
+                **(
+                    {"supported_subset": "relay control", "unsupported_remainder": "all contexts"}
+                    if state == "PARTIALLY_SUPPORTED"
+                    else {}
+                ),
+            }
+            for item in payload["commitments"]
+        ],
+        "context_needed": [],
+    }
 
 
 def verify_expanded_response(context):
@@ -299,3 +399,104 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
     assert {f"q{i}" for i in range(1, 10)} <= json.loads((run_dir / "report.json").read_text())[
         "answers"
     ].keys()
+
+
+async def test_authenticated_mixed_phase6_lifecycle_reaches_completed(tmp_path) -> None:
+    fixture = make_fixture()
+    understanding = UnderstandingComponents(
+        SemanticRunner(RecordedLLM(understanding_responses())), clock=fixture.clock
+    )
+    research_runner = SemanticRunner(
+        RecordedLLM(
+            {
+                "assess_families": applicability_response(),
+                "plan_research": planning_response(),
+                "criticize_search": critic_response(),
+            }
+        )
+    )
+    components = replace(
+        fixture.components,
+        normalizer=understanding,
+        sufficiency_analyzer=understanding,
+        decomposer=understanding,
+        reconciler=CombinationReconciler(understanding),
+        adjudicator=Phase7FixtureAdjudicator(),
+    )
+    sink = InMemoryTraceSink()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
+        providers, _ = registry(client, clock=fixture.clock)
+        policy = CoveragePolicy.standard()
+        result = await run_vertical_slice(
+            request=fixture.request,
+            components=components,
+            search_provider=fixture.search_provider,
+            content_resolver=SyntheticContentResolver(),
+            trace_sink=sink,
+            artifact_writer=RunArtifactWriter(tmp_path),
+            clock=fixture.clock,
+            research=Phase3ResearchComponents(
+                EvidenceFamilyApplicabilityAssessor(research_runner),
+                SearchStrategist(research_runner),
+                SearchPlanCritic(research_runner),
+                SearchPlanReviser(research_runner),
+                ScreeningExecutor(providers, policy),
+            ),
+            adaptive_research=Phase4ResearchComponents(
+                providers, policy, BudgetLimits(max_deep_search_rounds=80), stop_policy()
+            ),
+            evidence=MixedProvenancePhase5EvidenceComponents(),
+            phase6=Phase6EvidenceComponents(
+                SemanticRunner(
+                    StubLLMProvider(
+                        {
+                            "map_evidence": mixed_map_response,
+                            "verify_support": mixed_verify_response,
+                        }
+                    )
+                ),
+                max_sources_per_mcu=100,
+            ),
+        )
+    assert result.record.stage.value == "REPORTED"
+    assert result.record.status.value == "COMPLETED"
+    phase6 = result.run_dir / "phase6"
+    classifications = [
+        json.loads(line)
+        for line in (phase6 / "precedent_classifications.jsonl").read_text().splitlines()
+    ]
+    relations = {item["relation"] for item in classifications}
+    assert {"DIRECT_PRECEDENT", "CONTRADICTORY_EVIDENCE", "UNASSESSABLE"} <= relations
+    assert any(item["scoped_coverage"] for item in classifications)
+    direct = next(
+        item
+        for item in classifications
+        if item["source_id"] == "src_lifecycle_direct" and item["relation"] == "DIRECT_PRECEDENT"
+    )
+    assert direct["decisive"]
+    chains = [
+        json.loads(line) for line in (phase6 / "verified_chains.jsonl").read_text().splitlines()
+    ]
+    authenticated = next(
+        item for item in chains if item["source"]["source_id"] == "src_lifecycle_direct"
+    )
+    assert (
+        authenticated["bundle"]["passages"][0]["attestation"]["parent_content_digest"]
+        == (authenticated["version"]["content_hash"])
+    )
+    repository = SqlAlchemyEvidenceGraphRepository(
+        result.run_dir / "phase5" / "evidence_graph.sqlite3"
+    )
+    try:
+        assert any(
+            edge.kind.value == "DIRECT_PRECEDENT" and edge.source_node_id == "src_lifecycle_direct"
+            for edge in repository.edges()
+        )
+    finally:
+        repository.close()
+    summary = json.loads((phase6 / "phase6_result.json").read_text())
+    assert any("mapping failed" in failure for failure in summary["failures"])
+    assert any(item["mcu_id"].startswith("mcu_comb_") for item in classifications)
+    assert (phase6 / "context_expansions.jsonl").read_text().strip()
+    assert (phase6 / "patent_screenings.jsonl").read_text().strip()
+    assert "PHASE7_FIXTURE_BOUNDARY" in {event.reason_code for event in sink.events}

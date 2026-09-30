@@ -26,10 +26,13 @@ from novelty_harness.evidence.mapping.models import (
     EvidenceProposition,
     PropositionCommitment,
 )
+from novelty_harness.evidence.passages.extraction import (
+    extract_resolved_content,
+    extract_span,
+    resolve_version_content,
+)
+from novelty_harness.evidence.passages.hashing import text_hash
 from novelty_harness.evidence.passages.models import (
-    EvidenceUnitBoundary,
-    EvidenceUnitScope,
-    PassageLocator,
     PassageLocatorKind,
     PassageRecord,
 )
@@ -40,7 +43,7 @@ from novelty_harness.evidence.verification.verifier import (
     verify_with_context_retry,
 )
 from novelty_harness.runtime.semantic.structured import SemanticRunner
-from tests.fixtures.phase5 import make_passage, phase5_provenance
+from tests.fixtures.phase5 import make_source, make_version, phase5_provenance
 from tests.fixtures.phase6 import StubLLMProvider, context_payload
 
 NOW = phase5_provenance("phase6-benchmark")
@@ -293,50 +296,34 @@ def _verifier() -> IndependentSupportVerifier:
 
 async def run_case(case: SupportCase) -> dict[str, object]:
     selected_text = " ".join(case.passages)
-    passage = make_passage(
-        "src_bench",
-        text=selected_text,
-        passage_id="pass_bench",
-        source_version_id=VERSION,
-        locator=(
-            PassageLocator(
-                kind=PassageLocatorKind.RESOLVED_CONTENT,
-                char_start=0,
-                char_end=len(selected_text),
-            )
-            if not case.expanded_passages
-            else PassageLocator(kind=PassageLocatorKind.BLOCK)
-        ),
-    ).model_copy(
-        update={
-            "unit_boundary": None
-            if case.expanded_passages
-            else EvidenceUnitBoundary(
-                unit_id="unit_benchmark",
-                scope=EvidenceUnitScope.DOCUMENT,
-                starts_unit=True,
-                ends_unit=True,
-            )
-        }
-    )
+    full_text = " ".join(case.passages + case.expanded_passages)
+    source = make_source("src_bench", content_hash=text_hash(full_text))
+    version = make_version("src_bench", version_id=VERSION, content_hash=text_hash(full_text))
+    resolved = resolve_version_content(source=source, version=version, text=full_text)
+    passage = (
+        extract_span(
+            resolved,
+            char_start=0,
+            char_end=len(selected_text),
+            observed_at=datetime(2026, 9, 28, 12, 0, tzinfo=UTC),
+            provenance=ORIGIN,
+            kind=PassageLocatorKind.BLOCK,
+        )
+        if case.expanded_passages
+        else extract_resolved_content(
+            resolved,
+            observed_at=datetime(2026, 9, 28, 12, 0, tzinfo=UTC),
+            provenance=ORIGIN,
+        )
+    ).model_copy(update={"passage_id": "pass_bench"})
     available: list[PassageRecord] = [passage]
     if case.expanded_passages:
         available.append(
-            make_passage(
-                "src_bench",
-                text=" ".join(case.passages + case.expanded_passages),
-                passage_id="pass_document",
-                source_version_id=VERSION,
-            ).model_copy(
-                update={
-                    "unit_boundary": EvidenceUnitBoundary(
-                        unit_id="unit_benchmark",
-                        scope=EvidenceUnitScope.DOCUMENT,
-                        starts_unit=True,
-                        ends_unit=True,
-                    )
-                }
-            )
+            extract_resolved_content(
+                resolved,
+                observed_at=datetime(2026, 9, 28, 12, 0, tzinfo=UTC),
+                provenance=ORIGIN,
+            ).model_copy(update={"passage_id": "pass_document"})
         )
     commitment = PropositionCommitment(
         commitment_id=case.commitment_id,

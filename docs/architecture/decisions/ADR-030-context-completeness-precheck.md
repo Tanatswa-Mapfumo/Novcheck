@@ -40,3 +40,10 @@ passages. The completeness gate can conservatively downgrade apparently
 supported evidence to insufficient context, but cannot manufacture support or
 a contradiction. This is deliberately stricter than the initial precheck
 policy; the original decision remains documented above for audit history.
+
+## Provenance hardening amendment (30 September 2026)
+
+ADR-036 makes completeness depend on extractor-owned `PassageAttestation`
+limits over the immutable resolved parent. Caller-created unit flags and
+unattested neighboring blocks cannot establish a complete unit. A complete
+abstract is complete only within its explicitly abstract-only access scope.

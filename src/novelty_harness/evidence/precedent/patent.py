@@ -20,6 +20,7 @@ from novelty_harness.domain.enums import PrecedentState
 from novelty_harness.domain.idea import ArtifactProvenance
 from novelty_harness.domain.ids import MCUId, SourceId, SourceVersionId
 from novelty_harness.evidence.passages.models import PassageLocator
+from novelty_harness.evidence.precedent.gates import ClassifiedComparison
 from novelty_harness.evidence.precedent.models import (
     PatentScreeningDateRecord,
     PatentScreeningLocator,
@@ -54,10 +55,25 @@ class PatentEvidenceEntry(ContractModel):
     priority_date: date | None = None
     publication_date: date | None = None
     chronology: ChronologyAssessment | None = None
+    comparison: ClassifiedComparison | None = None
     locators: tuple[PatentScreeningLocator, ...] = ()
 
     @model_validator(mode="after")
     def classification_matches_entry(self) -> Self:
+        if self.comparison is not None:
+            validated = ClassifiedComparison.model_validate(self.comparison.model_dump(mode="json"))
+            chain = validated.comparison.chain
+            if (
+                validated.classification != self.classification
+                or chain.source.source_id != self.source_id
+                or (chain.version.version_id if chain.version else None) != self.source_version_id
+                or chain.proposition.mcu_id != self.mcu_id
+                or chain.edge.chronology != self.chronology
+                or (chain.source.source_type.value == "PATENT") != self.is_patent
+                or chain.source.dates.patent_priority_date != self.priority_date
+                or chain.source.dates.patent_publication_date != self.publication_date
+            ):
+                raise ValueError("Patent entry differs from authoritative classified comparison")
         if self.classification.source_id != self.source_id:
             raise ValueError("Patent entry classification belongs to another source")
         if self.classification.source_version_id != self.source_version_id:
@@ -72,6 +88,29 @@ class PatentEvidenceEntry(ContractModel):
         ):
             raise ValueError("Patent entry chronology must describe the cited version")
         return self
+
+
+def patent_entry_from_comparison(
+    comparison: ClassifiedComparison,
+    *,
+    locators: tuple[PatentScreeningLocator, ...] = (),
+) -> PatentEvidenceEntry:
+    """Project patent screening facts from the validated cited disclosure."""
+
+    validated = ClassifiedComparison.model_validate(comparison.model_dump(mode="json"))
+    chain = validated.comparison.chain
+    return PatentEvidenceEntry(
+        source_id=chain.source.source_id,
+        source_version_id=chain.version.version_id if chain.version else None,
+        mcu_id=chain.proposition.mcu_id,
+        is_patent=chain.source.source_type.value == "PATENT",
+        classification=validated.classification,
+        priority_date=chain.source.dates.patent_priority_date,
+        publication_date=chain.source.dates.patent_publication_date,
+        chronology=chain.edge.chronology,
+        comparison=validated,
+        locators=locators,
+    )
 
 
 def patent_locator_from_passage(
@@ -113,6 +152,9 @@ def screen_patent_references(
     roots so versions or family publications cannot inflate it (F08).
     """
 
+    entries = tuple(
+        PatentEvidenceEntry.model_validate(entry.model_dump(mode="json")) for entry in entries
+    )
     wrong_mcu = [entry.source_id for entry in entries if entry.mcu_id != mcu_id]
     if wrong_mcu:
         raise ValueError(f"Patent screening entries belong to another MCU: {wrong_mcu}")
@@ -145,7 +187,7 @@ def screen_patent_references(
     ineligible: list[PatentEvidenceEntry] = []
     missing_version_chronology = 0
     for entry in patent_entries:
-        chronology = entry.chronology
+        chronology = entry.comparison.comparison.chronology if entry.comparison else None
         if chronology is not None:
             if chronology.as_of != as_of:
                 raise ValueError("Patent entry chronology uses a different assessment cutoff")
@@ -154,7 +196,7 @@ def screen_patent_references(
             missing_version_chronology += 1
             is_eligible = False
         else:
-            is_eligible = entry.publication_date is not None and entry.publication_date <= as_of
+            is_eligible = False
         (eligible if is_eligible else ineligible).append(entry)
     if ineligible:
         limitations.append(
@@ -165,6 +207,11 @@ def screen_patent_references(
         limitations.append(
             f"{missing_version_chronology} versioned patent reference(s) lack cited-version "
             "chronology; parent publication dates cannot establish eligibility"
+        )
+    if any(entry.comparison is None for entry in patent_entries):
+        limitations.append(
+            "Patent chronology without an authoritative classified comparison "
+            "cannot establish historical eligibility"
         )
     if not eligible:
         limitations.append(

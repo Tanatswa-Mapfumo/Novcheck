@@ -34,3 +34,10 @@ A foreign mapping, version, claim, proposition, citation, relation, or
 classification basis cannot establish a persisted direct graph relation.
 Valid combination targets and multi-passage evidence retain their exact IDs.
 The graph remains local evidence, not a Phase 7 novelty verdict.
+
+## Provenance hardening amendment (30 September 2026)
+
+ADR-036 additionally requires every cited passage in the resolved comparison
+to be an exact slice of a parent whose digest matches the authoritative cited
+source/version hash. A self-hash or matching owner ID alone is insufficient.
+Public comparison/classification gates revalidate serialized model instances.

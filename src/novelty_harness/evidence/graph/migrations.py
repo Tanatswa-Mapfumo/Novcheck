@@ -46,7 +46,7 @@ def ensure_schema(engine: Engine) -> int:
                 "Legacy Phase 6 graph edges lack the authoritative v4 contract; "
                 "migration is blocked until those edges are reprocessed"
             )
-    if current == 3 and "verified_edges" in existing_tables:
+    if current in {2, 3} and "verified_edges" in existing_tables:
         with engine.connect() as connection:
             if connection.execute(select(VerifiedEdgeRow.edge_id)).first() is not None:
                 raise ValueError("Legacy verified edges require reprocessing before v4 migration")

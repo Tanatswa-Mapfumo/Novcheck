@@ -351,6 +351,7 @@ def test_f10_scoped_partial_survives_classification_without_direct_inflation() -
         source_version_id="srcv_1_v1",
         mcu_id="mcu_1",
         state=SupportVerificationState.PARTIALLY_SUPPORTED,
+        material_commitment_ids=("scope",),
         commitment_states=(
             CommitmentStateRecord(
                 commitment_id="scope",
@@ -404,6 +405,7 @@ def test_f10_partial_subsets_survive_a_separate_contradiction() -> None:
         source_version_id="srcv_1_v1",
         mcu_id="mcu_1",
         state=SupportVerificationState.CONTRADICTED,
+        material_commitment_ids=("population", "outcome"),
         commitment_states=(
             CommitmentStateRecord(
                 commitment_id="population",
@@ -463,6 +465,7 @@ def test_f10_two_scoped_partials_do_not_aggregate_to_full_support() -> None:
         source_version_id="srcv_1_v1",
         mcu_id="mcu_1",
         state=SupportVerificationState.PARTIALLY_SUPPORTED,
+        material_commitment_ids=("scope", "condition"),
         commitment_states=(
             CommitmentStateRecord(
                 commitment_id="scope",

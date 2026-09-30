@@ -147,6 +147,7 @@ def verification_for(
         "source_version_id": "srcv_1_v1",
         "mcu_id": target.mcu_id,
         "commitment_states": records,
+        "material_commitment_ids": tuple(item.commitment_id for item in target.commitments),
         "context_completeness": "COMPLETE",
         "relied_on_passage_ids": tuple(relied),
         "verifier_prompt_version": "support-verifier-v1",

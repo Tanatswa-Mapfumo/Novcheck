@@ -418,3 +418,41 @@ deselected**; `git diff --check` passed. Fresh exact-commit checkout
 verification is recorded with the implementation handoff.
 
 Gate 30 remains OPEN pending fresh independent GPT-6 Sol High/Max semantic re-review.
+
+## Provenance hardening implementation after the `47021af` FAIL review
+
+The 30 September independent review remains a **FAIL** record. The bounded
+R01-R09 implementation now introduces `ResolvedVersionContent` and
+`PassageAttestation` (ADR-036). Phase 5 normalization resolves the owned
+source/version content hash before extraction. The attestation retains the
+normalized parent, exact offsets, passage digest and extractor-proven unit
+limits. Semantic-chain and graph persistence reject a cited passage whose
+parent digest differs from the cited version hash. Caller-declared complete
+unit flags cannot make a short excerpt decisive. Complete abstracts retain
+their abstract-only access limitation; numbered patent claims, paragraphs and
+Markdown sections have checked boundaries.
+
+Public semantic gates revalidate Pydantic instances, including copied
+verifications, comparisons, classifications and patent entries. Verifier
+judgments must cover each material commitment exactly once. Routing now
+prioritizes sources without hiding eligible unrouted sources. Each candidate
+keeps its chain and classification together; invalid mapping produces an
+explicit `UNASSESSABLE` result and the pipeline continues. Patent eligibility
+comes from `ClassifiedComparison` and its cited disclosure. Multi-source
+summaries validate the target MCU, target kind, combination identity and
+assessment when given authenticated comparisons. The v2/v3 legacy verified
+artifact migration guard requires reprocessing.
+
+`tests/adversarial/test_phase6_provenance_hardening.py` covers R01-R09,
+including content mismatch, forged completeness, duplicate/copy attacks,
+coverage, failure continuation, patent chronology and migration. A new full
+slice test combines authenticated direct graph persistence, scoped partial
+support, contradiction, mapper failure, combination target, expanded context
+and patent screening through `REPORTED`/`COMPLETED`. The existing Phase 7
+adjudicator remains a fixture, and no Phase 7 logic was added. The offline
+benchmark still measures deterministic fixture behavior only; live semantic
+entailment and prompt-injection resistance remain unmeasured.
+
+The final implementation commit and exact-commit fresh-checkout verification
+are recorded in the handoff. **Gate 30 remains OPEN pending fresh independent
+semantic re-review. Phase 6 is not accepted; Phase 7 has not started.**

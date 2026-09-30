@@ -142,6 +142,16 @@ def validate_semantic_chain(
 ) -> tuple[PassageRecord, ...]:
     """Resolve every verification citation to an exact same-version passage."""
 
+    source = SourceRecord.model_validate(source.model_dump(mode="json"))
+    version = (
+        SourceVersionRecord.model_validate(version.model_dump(mode="json"))
+        if version is not None
+        else None
+    )
+    proposition = EvidenceProposition.model_validate(proposition.model_dump(mode="json"))
+    mapping = SourceMCUMapping.model_validate(mapping.model_dump(mode="json"))
+    bundle = SupportEvidenceBundle.model_validate(bundle.model_dump(mode="json"))
+    verification = SupportVerification.model_validate(verification.model_dump(mode="json"))
     claim = bundle.claim
     source_id = source.source_id
     version_id = version.version_id if version is not None else None
@@ -179,6 +189,8 @@ def validate_semantic_chain(
         raise SemanticIntegrityError("Claim belongs to another source version")
 
     expected = {item.commitment_id: item for item in proposition.commitments}
+    if set(verification.material_commitment_ids) != set(expected):
+        raise SemanticIntegrityError("Verification material commitments differ from claim")
     judged = {item.commitment_id: item for item in verification.commitment_states}
     if len(judged) != len(verification.commitment_states) or set(judged) != set(expected):
         raise SemanticIntegrityError("Verification does not judge every exact claim commitment")
@@ -201,12 +213,33 @@ def validate_semantic_chain(
         raise SemanticIntegrityError("Mapping cites a passage outside its support claim")
     available: dict[str, PassageRecord] = {}
     for passage in (*bundle.passages, *context_passages):
+        passage = PassageRecord.model_validate(passage.model_dump(mode="json"))
         if passage.passage_id in available and available[passage.passage_id] != passage:
             raise SemanticIntegrityError("One passage ID has conflicting contents")
         if passage.source_id != source_id or passage.source_version_id != version_id:
             raise SemanticIntegrityError("Cited passage belongs to another source/version")
         if passage.content_hash != text_hash(passage.text):
             raise SemanticIntegrityError("Cited passage content hash does not match text")
+        attestation = passage.attestation
+        if attestation is None:
+            raise SemanticIntegrityError(
+                "Cited passage lacks immutable source-content provenance attestation"
+            )
+        authoritative_digest = version.content_hash if version is not None else source.content_hash
+        if (
+            authoritative_digest is None
+            or attestation.parent_content_digest != authoritative_digest
+        ):
+            raise SemanticIntegrityError(
+                "Cited passage parent digest conflicts with source/version hash"
+            )
+        if (
+            attestation.parent.source_id != source_id
+            or attestation.parent.source_version_id != version_id
+        ):
+            raise SemanticIntegrityError(
+                "Cited passage provenance belongs to another source/version"
+            )
         available[passage.passage_id] = passage
     missing = set(canonical) - set(available)
     if missing:

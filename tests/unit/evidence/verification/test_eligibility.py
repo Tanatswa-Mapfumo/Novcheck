@@ -13,6 +13,11 @@ from novelty_harness.evidence.mapping.models import (
     SourceMCUMapping,
 )
 from novelty_harness.evidence.normalization.models import SourceType
+from novelty_harness.evidence.passages.extraction import (
+    extract_resolved_content,
+    resolve_version_content,
+)
+from novelty_harness.evidence.passages.hashing import text_hash
 from novelty_harness.evidence.quality.assessment import assess_quality
 from novelty_harness.evidence.quality.models import (
     AssessmentLevel,
@@ -28,7 +33,7 @@ from novelty_harness.evidence.verification.models import (
     PassageSupportClaim,
     SupportVerification,
 )
-from tests.fixtures.phase5 import make_passage, make_source, make_version, phase5_provenance
+from tests.fixtures.phase5 import make_source, make_version, phase5_provenance
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
 AS_OF = date(2026, 9, 28)
@@ -46,6 +51,7 @@ COMMITMENTS = (
     ),
 )
 CLAIM_PASSAGES = ("pass_1",)
+PASSAGE_TEXT = "A threshold drives a relay coil and switches a load without an operator."
 
 
 def proposition() -> EvidenceProposition:
@@ -111,6 +117,7 @@ def verification(state: SupportVerificationState, *, relied=CLAIM_PASSAGES) -> S
         "mcu_id": "mcu_1",
         "state": state,
         "commitment_states": records,
+        "material_commitment_ids": tuple(item.commitment_id for item in COMMITMENTS),
         "context_completeness": "COMPLETE",
         "context_expansions": 0,
         "verifier_prompt_version": "support-verifier-v1",
@@ -137,7 +144,8 @@ def verification(state: SupportVerificationState, *, relied=CLAIM_PASSAGES) -> S
 
 
 def source(**overrides: object):
-    return make_source("src_1", **overrides)
+    values: dict[str, object] = {"content_hash": text_hash(PASSAGE_TEXT), **overrides}
+    return make_source("src_1", **values)
 
 
 def bundle() -> SupportEvidenceBundle:
@@ -152,16 +160,17 @@ def bundle() -> SupportEvidenceBundle:
         commitments=COMMITMENTS,
         passage_ids=CLAIM_PASSAGES,
     )
+    resolved = resolve_version_content(
+        source=source(),
+        version=make_version("src_1", version_id="srcv_1_v1", content_hash=text_hash(PASSAGE_TEXT)),
+        text=PASSAGE_TEXT,
+    )
+    passage = extract_resolved_content(resolved, observed_at=NOW, provenance=ORIGIN).model_copy(
+        update={"passage_id": "pass_1"}
+    )
     return SupportEvidenceBundle(
         claim=claim,
-        passages=(
-            make_passage(
-                "src_1",
-                text="A threshold drives a relay coil and switches a load without an operator.",
-                passage_id="pass_1",
-                source_version_id="srcv_1_v1",
-            ),
-        ),
+        passages=(passage,),
     )
 
 
@@ -304,6 +313,11 @@ def test_identity_disagreements_are_rejected() -> None:
 
 def test_relied_on_passages_are_preferred_and_edge_ids_are_deterministic() -> None:
     expanded = ("pass_document", "pass_1")
+    parent = bundle().passages[0].attestation
+    assert parent is not None
+    window = extract_resolved_content(parent.parent, observed_at=NOW, provenance=ORIGIN).model_copy(
+        update={"passage_id": "pass_document"}
+    )
     edge = build_verified_evidence_edge(
         mapping=mapping(),
         verification=verification(SupportVerificationState.SUPPORTED, relied=expanded),
@@ -311,14 +325,7 @@ def test_relied_on_passages_are_preferred_and_edge_ids_are_deterministic() -> No
         source=source(),
         bundle=bundle(),
         version=make_version("src_1", version_id="srcv_1_v1", published_date=date(2020, 1, 1)),
-        context_passages=(
-            make_passage(
-                "src_1",
-                text="The full document confirms threshold control of the relay.",
-                passage_id="pass_document",
-                source_version_id="srcv_1_v1",
-            ),
-        ),
+        context_passages=(window,),
         as_of=AS_OF,
         observed_at=NOW,
     )

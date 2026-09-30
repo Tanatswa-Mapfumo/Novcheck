@@ -507,15 +507,28 @@ def test_attack_14_contradictory_passages_stay_contradictory() -> None:
 
 
 def test_attack_15_version_specific_results_do_not_reuse_old_support() -> None:
+    from novelty_harness.evidence.passages.extraction import (
+        extract_resolved_content,
+        resolve_version_content,
+    )
+
     first = build(SupportVerificationState.SUPPORTED)
     original_bundle = eligibility_bundle()
+    revised_version = make_version("src_1", version_id="srcv_2_v2", published_date=date(2020, 1, 2))
+    revised_resolved = resolve_version_content(
+        source=source(),
+        version=revised_version,
+        text=original_bundle.passages[0].text,
+    )
+    revised_passage = extract_resolved_content(
+        revised_resolved,
+        observed_at=NOW,
+        provenance=ORIGIN,
+    ).model_copy(update={"passage_id": "pass_1"})
     revised_bundle = original_bundle.model_copy(
         update={
             "claim": original_bundle.claim.model_copy(update={"source_version_id": "srcv_2_v2"}),
-            "passages": tuple(
-                item.model_copy(update={"source_version_id": "srcv_2_v2"})
-                for item in original_bundle.passages
-            ),
+            "passages": (revised_passage,),
         }
     )
     second = build_verified_evidence_edge(
@@ -528,7 +541,7 @@ def test_attack_15_version_specific_results_do_not_reuse_old_support() -> None:
         proposition=eligibility_proposition(),
         source=source(),
         bundle=revised_bundle,
-        version=make_version("src_1", version_id="srcv_2_v2", published_date=date(2020, 1, 2)),
+        version=revised_version,
         as_of=AS_OF,
         observed_at=NOW,
     )
@@ -565,7 +578,7 @@ def test_attack_16_stitched_patents_are_never_anticipation() -> None:
         observed_at=NOW,
         clock=lambda: NOW,
     )
-    assert result.mode == "MULTI_REFERENCE_COMBINATION_LIKE"
+    assert result.mode == "LIMITED"
     assert result.single_reference_id is None
 
 

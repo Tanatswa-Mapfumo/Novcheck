@@ -745,3 +745,34 @@ requires new regressions and another independent review of the repaired
 commit. This review made no implementation changes.
 
 Acceptance Gate 30: FAIL — Phase 6 remains blocked.
+
+---
+
+## Implementer provenance-hardening record after the `47021af` review
+
+The preceding independent **FAIL** at `47021af` and all earlier FAIL records
+remain unchanged. This section records R01-R09 implementation only; it is not
+an independent re-review or a Gate 30 PASS. The approved task scope is the
+30 September user instruction, recorded in
+`docs/superpowers/plans/2026-09-30-phase-6-provenance-hardening-plan.md`.
+
+| Finding | Implemented boundary | Regression evidence |
+| --- | --- | --- |
+| R01 | Resolved immutable source/version digest and exact passage attestation; chain and repository resolve the parent digest. | Conflicting content rejected; genuine subspan, document, abstract and authenticated direct persistence pass. |
+| R02 | Unit limits come from extractor-checked parent spans; caller boundary flags cannot assert completeness. | Truncated `Support.` excerpt, paragraph and numbered claim boundaries. |
+| R03 | Exactly one judgment per material commitment; public edge revalidates copied verifier records and derives decisive state. | Duplicate/missing/extra judgments and copied partial-to-supported rejection. |
+| R04 | All eligible sources enter bounded selection; routing only changes order, with every skipped source disclosed. | Foreign-route eligible source appears selected or unassessed. |
+| R05 | Aligned candidate result carries classification, optional chain and explicit failure; failed mapper continues. | All-failed pipeline and mixed full lifecycle. |
+| R06 | Patent entry projection consumes authenticated `ClassifiedComparison` and cited chronology. | Caller-asserted older date cannot produce anticipation-like mode. |
+| R07 | Multi-source summary checks MCU target; authenticated path also checks assessment, target kind and combination identity. | Foreign direct/partial MCU and foreign assessment/target-kind attacks. |
+| R08 | Public verified classifier revalidates the entire copied comparison chain. | Copied chronology cannot return direct. |
+| R09 | v2 and v3 verified rows without current chain block migration. | v2 orphan verified-row migration rejected. |
+
+ADR-036 and amendments to ADR-030, ADR-034 and ADR-035 record the provenance,
+context and migration decisions. The new adversarial suite and mixed full
+lifecycle test use deterministic providers. They do not establish live LLM
+entailment, calibration, or prompt-injection resistance. The exact final code
+commit requires an independent semantic re-review before any acceptance claim.
+
+**Gate 30 remains OPEN pending fresh independent semantic re-review. Phase 7
+has not started.**

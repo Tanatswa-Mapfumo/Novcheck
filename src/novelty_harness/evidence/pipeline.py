@@ -43,7 +43,11 @@ from novelty_harness.evidence.normalization.source_normalizer import (
     normalize_candidate_cluster,
 )
 from novelty_harness.evidence.normalization.versions import version_id_for
-from novelty_harness.evidence.passages.extraction import extract_abstract, extract_resolved_content
+from novelty_harness.evidence.passages.extraction import (
+    extract_abstract,
+    extract_resolved_content,
+    resolve_version_content,
+)
 from novelty_harness.evidence.passages.hashing import text_hash
 from novelty_harness.evidence.passages.models import PassageRecord
 from novelty_harness.evidence.provenance.circularity import detect_provenance_cycles
@@ -523,24 +527,26 @@ async def run_evidence_normalization(
                 ),
                 None,
             )
+            resolved_version = resolve_version_content(
+                source=merged,
+                version=matched_version,
+                text=payload,
+                retrieved_at=clock(),
+            )
             if best_resolved.access_state == SourceAccessState.FULL_TEXT:
                 passages.append(
                     extract_resolved_content(
-                        merged.source_id,
-                        payload,
+                        resolved_version,
                         observed_at=clock(),
                         provenance=_PIPELINE_PROVENANCE,
-                        source_version_id=matched_version.version_id if matched_version else None,
                     )
                 )
             else:
                 passages.append(
                     extract_abstract(
-                        merged.source_id,
-                        payload,
+                        resolved_version,
                         observed_at=clock(),
                         provenance=_PIPELINE_PROVENANCE,
-                        source_version_id=matched_version.version_id if matched_version else None,
                     )
                 )
         sources.append(merged)

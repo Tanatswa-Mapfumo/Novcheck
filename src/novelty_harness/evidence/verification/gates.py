@@ -10,6 +10,8 @@ from collections.abc import Callable
 from datetime import date, datetime
 from typing import Literal
 
+from pydantic import ValidationError
+
 from novelty_harness.domain.base import utc_now
 from novelty_harness.domain.enums import (
     PrecedentState,
@@ -221,6 +223,7 @@ def aggregate_verification(
         mcu_id=bundle.claim.mcu_id,
         state=state,
         commitment_states=records,
+        material_commitment_ids=tuple(sorted(item.commitment_id for item in blinded.commitments)),
         supported_portions=supported,
         unsupported_portions=unsupported,
         contradictions=contradictions,
@@ -428,6 +431,13 @@ def build_verified_evidence_edge(
 ) -> VerifiedEvidenceEdge:
     """Attach chronology and quality to a verification without changing it."""
 
+    # Pydantic's model_copy/model_construct skip validation. Public semantic
+    # gates must deserialize an untrusted instance before reading its state.
+    try:
+        verification = SupportVerification.model_validate(verification.model_dump(mode="json"))
+    except ValidationError as error:
+        raise EdgeEligibilityError(str(error)) from error
+
     if (
         verification.mapping_id != mapping.mapping_id
         or verification.source_id != mapping.source_id
@@ -448,7 +458,7 @@ def build_verified_evidence_edge(
     if version is not None and version.source_id != source.source_id:
         raise EdgeEligibilityError("Cited version owner does not match the source")
     try:
-        validate_semantic_chain(
+        cited_passages = validate_semantic_chain(
             source=source,
             version=version,
             proposition=proposition,
@@ -464,10 +474,17 @@ def build_verified_evidence_edge(
 
     disclosure = assess_cited_disclosure(source, as_of=as_of, version=version)
     chronology = disclosure.chronology
+    attested_complete_unit = any(
+        passage.attestation is not None
+        and passage.attestation.unit_start == passage.attestation.start_offset
+        and passage.attestation.unit_end == passage.attestation.end_offset
+        for passage in cited_passages
+    )
     decisive = (
         verification.state == SupportVerificationState.SUPPORTED
         and chronology.state == "PREDATES_CUTOFF"
         and verification.context_completeness == "COMPLETE"
+        and attested_complete_unit
     )
     reasons: list[str] = []
     if verification.state != SupportVerificationState.SUPPORTED:
@@ -476,6 +493,8 @@ def build_verified_evidence_edge(
         reasons.append(
             f"Verification context is {verification.context_completeness} and cannot be decisive"
         )
+    if not attested_complete_unit:
+        reasons.append("Verifier citations do not attest a complete evidence unit")
     if chronology.state == "POST_CUTOFF":
         reasons.append("Source is post-cutoff and cannot be decisive precedent")
     elif chronology.state == "UNCERTAIN":

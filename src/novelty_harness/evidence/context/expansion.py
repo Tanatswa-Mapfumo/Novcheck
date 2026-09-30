@@ -49,6 +49,20 @@ def expansion_provenance() -> ArtifactProvenance:
     )
 
 
+def _attested_boundary(passage: PassageRecord) -> tuple[str, bool, bool] | None:
+    """Read complete-unit flags only from a checked parent-content attestation."""
+
+    proof = passage.attestation
+    if proof is None or proof.unit_start is None or proof.unit_end is None:
+        return None
+    # Revalidation defeats model_copy/model_construct changes to the passage.
+    checked = PassageRecord.model_validate(passage.model_dump(mode="json"))
+    proof = checked.attestation
+    assert proof is not None and proof.unit_start is not None and proof.unit_end is not None
+    key = f"{proof.parent_content_digest}:{proof.unit_type}:{proof.unit_start}:{proof.unit_end}"
+    return key, proof.start_offset == proof.unit_start, proof.end_offset == proof.unit_end
+
+
 def expand_passage_context(
     passage: PassageRecord,
     *,
@@ -74,11 +88,14 @@ def expand_passage_context(
     limitations = [f"Expanded same-source context for {passage.passage_id}"]
     if start > 0 or end < len(outer.text):
         limitations.append("Known same-version context lies outside this bounded window")
+    outer_proof = outer.attestation
+    parent = outer_proof.parent if outer_proof is not None else passage.source_id
+    offset = outer_proof.start_offset if outer_proof is not None else 0
     window = extract_span(
-        passage.source_id,
-        outer.text,
-        char_start=start,
-        char_end=end,
+        parent,
+        outer.text if outer_proof is None else None,
+        char_start=offset + start,
+        char_end=offset + end,
         observed_at=clock(),
         provenance=expansion_provenance(),
         kind=PassageLocatorKind.BLOCK,
@@ -86,6 +103,12 @@ def expand_passage_context(
         source_version_id=passage.source_version_id,
         limitations=tuple(limitations),
         notes=(f"context-expansion-attempt={attempt}",),
+        _unit_scope=outer_proof.unit_type if outer_proof is not None else None,
+        _unit_span=(outer_proof.unit_start, outer_proof.unit_end)
+        if outer_proof is not None
+        and outer_proof.unit_start is not None
+        and outer_proof.unit_end is not None
+        else None,
     )
     return ContextExpansion(
         origin_passage_id=passage.passage_id,
@@ -158,12 +181,12 @@ def inspect_passage_context(
         and candidate.source_version_id == passage.source_version_id
         and candidate.locator.label != "context-window"
     )
-    boundary = passage.unit_boundary
-    if boundary is not None and boundary.starts_unit and boundary.ends_unit:
+    boundary = _attested_boundary(passage)
+    if boundary is not None and boundary[1] and boundary[2]:
         return ContextInspection(
             ContextCompleteness.COMPLETE,
             (),
-            f"Extractor attests complete {boundary.scope.value} unit",
+            "Extractor attests a complete immutable-content evidence unit",
         )
     containing, reason = _containing_candidate(passage, peers)
     if containing is not None:
@@ -181,18 +204,19 @@ def inspect_passage_context(
                 ContextCompleteness.UNKNOWN, (expansion,), str(expansion.blocked_reason)
             )
         span = window.locator
+        offset = outer.attestation.start_offset if outer.attestation is not None else 0
         omitted = any(
             candidate.passage_id != outer.passage_id and candidate.text not in outer.text
             for candidate in peers
         )
-        outer_boundary = outer.unit_boundary
+        outer_boundary = _attested_boundary(outer)
         if (
-            span.char_start == 0
-            and span.char_end == len(outer.text)
+            span.char_start == offset
+            and span.char_end == offset + len(outer.text)
             and not omitted
             and outer_boundary is not None
-            and outer_boundary.starts_unit
-            and outer_boundary.ends_unit
+            and outer_boundary[1]
+            and outer_boundary[2]
         ):
             return ContextInspection(
                 ContextCompleteness.COMPLETE,
@@ -201,11 +225,11 @@ def inspect_passage_context(
             )
         return ContextInspection(
             ContextCompleteness.TRUNCATED
-            if span.char_start != 0 or span.char_end != len(outer.text)
+            if span.char_start != offset or span.char_end != offset + len(outer.text)
             else ContextCompleteness.UNKNOWN,
             (expansion,),
             "Truncated: bounded window does not prove both evidence-unit boundaries"
-            if span.char_start != 0 or span.char_end != len(outer.text)
+            if span.char_start != offset or span.char_end != offset + len(outer.text)
             else "Stored content does not prove both evidence-unit boundaries",
         )
     if "ambiguous" in reason:
@@ -266,21 +290,15 @@ def inspect_passage_context(
             or (_blocked(passage, attempt, "Neighbor exceeds bounded context window", clock),),
             "Truncated: known same-version context lies outside the neighboring window",
         )
-    boundaries = (boundary, *(neighbor.unit_boundary for neighbor in neighbors))
+    boundaries = (boundary, *(_attested_boundary(neighbor) for neighbor in neighbors))
     same_unit = (
         all(item is not None for item in boundaries)
-        and len({item.unit_id for item in boundaries if item is not None}) == 1
+        and len({item[0] for item in boundaries if item is not None}) == 1
     )
-    starts = (
-        bool(before[0].unit_boundary.starts_unit)
-        if before and before[0].unit_boundary
-        else bool(boundary and boundary.starts_unit)
-    )
-    ends = (
-        bool(after[0].unit_boundary.ends_unit)
-        if after and after[0].unit_boundary
-        else bool(boundary and boundary.ends_unit)
-    )
+    before_boundary = _attested_boundary(before[0]) if before else None
+    after_boundary = _attested_boundary(after[0]) if after else None
+    starts = bool(before_boundary[1]) if before_boundary else bool(boundary and boundary[1])
+    ends = bool(after_boundary[2]) if after_boundary else bool(boundary and boundary[2])
     return ContextInspection(
         ContextCompleteness.COMPLETE
         if same_unit and starts and ends

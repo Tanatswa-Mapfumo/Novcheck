@@ -160,6 +160,7 @@ def verification(**overrides: object) -> SupportVerification:
                 passage_ids=("pass_1",),
             ),
         ),
+        "material_commitment_ids": ("mech",),
         "supported_portions": ("Sensor controls relay",),
         "relied_on_passage_ids": ("pass_1",),
         "context_completeness": "COMPLETE",
@@ -289,7 +290,7 @@ def test_support_verification_states_match_their_payloads() -> None:
     supported = verification()
     assert SupportVerification.model_validate(supported.model_dump(mode="json")) == supported
     record = CommitmentStateRecord(
-        commitment_id="mech",
+        commitment_id="context",
         dimension=ComparisonDimension.MECHANISM,
         state="NOT_SUPPORTED",
         rationale="Passage is about another domain",
@@ -304,6 +305,7 @@ def test_support_verification_states_match_their_payloads() -> None:
         )
     partial = verification(
         state=SupportVerificationState.PARTIALLY_SUPPORTED,
+        material_commitment_ids=("mech", "context"),
         commitment_states=(
             CommitmentStateRecord(
                 commitment_id="mech",

@@ -146,12 +146,17 @@ def make_passage(
 
 
 def make_version(source_id: str = "src_alpha", **overrides: object) -> SourceVersionRecord:
+    default_content = (
+        "A threshold drives a relay coil and switches a load without an operator."
+        if source_id == "src_1"
+        else f"Content of {source_id}"
+    )
     values: dict[str, object] = {
         "version_id": "srcv_" + source_id.removeprefix("src_") + "_v1",
         "source_id": source_id,
         "version_label": "v1",
         "version_kind": VersionKind.PREPRINT,
-        "content_hash": text_hash(f"Content of {source_id}"),
+        "content_hash": text_hash(default_content),
         "access_state": SourceAccessState.FULL_TEXT,
         "observed_at": NOW,
         "provenance": phase5_provenance("make_version"),

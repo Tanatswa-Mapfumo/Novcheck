@@ -161,6 +161,7 @@ class SupportVerification(ContractModel):
     mcu_id: MCUId
     state: SupportVerificationState
     commitment_states: tuple[CommitmentStateRecord, ...] = Field(min_length=1)
+    material_commitment_ids: tuple[NonBlankText, ...] = Field(min_length=1)
     supported_portions: tuple[NonBlankText, ...] = ()
     unsupported_portions: tuple[NonBlankText, ...] = ()
     contradictions: tuple[NonBlankText, ...] = ()
@@ -175,6 +176,13 @@ class SupportVerification(ContractModel):
 
     @model_validator(mode="after")
     def state_matches_payload(self) -> Self:
+        identities = [record.commitment_id for record in self.commitment_states]
+        if len(set(identities)) != len(identities):
+            raise ValueError("Support verification contains duplicate commitment IDs")
+        if len(set(self.material_commitment_ids)) != len(self.material_commitment_ids) or set(
+            identities
+        ) != set(self.material_commitment_ids):
+            raise ValueError("Every material commitment must have exactly one judgment")
         if self.state != derive_support_state(self.commitment_states):
             raise ValueError("Aggregate support state disagrees with commitment records")
         canonical_reliance = tuple(

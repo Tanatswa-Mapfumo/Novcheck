@@ -13,10 +13,11 @@ produced here.
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Literal
 
-from pydantic import JsonValue
+from pydantic import ConfigDict, JsonValue, model_validator
 
-from novelty_harness.domain.base import utc_now
+from novelty_harness.domain.base import ContractModel, utc_now
 from novelty_harness.domain.enums import AssessmentStage, PrecedentState, TraceStatus
 from novelty_harness.domain.idea import ArtifactProvenance
 from novelty_harness.domain.ids import AssessmentId, MCUId, SourceId, new_trace_event_id
@@ -49,7 +50,6 @@ from novelty_harness.evidence.mapping.models import EvidenceProposition, SourceM
 from novelty_harness.evidence.normalization.models import (
     SourceAccessState,
     SourceRecord,
-    SourceType,
     SourceVersionRecord,
 )
 from novelty_harness.evidence.passages.models import PassageRecord
@@ -68,12 +68,14 @@ from novelty_harness.evidence.precedent.models import (
 )
 from novelty_harness.evidence.precedent.patent import (
     PatentEvidenceEntry,
+    patent_entry_from_comparison,
     patent_locator_from_passage,
     screen_patent_references,
 )
 from novelty_harness.evidence.quality.models import EvidenceQualityAssessment
 from novelty_harness.evidence.verification.gates import build_verified_evidence_edge
 from novelty_harness.evidence.verification.integrity import (
+    VerifiedComparison,
     VerifiedEvidenceChain,
     verified_comparison,
 )
@@ -101,6 +103,56 @@ _PIPELINE_PROVENANCE = ArtifactProvenance(
 )
 
 
+class CandidateAssessmentResult(ContractModel):
+    """One aligned local result, including explicit failures without a chain."""
+
+    model_config = ConfigDict(frozen=True)
+    assessment_id: AssessmentId
+    source_id: SourceId
+    target_mcu_id: MCUId
+    target_kind: Literal["MCU", "COMBINATION"]
+    combination_id: str | None = None
+    status: Literal["ASSESSED", "UNASSESSABLE"]
+    chain: VerifiedComparison | None = None
+    classification: PrecedentClassification
+    failure: str | None = None
+
+    @model_validator(mode="after")
+    def aligned(self) -> "CandidateAssessmentResult":
+        from novelty_harness.runtime.tracing.hashing import canonical_hash
+
+        if (self.target_kind == "COMBINATION") != (self.combination_id is not None):
+            raise ValueError("Candidate combination target identity is incomplete")
+        if self.target_kind == "COMBINATION" and self.target_mcu_id != (
+            "mcu_comb_" + canonical_hash(self.combination_id)[:24]
+        ):
+            raise ValueError("Candidate combination target identity differs")
+        if (
+            self.classification.source_id != self.source_id
+            or self.classification.mcu_id != self.target_mcu_id
+        ):
+            raise ValueError("Candidate classification belongs to another source/target")
+        if self.status == "UNASSESSABLE":
+            if (
+                self.chain is not None
+                or self.failure is None
+                or self.classification.relation != PrecedentState.UNASSESSABLE
+            ):
+                raise ValueError("Unassessable candidate requires a failure and no chain")
+        elif self.chain is None or self.failure is not None:
+            raise ValueError("Assessed candidate requires a chain and no failure")
+        else:
+            chain = VerifiedComparison.model_validate(self.chain.model_dump(mode="json"))
+            if (
+                chain.assessment_id != self.assessment_id
+                or chain.source_id != self.source_id
+                or chain.mcu_id != self.target_mcu_id
+            ):
+                raise ValueError("Candidate chain belongs to another comparison")
+            ClassifiedComparison(comparison=chain, classification=self.classification)
+        return self
+
+
 @dataclass(frozen=True, slots=True)
 class Phase6EvidenceResult:
     profiles: tuple[MCUComparisonProfile, ...]
@@ -112,6 +164,7 @@ class Phase6EvidenceResult:
     edges: tuple[VerifiedEvidenceEdge, ...]
     chains: tuple[VerifiedEvidenceChain, ...]
     classifications: tuple[PrecedentClassification, ...]
+    candidate_assessments: tuple[CandidateAssessmentResult, ...]
     multi_source: tuple[MultiSourceAssessment, ...]
     patent_screenings: tuple[PatentScreeningResult, ...]
     unassessed_sources: tuple[SourceId, ...]
@@ -157,19 +210,19 @@ def select_candidate_sources(
     """
 
     wanted = {target_id, *member_ids}
-    routed = [
-        source
-        for source in sources
-        if any(path.mcu_id in wanted for path in source.discovery_paths)
-    ]
-    pool = routed or list(sources)
     eligible = [
         source
-        for source in pool
+        for source in sources
         if source.access_state in {SourceAccessState.FULL_TEXT, SourceAccessState.ABSTRACT_ONLY}
         and passages_by_source.get(source.source_id)
     ]
-    ordered = sorted(eligible, key=lambda source: source.source_id)
+    ordered = sorted(
+        eligible,
+        key=lambda source: (
+            not any(path.mcu_id in wanted for path in source.discovery_paths),
+            source.source_id,
+        ),
+    )
     return CandidateSelection(
         selected=tuple(ordered[:max_sources]),
         unassessed_sources=tuple(source.source_id for source in ordered[max_sources:]),
@@ -251,6 +304,8 @@ class EvidenceVerificationPipeline:
         self,
         *,
         assessment_id: AssessmentId,
+        target_kind: Literal["MCU", "COMBINATION"],
+        combination_id: str | None,
         proposition: EvidenceProposition,
         source: SourceRecord,
         version: SourceVersionRecord | None,
@@ -264,6 +319,7 @@ class EvidenceVerificationPipeline:
         edges: list[VerifiedEvidenceEdge],
         chains: list[VerifiedEvidenceChain],
         classifications: list[PrecedentClassification],
+        candidate_assessments: list[CandidateAssessmentResult],
         target_classifications: list[PrecedentClassification],
         failures: list[str],
         emit: Callable[..., None],
@@ -296,6 +352,18 @@ class EvidenceVerificationPipeline:
             )
             classifications.append(unassessable)
             target_classifications.append(unassessable)
+            candidate_assessments.append(
+                CandidateAssessmentResult(
+                    assessment_id=assessment_id,
+                    source_id=source.source_id,
+                    target_mcu_id=proposition.mcu_id,
+                    target_kind=target_kind,
+                    combination_id=combination_id,
+                    status="UNASSESSABLE",
+                    classification=unassessable,
+                    failure=failure,
+                )
+            )
             return
         mappings.append(mapping)
         emit(
@@ -331,6 +399,18 @@ class EvidenceVerificationPipeline:
             )
             classifications.append(unassessable)
             target_classifications.append(unassessable)
+            candidate_assessments.append(
+                CandidateAssessmentResult(
+                    assessment_id=assessment_id,
+                    source_id=source.source_id,
+                    target_mcu_id=proposition.mcu_id,
+                    target_kind=target_kind,
+                    combination_id=combination_id,
+                    status="UNASSESSABLE",
+                    classification=unassessable,
+                    failure=failure,
+                )
+            )
             return
         retry = await verify_with_context_retry(
             self.verifier,
@@ -437,6 +517,18 @@ class EvidenceVerificationPipeline:
         )
         classifications.append(classification)
         target_classifications.append(classification)
+        candidate_assessments.append(
+            CandidateAssessmentResult(
+                assessment_id=assessment_id,
+                source_id=source.source_id,
+                target_mcu_id=proposition.mcu_id,
+                target_kind=target_kind,
+                combination_id=combination_id,
+                status="ASSESSED",
+                chain=verified_comparison(final_chain),
+                classification=classification,
+            )
+        )
         emit(
             "PRECEDENT_CLASSIFICATION",
             {
@@ -526,6 +618,7 @@ class EvidenceVerificationPipeline:
         edges: list[VerifiedEvidenceEdge] = []
         chains: list[VerifiedEvidenceChain] = []
         classifications: list[PrecedentClassification] = []
+        candidate_assessments: list[CandidateAssessmentResult] = []
         multi_source_summaries: list[MultiSourceAssessment] = []
         unassessed_sources: list[SourceId] = []
         unassessed_versions: list[str] = []
@@ -564,6 +657,8 @@ class EvidenceVerificationPipeline:
                         continue
                     await self._assess_candidate(
                         assessment_id=assessment_id,
+                        target_kind=profile.target_kind,
+                        combination_id=profile.combination_id,
                         proposition=proposition,
                         source=source,
                         version=version,
@@ -577,15 +672,24 @@ class EvidenceVerificationPipeline:
                         edges=edges,
                         chains=chains,
                         classifications=classifications,
+                        candidate_assessments=candidate_assessments,
                         target_classifications=target_classifications,
                         failures=failures,
                         emit=emit,
                         clock=clock,
                     )
+            target_comparisons = tuple(
+                ClassifiedComparison(comparison=item.chain, classification=item.classification)
+                for item in candidate_assessments
+                if item.target_mcu_id == profile.target_id and item.chain is not None
+            )
             summary = summarize_multi_source(
-                target_classifications,
+                target_comparisons,
                 mcu_id=profile.target_id,
                 independent_root_of=independent_root_of,
+                assessment_id=assessment_id,
+                target_kind=profile.target_kind,
+                combination_id=profile.combination_id,
             )
             multi_source_summaries.append(summary)
             emit(
@@ -598,10 +702,12 @@ class EvidenceVerificationPipeline:
             )
 
         patent_screenings: list[PatentScreeningResult] = []
-        classification_by_verification = {
-            classification.verification_id: classification
-            for classification in classifications
-            if classification.verification_id is not None
+        classified_by_edge = {
+            item.chain.chain.edge.edge_id: ClassifiedComparison(
+                comparison=item.chain, classification=item.classification
+            )
+            for item in candidate_assessments
+            if item.chain is not None
         }
         for profile, proposition, _ in targets:
             entries: list[PatentEvidenceEntry] = []
@@ -611,28 +717,20 @@ class EvidenceVerificationPipeline:
                 source = next((item for item in sources if item.source_id == edge.source_id), None)
                 if source is None:
                     continue
-                classification = classification_by_verification.get(edge.verification_id)
-                if classification is None:
+                classified = classified_by_edge.get(edge.edge_id)
+                if classified is None:
                     continue
+                all_cited_passages = (
+                    *classified.comparison.chain.bundle.passages,
+                    *classified.comparison.chain.context_passages,
+                )
                 locators = tuple(
                     patent_locator_from_passage(edge.source_id, passage_id, passage.locator)
                     for passage_id in edge.passage_ids
-                    for passage in passages_by_source.get(edge.source_id, ())
+                    for passage in all_cited_passages
                     if passage.passage_id == passage_id
                 )
-                entries.append(
-                    PatentEvidenceEntry(
-                        source_id=edge.source_id,
-                        source_version_id=edge.source_version_id,
-                        mcu_id=profile.target_id,
-                        is_patent=source.source_type == SourceType.PATENT,
-                        classification=classification,
-                        priority_date=source.dates.patent_priority_date,
-                        publication_date=source.dates.patent_publication_date,
-                        chronology=edge.chronology,
-                        locators=locators,
-                    )
-                )
+                entries.append(patent_entry_from_comparison(classified, locators=locators))
             if entries:
                 screening = screen_patent_references(
                     mcu_id=profile.target_id,
@@ -717,7 +815,9 @@ class EvidenceVerificationPipeline:
                     comparison=verified_comparison(chain),
                     classification=classification,
                 )
-                for chain, classification in zip(chains, classifications, strict=True)
+                for item in candidate_assessments
+                if item.chain is not None
+                for chain, classification in ((item.chain.chain, item.classification),)
             ),
         )
         emit(
@@ -760,6 +860,7 @@ class EvidenceVerificationPipeline:
             edges=tuple(edges),
             chains=tuple(chains),
             classifications=tuple(classifications),
+            candidate_assessments=tuple(candidate_assessments),
             multi_source=tuple(multi_source_summaries),
             patent_screenings=tuple(patent_screenings),
             unassessed_sources=tuple(dict.fromkeys(unassessed_sources)),

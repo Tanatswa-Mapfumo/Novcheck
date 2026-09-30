@@ -76,6 +76,16 @@ requirements:
     status: VerifiedComparison and ClassifiedComparison bind the full semantic chain; repository derives Phase 6 graph attributes and schema v4 separates immutable edges from append-only observations
     modules: [evidence/verification/integrity.py, evidence/precedent/gates.py, evidence/graph/phase6_mapping.py, evidence/graph/sqlalchemy_repository.py, evidence/graph/migrations.py]
     tests: [tests/adversarial/test_phase6_contract_consolidation.py, tests/integration/test_phase5_slice_with_phase6_evidence.py]
+  - ids: [FR-EVID-001, FR-EVID-004, FR-EVID-005, FR-SRC-002, FR-AUD-002]
+    sections: [26, 27, 28, 44]
+    status: Immutable resolved source/version content anchors extractor-owned passage attestations and context completeness; every cited Phase 6 passage must resolve to the authoritative content digest
+    modules: [evidence/passages/models.py, evidence/passages/extraction.py, evidence/context/expansion.py, evidence/verification/integrity.py, evidence/verification/gates.py]
+    tests: [tests/adversarial/test_phase6_provenance_hardening.py, tests/integration/test_phase5_slice_with_phase6_evidence.py]
+  - ids: [FR-EVID-004, FR-EXP-003, FR-SRC-001]
+    sections: [20, 27, 39.1]
+    status: Public gates revalidate copied artifacts; exact material-commitment judgments, all-source coverage, aligned candidate failures, authenticated patent chronology and target-bound summaries prevent cross-contract bypasses
+    modules: [evidence/verification/models.py, evidence/verification/gates.py, evidence/precedent/gates.py, evidence/precedent/patent.py, evidence/phase6_pipeline.py, evidence/graph/migrations.py]
+    tests: [tests/adversarial/test_phase6_provenance_hardening.py, tests/integration/test_phase5_slice_with_phase6_evidence.py]
 review:
   required_reviewer: GPT-6 Sol High
   reviewed_commit: e4683fd
@@ -91,7 +101,11 @@ review:
   final_review_decision: FAIL (F02, F03, F06, F07, F10 and N02 open; F01, F04, F05, F08, F09, N01, F11 and M01 closed)
   contract_consolidation: CitedDisclosure, evidence-unit boundaries, derived aggregate support, VerifiedComparison, repository-derived graph projection and schema-v4 verification observations
   contract_decisions: [ADR-033, ADR-034, ADR-035]
-  status: GATE 30 OPEN - contract consolidation requires fresh independent GPT-6 Sol High/Max semantic re-review
+  latest_reviewed_commit: 47021af9826c431b8900589e57099bd2749d4872
+  latest_review_decision: FAIL (R01-R08 important or critical; R09 minor)
+  provenance_hardening: R01-R09 implementation with immutable content attestations, public boundary revalidation, aligned candidates and authenticated patent screening
+  provenance_hardening_decisions: [ADR-036, ADR-030, ADR-034, ADR-035]
+  status: GATE 30 OPEN - provenance hardening requires fresh independent GPT-6 Sol High/Max semantic re-review
   scope: [mapper/verifier separation, verifier blindness, relationship/control-flow preservation, single-source direct precedent, anti-stitching, chronology gates, context expansion, patent single-reference semantics, graph-edge eligibility, benchmark behavior, adversarial cases, Phase 7 leakage]
 deferred:
   - Phase 7 prosecutor/defender, counterbalanced adjudication, four adjudication gates, verdict permission matrix and abstention

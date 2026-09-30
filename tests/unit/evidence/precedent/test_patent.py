@@ -71,7 +71,139 @@ def entry(
     source_version_id: str | None = None,
     chronology: ChronologyAssessment | None = None,
     locators: tuple = (),
+    authenticated: bool = True,
 ) -> PatentEvidenceEntry:
+    if authenticated:
+        from novelty_harness.domain.enums import SupportVerificationState
+        from novelty_harness.domain.evidence import SourceDates
+        from novelty_harness.evidence.context.selection import SupportEvidenceBundle
+        from novelty_harness.evidence.normalization.models import SourceType
+        from novelty_harness.evidence.passages.extraction import (
+            extract_resolved_content,
+            resolve_version_content,
+        )
+        from novelty_harness.evidence.passages.hashing import text_hash
+        from novelty_harness.evidence.precedent.gates import (
+            ClassifiedComparison,
+            classify_verified_comparison,
+        )
+        from novelty_harness.evidence.verification.gates import build_verified_evidence_edge
+        from novelty_harness.evidence.verification.integrity import (
+            VerifiedEvidenceChain,
+            verified_comparison,
+        )
+        from tests.fixtures.phase5 import make_source, make_version
+        from tests.unit.evidence.verification.test_eligibility import (
+            PASSAGE_TEXT,
+        )
+        from tests.unit.evidence.verification.test_eligibility import (
+            bundle as eligibility_bundle,
+        )
+        from tests.unit.evidence.verification.test_eligibility import (
+            mapping as eligibility_mapping,
+        )
+        from tests.unit.evidence.verification.test_eligibility import (
+            proposition as eligibility_proposition,
+        )
+        from tests.unit.evidence.verification.test_eligibility import (
+            verification as eligibility_verification,
+        )
+
+        record = make_source(
+            source_id,
+            source_type=SourceType.PATENT if is_patent else SourceType.PAPER,
+            content_hash=text_hash(PASSAGE_TEXT),
+            dates=SourceDates(
+                patent_priority_date=priority,
+                patent_publication_date=publication,
+                publication_date=publication,
+            ),
+        )
+        cited_date = chronology.decisive_date if chronology is not None else None
+        version = (
+            make_version(
+                source_id,
+                version_id=source_version_id,
+                content_hash=text_hash(PASSAGE_TEXT),
+                published_date=cited_date,
+            )
+            if source_version_id is not None
+            else None
+        )
+        resolved = resolve_version_content(
+            source=record,
+            version=version,
+            text=PASSAGE_TEXT,
+        )
+        passage = extract_resolved_content(
+            resolved,
+            observed_at=NOW,
+            provenance=ORIGIN,
+        ).model_copy(update={"passage_id": "pass_1"})
+        base_bundle = eligibility_bundle()
+        claim = base_bundle.claim.model_copy(
+            update={
+                "source_id": source_id,
+                "source_version_id": source_version_id,
+            }
+        )
+        evidence_bundle = SupportEvidenceBundle(claim=claim, passages=(passage,))
+        mapped = eligibility_mapping().model_copy(
+            update={
+                "source_id": source_id,
+                "source_version_id": source_version_id,
+            }
+        )
+        support_state = (
+            SupportVerificationState.SUPPORTED
+            if decisive
+            else SupportVerificationState.PARTIALLY_SUPPORTED
+        )
+        verified = eligibility_verification(support_state).model_copy(
+            update={
+                "source_id": source_id,
+                "source_version_id": source_version_id,
+            }
+        )
+        cutoff = chronology.as_of if chronology is not None else AS_OF
+        edge = build_verified_evidence_edge(
+            mapping=mapped,
+            verification=verified,
+            proposition=eligibility_proposition(),
+            source=record,
+            bundle=evidence_bundle,
+            version=version,
+            as_of=cutoff,
+            observed_at=NOW,
+            assessment_id="asm_" + source_id,
+        )
+        chain = VerifiedEvidenceChain(
+            assessment_id="asm_" + source_id,
+            source=record,
+            version=version,
+            proposition=eligibility_proposition(),
+            mapping=mapped,
+            bundle=evidence_bundle,
+            verification=verified,
+            edge=edge,
+        )
+        comparison = verified_comparison(chain)
+        classified = ClassifiedComparison(
+            comparison=comparison,
+            classification=classify_verified_comparison(comparison, clock=lambda: NOW),
+        )
+        return PatentEvidenceEntry(
+            source_id=source_id,
+            source_version_id=source_version_id,
+            mcu_id="mcu_1",
+            is_patent=is_patent,
+            classification=classified.classification,
+            priority_date=priority,
+            publication_date=publication,
+            chronology=edge.chronology,
+            comparison=classified,
+            locators=locators,
+        )
     values: dict[str, object] = {
         "source_id": source_id,
         "source_version_id": source_version_id,
@@ -466,6 +598,7 @@ def test_versioned_entry_rejects_parent_only_chronology() -> None:
             "src_patent_a",
             source_version_id="srcv_patent_a_new",
             chronology=parent_chronology,
+            authenticated=False,
         )
 
 

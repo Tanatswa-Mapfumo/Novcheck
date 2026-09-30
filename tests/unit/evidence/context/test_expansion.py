@@ -11,8 +11,6 @@ from novelty_harness.evidence.context.selection import (
     SupportEvidenceBundle,
 )
 from novelty_harness.evidence.passages.models import (
-    EvidenceUnitBoundary,
-    EvidenceUnitScope,
     PassageLocator,
     PassageLocatorKind,
 )
@@ -34,22 +32,25 @@ def inner(text: str = "The method is effective."):
 
 
 def document(text: str, *, source_id: str = "src_1", version: str | None = VERSION):
-    return make_passage(
-        source_id,
-        text=text,
-        passage_id="pass_document",
-        source_version_id=version,
-        provenance=ORIGIN,
-    ).model_copy(
-        update={
-            "unit_boundary": EvidenceUnitBoundary(
-                unit_id="unit_test_document",
-                scope=EvidenceUnitScope.DOCUMENT,
-                starts_unit=True,
-                ends_unit=True,
-            )
-        }
+    from novelty_harness.evidence.passages.extraction import (
+        extract_resolved_content,
+        resolve_version_content,
     )
+    from novelty_harness.evidence.passages.hashing import text_hash
+    from tests.fixtures.phase5 import make_source, make_version
+
+    source = make_source(source_id, content_hash=text_hash(text))
+    version_record = (
+        make_version(source_id, version_id=version, content_hash=text_hash(text))
+        if version is not None
+        else None
+    )
+    resolved = resolve_version_content(source=source, version=version_record, text=text)
+    return extract_resolved_content(
+        resolved,
+        observed_at=NOW,
+        provenance=ORIGIN,
+    ).model_copy(update={"passage_id": "pass_document"})
 
 
 def bundle_for(passage):
@@ -266,14 +267,17 @@ def test_located_same_version_neighbor_is_supplied_as_exact_passage() -> None:
         }
     )
     neighbor_text = "However, it failed in all cases."
-    neighbor = document(neighbor_text).model_copy(
-        update={
-            "locator": PassageLocator(
-                kind=PassageLocatorKind.BLOCK,
-                char_start=len(target.text),
-                char_end=len(target.text) + len(neighbor_text),
-            )
-        }
+    neighbor = make_passage(
+        "src_1",
+        text=neighbor_text,
+        passage_id="pass_document",
+        source_version_id=VERSION,
+        provenance=ORIGIN,
+        locator=PassageLocator(
+            kind=PassageLocatorKind.BLOCK,
+            char_start=len(target.text),
+            char_end=len(target.text) + len(neighbor_text),
+        ),
     )
     inspection = inspect_passage_context(
         target,

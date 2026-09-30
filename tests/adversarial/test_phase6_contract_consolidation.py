@@ -21,11 +21,14 @@ from novelty_harness.evidence.graph.retrieval_mapping import (
     version_graph_node,
 )
 from novelty_harness.evidence.graph.sqlalchemy_repository import SqlAlchemyEvidenceGraphRepository
+from novelty_harness.evidence.normalization.models import SourceAccessState
 from novelty_harness.evidence.passages.extraction import (
     extract_abstract,
     extract_resolved_content,
     extract_span,
+    resolve_version_content,
 )
+from novelty_harness.evidence.passages.hashing import text_hash
 from novelty_harness.evidence.passages.models import PassageLocator, PassageLocatorKind
 from novelty_harness.evidence.precedent.gates import (
     ClassificationFacts,
@@ -273,12 +276,23 @@ def test_f03_one_sided_neighbor_never_proves_both_unit_boundaries(neighbor_befor
 
 
 def test_f03_complete_abstract_is_complete_only_within_abstract_scope() -> None:
+    content = "A complete abstract describes the relay."
+    resolved = resolve_version_content(
+        source=source(
+            access_state=SourceAccessState.ABSTRACT_ONLY, content_hash=text_hash(content)
+        ),
+        version=make_version(
+            "src_1",
+            version_id="srcv_1_v1",
+            access_state=SourceAccessState.ABSTRACT_ONLY,
+            content_hash=text_hash(content),
+        ),
+        text=content,
+    )
     abstract = extract_abstract(
-        "src_1",
-        "A complete abstract describes the relay.",
+        resolved,
         observed_at=NOW,
         provenance=phase5_provenance("complete-abstract"),
-        source_version_id="srcv_1_v1",
     )
     inspection = inspect_passage_context(
         abstract,
@@ -520,13 +534,18 @@ def _persist_complex_valid_case(
     target = "mcu_comb_contract" if combination else "mcu_1"
     prop = proposition().model_copy(update={"mcu_id": target})
     mapped = mapping().model_copy(update={"mcu_id": target})
-    second = make_passage(
-        "src_1",
-        text="The load also switches without an operator.",
-        passage_id="pass_2",
-        source_version_id=version.version_id,
-    )
     original = bundle()
+    parent = original.passages[0].attestation
+    assert parent is not None
+    second_text = "switches a load without an operator."
+    start = parent.parent.text.index(second_text)
+    second = extract_span(
+        parent.parent,
+        char_start=start,
+        char_end=start + len(second_text),
+        observed_at=NOW,
+        provenance=phase5_provenance("multi-passage"),
+    ).model_copy(update={"passage_id": "pass_2"})
     passages = (original.passages[0],) if combination else (original.passages[0], second)
     ids = tuple(item.passage_id for item in passages)
     claim = original.claim.model_copy(update={"mcu_id": target, "passage_ids": ids})

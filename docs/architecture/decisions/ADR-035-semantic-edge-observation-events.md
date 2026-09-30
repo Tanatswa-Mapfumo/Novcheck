@@ -30,3 +30,9 @@ blocks migration until reprocessed; it is never silently authoritative.
 Re-observation and historical reassessment coexist without overwrite.
 Repository transactions roll back an observation if graph projection or
 identity validation fails.
+
+## Provenance hardening amendment (30 September 2026)
+
+The legacy verified-artifact guard applies to v2 as well as v3 databases,
+including orphan verified rows with no corresponding graph edge. Such rows
+lack the current authoritative chain and require reprocessing before migration.
