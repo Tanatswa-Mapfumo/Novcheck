@@ -890,3 +890,60 @@ Implementation tests and verification do not replace the fresh independent
 Stage-1 provenance re-review. This record does not close R10 or Gate 30.
 
 Gate 30 remains OPEN pending fresh independent Stage-1 provenance re-review.
+
+---
+
+## Independent Stage-1 provenance kill-test of `f355b433a4f4dc3a4958c7be7c0669f94b63fda7`
+
+**Reviewed state:** exact commit `f355b433a4f4dc3a4958c7be7c0669f94b63fda7` on `phase-6-evidence-verification`. This review changed no production code or tests. It stopped at Stage 1 after the following Important bypass; the full Gate-30 review and full verification suite were not run. Phase 7 was not started.
+
+**Stage 1: FAIL — R11 (Important), provisional classifications escape before content-authority reconciliation.** The repository's R10 check rejects a conflicting stored version digest and rolls back its semantic tables. However, `phase6_pipeline.py::_assess_candidate` emits `PRECEDENT_CLASSIFICATION` with `TraceStatus.SUCCESS` before `run` calls `repository.upsert`. The same `run` computes and emits successful `MULTI_SOURCE_ASSESSMENT` and `PATENT_SCREENING` events before that call. `classify_verified_comparison` calls its output provisional in a docstring, but no provisional type or flag prevents these downstream uses. The application's `JsonlTraceSink` writes the events immediately to `trace.jsonl`; a later repository rollback cannot retract them. This violates the Stage-1 requirement that a comparison derived from content conflicting with immutable authority cannot be presented as authoritative, including through an output written outside the authoritative transaction.
+
+**Independent reproduction:** Using the existing deterministic Phase 5/6 fixture, obtain internally consistent evidence for source `src_8a0415e078bc6a9fb6e9a72081c68a6bedd0de5c050d734abf49addd31c71d08`, version `srcv_2e95a77bc2dd7d915dac4c1ac70513f49979fb47c3858ea2b19019bd9eee0e2c`, with incoming content digest `7a7b5759734ec46553e926f8ccc1dc273513d60dc6c09dc6e93203f5b572cac2`. In a separate repository, seed a normal `SOURCE` node and a same-ID `SOURCE_VERSION` node with digest `a8e6a985acc0141fe341238f86931786d2c261e840552198a214e1932a613bc5`. Run `verify_evidence_against_mcus` with the original evidence, that repository, the scripted provider, and a real `JsonlTraceSink`. The repository raises `ValueError: Version content authority conflicts with semantic chain`. Its `verified_edges`, `verification_observations`, `verified_chains`, and `verified_classifications` tables each have zero rows afterward. Yet the durable trace contains **three** `PRECEDENT_CLASSIFICATION` events for the conflicting source, each with `status=SUCCESS` and `relation=DIRECT_PRECEDENT`; it also contains three successful multi-source summary events and three successful patent-screening events. No result object was returned, but these append-only trace assertions survived the rejection. The probe used a temporary database and trace, with no repository code or fixture edits.
+
+**Required correction:** Reconcile source/version content authority before emitting or consuming a classification as an assessed finding. Ensure summary, patent screening, and success trace publication occur only after the authoritative repository transaction succeeds, or make provisional output structurally distinct and prevent it from reaching these sinks and downstream APIs. A regression should seed a conflicting stored version, run the pipeline with a durable trace sink, and assert that no successful direct-classification, summary, or patent-screening assertion survives; retain the positive exact-match path. Repository rejection and rollback already work for the tested mismatch, but that does not close this output boundary.
+
+**Verification scope:** Two focused offline pipeline probes reproduced the issue, first with a stored-node change and then with a clean separate repository seeded through `upsert`. The second used the production `JsonlTraceSink`. The dedicated R10 tests and full `scripts/verify.py` were not run after this Stage-1 failure, as the requested kill-test instructs. Gate 30 remains blocked pending repair and another independent Stage-1 review.
+
+Acceptance Gate 30: FAIL — Phase 6 remains blocked.
+
+---
+
+## R11 authoritative-publication implementation record (not an independent review)
+
+The independent Stage-1 **FAIL** for R11 at `f355b433` remains unchanged.
+This section records implementation evidence only; it does not close R11 or
+grant Gate 30 acceptance. Phase 7 was not started.
+
+The repository now returns an immutable `Phase6CommitReceipt` only after its
+semantic transaction commits. Phase 6 commits each assessed comparison before
+publishing mapping, verification or classification success. A content-authority
+rejection becomes an explicit unassessable failure. Published multi-source and
+patent results use only committed comparisons, with actual receipt edge and
+classification IDs carried in stable success events. Exact replay keeps the
+same semantic identities and the JSONL sink skips an already delivered event
+ID. If trace delivery fails after commit, the repository remains authoritative;
+the run raises and can be retried. The returned Phase 6 result carries the
+receipts; the legacy Phase 7 projection refuses an edge without a matching
+receipt. ADR-036 records this publication boundary and the absence of a
+crash-safe transactional outbox requirement.
+
+`tests/adversarial/test_phase6_r11_authoritative_publication.py` was added
+before the production change. Its first conflict test failed against the
+reviewed behavior because a rejected chain left a successful
+`PRECEDENT_CLASSIFICATION` event, then passed after the repair. The suite
+covers version and unversioned conflicts, coordinated provenance fields,
+post-commit receipt/trace timing, receipt-gated legacy projection, exact-match
+paths, mixed committed/rejected summaries and patent results, two legitimate
+partial patents, trace failure
+after commit, and idempotent replay. The R10 and R01-R09 adversarial suites
+remain in place.
+
+Implementation worktree checks after the code and tests: `uv sync --dev`
+passed with the writable uv cache; `uv run python scripts/verify.py` passed
+Ruff check, Ruff format (291 files), Pyright with 0 errors/0 warnings, and
+**1549 passed, 5 opt-in network tests deselected**. `git diff --check` passed.
+These implementation checks do not replace a fresh independent Stage-1
+provenance/publication re-review.
+
+Gate 30 remains OPEN pending fresh independent Stage-1 provenance/publication re-review.

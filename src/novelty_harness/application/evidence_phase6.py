@@ -6,7 +6,6 @@ from pathlib import Path
 
 from novelty_harness.domain.assessment import AssessmentRecord
 from novelty_harness.domain.base import utc_now
-from novelty_harness.domain.enums import PrecedentState
 from novelty_harness.domain.evidence import EvidenceComparison, EvidenceEdge
 from novelty_harness.domain.idea import ArtifactProvenance
 from novelty_harness.domain.mcu import MCU, MCUCombination
@@ -51,12 +50,29 @@ def project_verified_edges(result: Phase6EvidenceResult) -> tuple[EvidenceEdge, 
         for classification in result.classifications
         if classification.verification_id is not None
     }
+    committed = {
+        (edge_id, classification_id, receipt.assessment_id)
+        for receipt in result.commit_receipts
+        for edge_id, classification_id in zip(
+            receipt.committed_edge_ids,
+            receipt.committed_classification_ids,
+            strict=True,
+        )
+    }
     projected: list[EvidenceEdge] = []
     for edge in result.edges:
         classification = classifications.get(edge.verification_id)
-        relation = (
-            classification.relation if classification is not None else PrecedentState.UNRESOLVED
-        )
+        if (
+            classification is None
+            or (
+                edge.edge_id,
+                classification.classification_id,
+                edge.assessment_id,
+            )
+            not in committed
+        ):
+            raise ValueError("Verified edge has no matching authoritative commit receipt")
+        relation = classification.relation
         projected.append(
             EvidenceEdge(
                 edge_id=edge.edge_id,

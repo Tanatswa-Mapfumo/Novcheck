@@ -54,9 +54,15 @@ class JsonlTraceSink:
         self._path = path
 
     def emit(self, event: TraceEvent) -> None:
-        line = json.dumps(_snapshot(event).model_dump(mode="json"), allow_nan=False)
-        with _APPEND_LOCK, self._path.open("a", encoding="utf-8") as stream:
-            stream.write(line + "\n")
+        snapshot = _snapshot(event)
+        line = json.dumps(snapshot.model_dump(mode="json"), allow_nan=False)
+        with _APPEND_LOCK:
+            if self._path.exists():
+                for existing in self._path.read_text(encoding="utf-8").splitlines():
+                    if json.loads(existing).get("event_id") == snapshot.event_id:
+                        return
+            with self._path.open("a", encoding="utf-8") as stream:
+                stream.write(line + "\n")
 
 
 class InMemoryTraceSink:

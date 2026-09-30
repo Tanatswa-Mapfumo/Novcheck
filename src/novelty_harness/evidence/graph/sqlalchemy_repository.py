@@ -27,7 +27,11 @@ from novelty_harness.evidence.graph.models import (
     GraphNodeKind,
 )
 from novelty_harness.evidence.graph.phase6_mapping import verified_edge_graph_fragment
-from novelty_harness.evidence.graph.repository import GraphDirection
+from novelty_harness.evidence.graph.repository import (
+    ContentAuthorityError,
+    GraphDirection,
+    Phase6CommitReceipt,
+)
 from novelty_harness.evidence.graph.sqlalchemy_models import (
     GraphEdgeRow,
     GraphNodeRow,
@@ -103,7 +107,21 @@ class SqlAlchemyEvidenceGraphRepository:
         verified_edges: Sequence[VerifiedEvidenceEdge] = (),
         verified_chains: Sequence[VerifiedEvidenceChain] = (),
         classified_comparisons: Sequence[ClassifiedComparison] = (),
-    ) -> None:
+    ) -> Phase6CommitReceipt | None:
+        receipt: Phase6CommitReceipt | None = None
+        if classified_comparisons:
+            assessments = {item.comparison.assessment_id for item in classified_comparisons}
+            if len(assessments) != 1:
+                raise ValueError("One Phase 6 commit must belong to one assessment")
+            receipt = Phase6CommitReceipt(
+                assessment_id=next(iter(assessments)),
+                committed_edge_ids=tuple(
+                    item.comparison.chain.edge.edge_id for item in classified_comparisons
+                ),
+                committed_classification_ids=tuple(
+                    item.classification.classification_id for item in classified_comparisons
+                ),
+            )
         with Session(self._engine) as session, session.begin():
             self._verify_edge_endpoints(session, nodes, edges)
             batch_chains = {chain.edge.edge_id: chain for chain in verified_chains}
@@ -138,6 +156,7 @@ class SqlAlchemyEvidenceGraphRepository:
                 self._persist_edge(session, derived_edges.get(edge.edge_id, edge))
             for cluster in clusters:
                 self._persist_cluster(session, cluster)
+        return receipt
 
     def _verify_edge_endpoints(
         self,
@@ -284,13 +303,17 @@ class SqlAlchemyEvidenceGraphRepository:
             supplied = tuple(node for node in batch_nodes if node.node_id == identity)
             candidates = ((stored,) if stored is not None else ()) + supplied
             if not candidates or any(node.kind != kind for node in candidates):
-                raise ValueError(f"No matching {kind.value} content authority for {identity}")
+                raise ContentAuthorityError(
+                    f"No matching {kind.value} content authority for {identity}"
+                )
             first = candidates[0]
             for node in candidates[1:]:
                 if any(
                     node.attributes.get(field) != first.attributes.get(field) for field in fields
                 ):
-                    raise ValueError(f"Conflicting {kind.value} content authority for {identity}")
+                    raise ContentAuthorityError(
+                        f"Conflicting {kind.value} content authority for {identity}"
+                    )
             return first
 
         source = authority(
@@ -301,20 +324,20 @@ class SqlAlchemyEvidenceGraphRepository:
         stored_source_hash = source.attributes.get("content_hash")
         stored_source_access = source.attributes.get("access_state")
         if stored_source_hash is not None and stored_source_hash != chain.source.content_hash:
-            raise ValueError("Source content authority conflicts with semantic chain")
+            raise ContentAuthorityError("Source content authority conflicts with semantic chain")
         if (
             stored_source_access is not None
             and stored_source_access != chain.source.access_state.value
         ):
-            raise ValueError("Source access authority conflicts with semantic chain")
+            raise ContentAuthorityError("Source access authority conflicts with semantic chain")
 
         if chain.version is None:
             expected_digest = chain.source.content_hash
             expected_access = chain.source.access_state.value
             if expected_digest is None or stored_source_hash != expected_digest:
-                raise ValueError("Unversioned source has no matching content authority")
+                raise ContentAuthorityError("Unversioned source has no matching content authority")
             if stored_source_access != expected_access:
-                raise ValueError(
+                raise ContentAuthorityError(
                     "Unversioned source access authority conflicts with semantic chain"
                 )
         else:
@@ -330,7 +353,9 @@ class SqlAlchemyEvidenceGraphRepository:
                 or version.attributes.get("content_hash") != expected_digest
                 or version.attributes.get("access_state") != expected_access
             ):
-                raise ValueError("Version content authority conflicts with semantic chain")
+                raise ContentAuthorityError(
+                    "Version content authority conflicts with semantic chain"
+                )
 
         for passage in (*chain.bundle.passages, *chain.context_passages):
             proof = passage.attestation
@@ -340,7 +365,7 @@ class SqlAlchemyEvidenceGraphRepository:
                 or proof.parent.access_state.value != expected_access
                 or passage.access_state.value != expected_access
             ):
-                raise ValueError("Passage provenance conflicts with content authority")
+                raise ContentAuthorityError("Passage provenance conflicts with content authority")
 
     def _verify_phase6_edges(
         self,

@@ -73,3 +73,27 @@ existing persisted node as authority if one is present. A conflict rejects
 the whole batch. A chain-only `VerifiedComparison` or precedent classification
 is provisional until this repository validation succeeds; the classifier has
 no independent authority to replace persisted content.
+
+## R11 amendment: authoritative publication after commit (30 September 2026)
+
+Semantic results computed before repository content-authority reconciliation
+are provisional. Only artifacts covered by a successful authoritative
+repository commit may produce authoritative Phase 6 success publication.
+The repository returns an immutable `Phase6CommitReceipt` after the transaction
+commits. The pipeline persists each assessed source/target comparison before
+publishing its mapping, verification or classification success events. It
+calculates multi-source and patent findings from committed comparisons only;
+a rejected comparison becomes an explicit unassessable failure and cannot
+contribute to published summary or patent success.
+The Phase 6 result carries the receipts, and its legacy Phase 7 projection
+rejects any verified edge whose classification lacks a matching receipt.
+
+The SQL commit and JSONL trace append are separate operations. If trace
+delivery fails after commit, the repository remains authoritative and the run
+fails visibly. A retry reuses the immutable semantic edge/classification IDs
+and stable success-event IDs; the JSONL sink skips event IDs already present.
+The specification calls for append-only audit and a traceable *completed*
+assessment, but does not require crash-safe guaranteed delivery between SQL
+commit and trace append. An outbox is therefore deferred. A partially written
+trace file may require recovery before replay, and no run is reported complete
+while trace delivery fails.

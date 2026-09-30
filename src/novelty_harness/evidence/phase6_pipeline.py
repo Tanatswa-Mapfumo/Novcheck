@@ -33,7 +33,11 @@ from novelty_harness.evidence.graph.phase6_mapping import (
     phase6_graph_provenance,
     verified_edge_graph_fragment,
 )
-from novelty_harness.evidence.graph.repository import EvidenceGraphRepository
+from novelty_harness.evidence.graph.repository import (
+    ContentAuthorityError,
+    EvidenceGraphRepository,
+    Phase6CommitReceipt,
+)
 from novelty_harness.evidence.graph.retrieval_mapping import (
     passage_graph_node,
     source_graph_node,
@@ -93,6 +97,7 @@ from novelty_harness.runtime.semantic.structured import (
     SemanticOutputValidationError,
     SemanticRunner,
 )
+from novelty_harness.runtime.tracing.hashing import canonical_hash
 from novelty_harness.runtime.tracing.models import TraceEvent
 from novelty_harness.runtime.tracing.sinks import TraceSink
 
@@ -164,6 +169,7 @@ class Phase6EvidenceResult:
     edges: tuple[VerifiedEvidenceEdge, ...]
     chains: tuple[VerifiedEvidenceChain, ...]
     classifications: tuple[PrecedentClassification, ...]
+    commit_receipts: tuple[Phase6CommitReceipt, ...]
     candidate_assessments: tuple[CandidateAssessmentResult, ...]
     multi_source: tuple[MultiSourceAssessment, ...]
     patent_screenings: tuple[PatentScreeningResult, ...]
@@ -277,6 +283,78 @@ def select_versions(
         )
     )
     return selected, excluded
+
+
+def _commit_candidate(
+    *,
+    repository: EvidenceGraphRepository,
+    candidate: CandidateAssessmentResult,
+    profile: MCUComparisonProfile,
+    clock: Callable[[], datetime],
+) -> Phase6CommitReceipt:
+    """Persist one comparison and return its post-transaction authority receipt."""
+
+    if candidate.chain is None:
+        raise ValueError("Only an assessed candidate can be committed")
+    chain = candidate.chain.chain
+    classified = ClassifiedComparison(
+        comparison=candidate.chain, classification=candidate.classification
+    )
+    observed_at = clock()
+    fragment_nodes, fragment_edges = verified_edge_graph_fragment(
+        (chain.edge,),
+        (candidate.classification,),
+        observed_at=observed_at,
+        provenance=phase6_graph_provenance(),
+    )
+    candidates = (
+        GraphNode(
+            node_id=profile.target_id,
+            kind=GraphNodeKind.MCU,
+            label=profile.label,
+            attributes={
+                "statement": profile.statement,
+                "target_kind": profile.target_kind,
+                "combination_id": profile.combination_id,
+            },
+            observed_at=observed_at,
+            provenance=_PIPELINE_PROVENANCE,
+        ),
+        source_graph_node(chain.source, observed_at=observed_at, provenance=_PIPELINE_PROVENANCE),
+        *(
+            (
+                version_graph_node(
+                    chain.version, observed_at=observed_at, provenance=_PIPELINE_PROVENANCE
+                ),
+            )
+            if chain.version is not None
+            else ()
+        ),
+        *(
+            passage_graph_node(passage, observed_at=observed_at, provenance=_PIPELINE_PROVENANCE)
+            for passage in (*chain.bundle.passages, *chain.context_passages)
+        ),
+        *fragment_nodes,
+    )
+    nodes: dict[str, GraphNode] = {}
+    for node in candidates:
+        if node.node_id not in nodes and repository.get_node(node.node_id) is None:
+            nodes[node.node_id] = node
+    receipt = repository.upsert(
+        nodes=tuple(nodes.values()),
+        edges=fragment_edges,
+        verified_edges=(chain.edge,),
+        verified_chains=(chain,),
+        classified_comparisons=(classified,),
+    )
+    if (
+        receipt is None
+        or receipt.assessment_id != candidate.assessment_id
+        or receipt.committed_edge_ids != (chain.edge.edge_id,)
+        or receipt.committed_classification_ids != (candidate.classification.classification_id,)
+    ):
+        raise ValueError("Repository did not confirm the committed Phase 6 comparison")
+    return receipt
 
 
 class EvidenceVerificationPipeline:
@@ -579,6 +657,60 @@ class EvidenceVerificationPipeline:
             if cluster.root_source_ids
         }
 
+        pending_success: list[tuple[str, dict[str, JsonValue], AssessmentStage]] = []
+
+        def publish(
+            reason: str,
+            data: dict[str, JsonValue],
+            *,
+            failure: bool = False,
+            stage: AssessmentStage = AssessmentStage.EVIDENCE_MAPPED,
+            receipts: Sequence[Phase6CommitReceipt] = (),
+        ) -> None:
+            if not failure and not receipts:
+                raise ValueError("Authoritative semantic success requires a commit receipt")
+            if any(item.assessment_id != assessment_id for item in receipts):
+                raise ValueError("Commit receipt belongs to another assessment")
+            committed: dict[str, JsonValue] = (
+                {
+                    "committed_edge_ids": [
+                        identity for item in receipts for identity in item.committed_edge_ids
+                    ],
+                    "committed_classification_ids": [
+                        identity
+                        for item in receipts
+                        for identity in item.committed_classification_ids
+                    ],
+                }
+                if receipts
+                else {}
+            )
+            event_data = {
+                "execution": "implemented",
+                "semantics_implemented": True,
+                **data,
+                **committed,
+            }
+            trace_sink.emit(
+                TraceEvent(
+                    event_id=(
+                        "trace_"
+                        + canonical_hash(
+                            {"assessment_id": assessment_id, "reason": reason, "data": event_data}
+                        )
+                        if receipts
+                        else new_trace_event_id()
+                    ),
+                    assessment_id=assessment_id,
+                    occurred_at=clock(),
+                    stage=stage,
+                    component="phase6_evidence",
+                    status=TraceStatus.FAILURE if failure else TraceStatus.SUCCESS,
+                    reason_code=reason,
+                    data=event_data,
+                )
+            )
+
         def emit(
             reason: str,
             data: dict[str, JsonValue],
@@ -586,18 +718,16 @@ class EvidenceVerificationPipeline:
             failure: bool = False,
             stage: AssessmentStage = AssessmentStage.EVIDENCE_MAPPED,
         ) -> None:
-            trace_sink.emit(
-                TraceEvent(
-                    event_id=new_trace_event_id(),
-                    assessment_id=assessment_id,
-                    occurred_at=clock(),
-                    stage=stage,
-                    component="phase6_evidence",
-                    status=TraceStatus.FAILURE if failure else TraceStatus.SUCCESS,
-                    reason_code=reason,
-                    data={"execution": "implemented", "semantics_implemented": True, **data},
-                )
-            )
+            if failure:
+                publish(reason, data, failure=True, stage=stage)
+            else:
+                pending_success.append((reason, data, stage))
+
+        def publish_pending(receipt: Phase6CommitReceipt) -> None:
+            queued = tuple(pending_success)
+            pending_success.clear()
+            for reason, data, stage in queued:
+                publish(reason, data, stage=stage, receipts=(receipt,))
 
         targets: list[tuple[MCUComparisonProfile, EvidenceProposition, tuple[MCUId, ...]]] = []
         for mcu in sorted(mcus, key=lambda item: item.mcu_id):
@@ -623,6 +753,9 @@ class EvidenceVerificationPipeline:
         unassessed_sources: list[SourceId] = []
         unassessed_versions: list[str] = []
         failures: list[str] = []
+        committed_comparisons: list[ClassifiedComparison] = []
+        committed_receipts: list[Phase6CommitReceipt] = []
+        receipt_by_edge: dict[str, Phase6CommitReceipt] = {}
 
         for profile, proposition, member_ids in targets:
             profiles.append(profile)
@@ -655,6 +788,17 @@ class EvidenceVerificationPipeline:
                     )
                     if not source_passages:
                         continue
+                    start = (
+                        len(mappings),
+                        len(claims),
+                        len(verifications),
+                        len(expansions),
+                        len(edges),
+                        len(chains),
+                        len(classifications),
+                        len(candidate_assessments),
+                        len(target_classifications),
+                    )
                     await self._assess_candidate(
                         assessment_id=assessment_id,
                         target_kind=profile.target_kind,
@@ -678,11 +822,90 @@ class EvidenceVerificationPipeline:
                         emit=emit,
                         clock=clock,
                     )
+                    candidate = candidate_assessments[-1]
+                    if candidate.chain is None:
+                        pending_success.clear()
+                        continue
+                    try:
+                        receipt = _commit_candidate(
+                            repository=repository,
+                            candidate=candidate,
+                            profile=profile,
+                            clock=clock,
+                        )
+                    except ContentAuthorityError as error:
+                        for items, offset in zip(
+                            (
+                                mappings,
+                                claims,
+                                verifications,
+                                expansions,
+                                edges,
+                                chains,
+                                classifications,
+                                candidate_assessments,
+                                target_classifications,
+                            ),
+                            start,
+                            strict=True,
+                        ):
+                            del items[offset:]
+                        pending_success.clear()
+                        failure = (
+                            f"{source.source_id}->{profile.target_id}: "
+                            f"content authority rejected: {error}"
+                        )
+                        failures.append(failure)
+                        unassessable = classify_precedent(
+                            ClassificationFacts(
+                                proposition=proposition,
+                                source_id=source.source_id,
+                                source_version_id=version.version_id if version else None,
+                                selection_failure="Stored content authority rejected comparison",
+                            ),
+                            clock=clock,
+                        )
+                        classifications.append(unassessable)
+                        target_classifications.append(unassessable)
+                        candidate_assessments.append(
+                            CandidateAssessmentResult(
+                                assessment_id=assessment_id,
+                                source_id=source.source_id,
+                                target_mcu_id=profile.target_id,
+                                target_kind=profile.target_kind,
+                                combination_id=profile.combination_id,
+                                status="UNASSESSABLE",
+                                classification=unassessable,
+                                failure=failure,
+                            )
+                        )
+                        publish(
+                            "CONTENT_AUTHORITY_REJECTED",
+                            {
+                                "source_id": source.source_id,
+                                "source_version_id": version.version_id if version else None,
+                                "mcu_id": profile.target_id,
+                                "detail": str(error),
+                            },
+                            failure=True,
+                        )
+                        continue
+                    committed_receipts.append(receipt)
+                    receipt_by_edge[candidate.chain.chain.edge.edge_id] = receipt
+                    committed_comparisons.append(
+                        ClassifiedComparison(
+                            comparison=candidate.chain,
+                            classification=candidate.classification,
+                        )
+                    )
+                    publish_pending(receipt)
             target_comparisons = tuple(
-                ClassifiedComparison(comparison=item.chain, classification=item.classification)
-                for item in candidate_assessments
-                if item.target_mcu_id == profile.target_id and item.chain is not None
+                item
+                for item in committed_comparisons
+                if item.comparison.mcu_id == profile.target_id
             )
+            if not target_comparisons:
+                continue
             summary = summarize_multi_source(
                 target_comparisons,
                 mcu_id=profile.target_id,
@@ -692,22 +915,22 @@ class EvidenceVerificationPipeline:
                 combination_id=profile.combination_id,
             )
             multi_source_summaries.append(summary)
-            emit(
+            publish(
                 "MULTI_SOURCE_ASSESSMENT",
                 {
                     "mcu_id": profile.target_id,
                     "combination_context": summary.combination_context,
                     "single_source_direct_eligible": summary.single_source_direct_eligible,
                 },
+                receipts=tuple(
+                    receipt_by_edge[item.comparison.chain.edge.edge_id]
+                    for item in target_comparisons
+                ),
             )
 
         patent_screenings: list[PatentScreeningResult] = []
         classified_by_edge = {
-            item.chain.chain.edge.edge_id: ClassifiedComparison(
-                comparison=item.chain, classification=item.classification
-            )
-            for item in candidate_assessments
-            if item.chain is not None
+            item.comparison.chain.edge.edge_id: item for item in committed_comparisons
         }
         for profile, proposition, _ in targets:
             entries: list[PatentEvidenceEntry] = []
@@ -740,94 +963,42 @@ class EvidenceVerificationPipeline:
                     independent_root_of=independent_root_of,
                 )
                 patent_screenings.append(screening)
-                emit(
+                patent_comparisons = tuple(
+                    item.comparison for item in entries if item.comparison is not None
+                )
+                publish(
                     "PATENT_SCREENING",
                     {
                         "screening_id": screening.screening_id,
                         "mcu_id": profile.target_id,
                         "mode": screening.mode,
                     },
+                    receipts=tuple(
+                        receipt_by_edge[item.comparison.chain.edge.edge_id]
+                        for item in patent_comparisons
+                    ),
                 )
-
-        mcu_nodes = tuple(
-            GraphNode(
-                node_id=profile.target_id,
-                kind=GraphNodeKind.MCU,
-                label=profile.label,
-                attributes={
-                    "statement": profile.statement,
-                    "target_kind": profile.target_kind,
-                    "combination_id": profile.combination_id,
+        if committed_receipts:
+            graph_edge_count = sum(
+                len(
+                    verified_edge_graph_fragment(
+                        (item.comparison.chain.edge,),
+                        (item.classification,),
+                        observed_at=clock(),
+                        provenance=phase6_graph_provenance(),
+                    )[1]
+                )
+                for item in committed_comparisons
+            )
+            publish(
+                "PHASE6_GRAPH_PERSISTED",
+                {
+                    "graph_ref": graph_ref,
+                    "edge_count": graph_edge_count,
+                    "proposition_count": len(edges),
                 },
-                observed_at=clock(),
-                provenance=_PIPELINE_PROVENANCE,
+                receipts=tuple(committed_receipts),
             )
-            for profile in profiles
-        )
-        expansion_passages = tuple(
-            expansion.window_passage
-            for expansion in expansions
-            if expansion.available and expansion.window_passage is not None
-        )
-        fragment_nodes, fragment_edges = verified_edge_graph_fragment(
-            tuple(edges),
-            tuple(classifications),
-            passages=expansion_passages,
-            observed_at=clock(),
-            provenance=phase6_graph_provenance(),
-        )
-        supplemental_nodes: dict[str, GraphNode] = {}
-        fragment_ids = {node.node_id for node in (*mcu_nodes, *fragment_nodes)}
-        for chain in chains:
-            candidates = (
-                source_graph_node(
-                    chain.source, observed_at=clock(), provenance=_PIPELINE_PROVENANCE
-                ),
-                *(
-                    (
-                        version_graph_node(
-                            chain.version, observed_at=clock(), provenance=_PIPELINE_PROVENANCE
-                        ),
-                    )
-                    if chain.version is not None
-                    else ()
-                ),
-                *(
-                    passage_graph_node(
-                        passage, observed_at=clock(), provenance=_PIPELINE_PROVENANCE
-                    )
-                    for passage in (*chain.bundle.passages, *chain.context_passages)
-                ),
-            )
-            for candidate in candidates:
-                if (
-                    candidate.node_id not in fragment_ids
-                    and repository.get_node(candidate.node_id) is None
-                ):
-                    supplemental_nodes.setdefault(candidate.node_id, candidate)
-        repository.upsert(
-            nodes=(*mcu_nodes, *fragment_nodes, *supplemental_nodes.values()),
-            edges=fragment_edges,
-            verified_edges=tuple(edges),
-            verified_chains=tuple(chains),
-            classified_comparisons=tuple(
-                ClassifiedComparison(
-                    comparison=verified_comparison(chain),
-                    classification=classification,
-                )
-                for item in candidate_assessments
-                if item.chain is not None
-                for chain, classification in ((item.chain.chain, item.classification),)
-            ),
-        )
-        emit(
-            "PHASE6_GRAPH_PERSISTED",
-            {
-                "graph_ref": graph_ref,
-                "edge_count": len(fragment_edges),
-                "proposition_count": len(edges),
-            },
-        )
 
         coverage_limitations: list[str] = []
         if unassessed_sources:
@@ -860,6 +1031,7 @@ class EvidenceVerificationPipeline:
             edges=tuple(edges),
             chains=tuple(chains),
             classifications=tuple(classifications),
+            commit_receipts=tuple(committed_receipts),
             candidate_assessments=tuple(candidate_assessments),
             multi_source=tuple(multi_source_summaries),
             patent_screenings=tuple(patent_screenings),
@@ -894,6 +1066,7 @@ def write_phase6_artifacts(
     writer.write_jsonl(
         assessment_id, "phase6/precedent_classifications.jsonl", result.classifications
     )
+    writer.write_jsonl(assessment_id, "phase6/commit_receipts.jsonl", result.commit_receipts)
     writer.write_jsonl(assessment_id, "phase6/multi_source_assessments.jsonl", result.multi_source)
     writer.write_jsonl(assessment_id, "phase6/patent_screenings.jsonl", result.patent_screenings)
     writer.write_json(

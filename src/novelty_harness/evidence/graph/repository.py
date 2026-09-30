@@ -6,9 +6,12 @@ Implementations return domain models, never storage rows, and batch writes
 
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
-from novelty_harness.domain.ids import SourceId
+from pydantic import ConfigDict
+
+from novelty_harness.domain.base import ContractModel
+from novelty_harness.domain.ids import AssessmentId, ClassificationId, EvidenceEdgeId, SourceId
 from novelty_harness.evidence.graph.models import (
     GraphEdge,
     GraphEdgeKind,
@@ -27,6 +30,20 @@ class GraphDirection(StrEnum):
     BOTH = "BOTH"
 
 
+class ContentAuthorityError(ValueError):
+    """A semantic artifact conflicts with immutable stored content authority."""
+
+
+class Phase6CommitReceipt(ContractModel):
+    """Phase 6 identities confirmed only after the repository transaction commits."""
+
+    model_config = ConfigDict(frozen=True)
+    contract_kind: Literal["phase6-commit-receipt-v1"] = "phase6-commit-receipt-v1"
+    assessment_id: AssessmentId
+    committed_edge_ids: tuple[EvidenceEdgeId, ...]
+    committed_classification_ids: tuple[ClassificationId, ...]
+
+
 @runtime_checkable
 class EvidenceGraphRepository(Protocol):
     def upsert(
@@ -38,7 +55,7 @@ class EvidenceGraphRepository(Protocol):
         verified_edges: Sequence[VerifiedEvidenceEdge] = (),
         verified_chains: Sequence[VerifiedEvidenceChain] = (),
         classified_comparisons: Sequence[ClassifiedComparison] = (),
-    ) -> None:
+    ) -> Phase6CommitReceipt | None:
         """Atomically insert-or-verify nodes, edges, clusters and verified edges.
 
         Phase 6 graph edges must resolve their verification reference against a
