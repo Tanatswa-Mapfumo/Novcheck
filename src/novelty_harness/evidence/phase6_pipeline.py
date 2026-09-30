@@ -520,7 +520,6 @@ class EvidenceVerificationPipeline:
                 "mcu_id": proposition.mcu_id,
                 "state": retry.verification.state.value,
             },
-            failure=retry.verification.state.value in {"NOT_SUPPORTED", "CONTRADICTED"},
             stage=AssessmentStage.EVIDENCE_VERIFIED,
         )
         edge = build_verified_evidence_edge(
@@ -718,6 +717,8 @@ class EvidenceVerificationPipeline:
             failure: bool = False,
             stage: AssessmentStage = AssessmentStage.EVIDENCE_MAPPED,
         ) -> None:
+            if reason == "SUPPORT_VERIFICATION" and failure:
+                raise ValueError("A verifier conclusion is semantic, not an operational failure")
             if failure:
                 publish(reason, data, failure=True, stage=stage)
             else:

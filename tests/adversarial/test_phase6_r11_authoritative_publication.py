@@ -126,6 +126,197 @@ def _partial_runner(*, direct_marker: str | None = None) -> SemanticRunner:
     )
 
 
+def _verifier_state_runner(state: str) -> SemanticRunner:
+    def verify(context):
+        payload = context_json(context, "verification_input")
+        assert isinstance(payload, dict)
+        passage_id = payload["passages"][0]["passage_id"]
+        judgments = []
+        for commitment in payload["commitments"]:
+            judgment = {
+                "commitment_id": commitment["commitment_id"],
+                "state": "INSUFFICIENT" if state == "INSUFFICIENT_CONTEXT" else state,
+                "rationale": "scripted semantic judgment",
+                "passage_ids": [passage_id],
+            }
+            if state == "PARTIALLY_SUPPORTED":
+                judgment["supported_subset"] = "the narrow case"
+                judgment["unsupported_remainder"] = "the broader claim"
+            judgments.append(judgment)
+        return {
+            "prompt_version": "support-verifier-v1",
+            "judgments": judgments,
+            "context_needed": ["More of the source is needed"]
+            if state == "INSUFFICIENT_CONTEXT"
+            else [],
+        }
+
+    return SemanticRunner(
+        StubLLMProvider({"map_evidence": map_evidence_response, "verify_support": verify})
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["CONTRADICTED", "NOT_SUPPORTED"])
+async def test_r12_rejected_version_has_no_durable_verifier_conclusion(tmp_path, state) -> None:
+    writer, _, evidence = await _phase5(tmp_path)
+    version = evidence.versions[0]
+    source = next(item for item in evidence.sources if item.source_id == version.source_id)
+    evidence = replace(
+        evidence,
+        sources=(source,),
+        versions=(version,),
+        passages=tuple(item for item in evidence.passages if item.source_id == source.source_id),
+    )
+    repository = SqlAlchemyEvidenceGraphRepository(tmp_path / f"r12-rejected-{state}.sqlite")
+    trace_path = tmp_path / f"r12-rejected-{state}.jsonl"
+    try:
+        repository.upsert(
+            nodes=(
+                source_graph_node(source, observed_at=NOW, provenance=phase6_graph_provenance()),
+                version_graph_node(
+                    version.model_copy(update={"content_hash": text_hash("Stored content A")}),
+                    observed_at=NOW,
+                    provenance=phase6_graph_provenance(),
+                ),
+            )
+        )
+        for _ in range(2):
+            result = await _run(
+                writer,
+                evidence,
+                repository,
+                trace_path,
+                runner=_verifier_state_runner(state),
+                control_only=True,
+            )
+            assert not result.commit_receipts
+            assert not result.edges
+        with repository.engine.connect() as connection:
+            for table in (
+                "verified_edges",
+                "verified_chains",
+                "verified_classifications",
+                "verification_observations",
+            ):
+                assert connection.execute(text(f"SELECT count(*) FROM {table}")).scalar_one() == 0
+        events = _events(trace_path)
+        assert not any(event["reason_code"] == "SUPPORT_VERIFICATION" for event in events)
+        assert any(event["reason_code"] == "CONTENT_AUTHORITY_REJECTED" for event in events)
+    finally:
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_r12_mapper_failure_remains_an_operational_diagnostic(tmp_path) -> None:
+    writer, database, evidence = await _phase5(tmp_path)
+    repository = SqlAlchemyEvidenceGraphRepository(database)
+    trace_path = tmp_path / "r12-operational.jsonl"
+    invalid_mapper = SemanticRunner(
+        StubLLMProvider(
+            {
+                "map_evidence": {
+                    "prompt_version": "evidence-mapper-v1",
+                    "dimensions": [],
+                    "unresolved": [],
+                },
+                "verify_support": verify_support_response,
+            }
+        )
+    )
+    try:
+        result = await _run(
+            writer,
+            evidence,
+            repository,
+            trace_path,
+            runner=invalid_mapper,
+            control_only=True,
+        )
+        assert not result.commit_receipts
+        events = _events(trace_path)
+        diagnostics = [
+            event for event in events if event["reason_code"] == "EVIDENCE_MAPPING_FAILED"
+        ]
+        assert diagnostics
+        assert all(event["status"] == "FAILURE" for event in diagnostics)
+        assert all("state" not in event["data"] for event in diagnostics)
+        assert not any(event["reason_code"] == "SUPPORT_VERIFICATION" for event in events)
+    finally:
+        repository.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "state",
+    [
+        "SUPPORTED",
+        "PARTIALLY_SUPPORTED",
+        "CONTRADICTED",
+        "NOT_SUPPORTED",
+        "INSUFFICIENT_CONTEXT",
+    ],
+)
+async def test_r12_every_committed_verifier_state_publishes_once_as_success(
+    tmp_path, state
+) -> None:
+    writer, database, evidence = await _phase5(tmp_path)
+    repository = SqlAlchemyEvidenceGraphRepository(database)
+    trace_path = tmp_path / f"r12-committed-{state}.jsonl"
+
+    class CommitCheckingSink(JsonlTraceSink):
+        def emit(self, event):
+            if event.reason_code == "SUPPORT_VERIFICATION":
+                with repository.engine.connect() as connection:
+                    persisted_edges = {
+                        row[0]
+                        for row in connection.execute(text("SELECT edge_id FROM verified_chains"))
+                    }
+                    persisted_classes = {
+                        row[0]
+                        for row in connection.execute(
+                            text("SELECT classification_id FROM verified_classifications")
+                        )
+                    }
+                assert set(event.data["committed_edge_ids"]) <= persisted_edges
+                assert set(event.data["committed_classification_ids"]) <= persisted_classes
+            super().emit(event)
+
+    try:
+        first_events = None
+        for attempt in range(2):
+            result = await _run(
+                writer,
+                evidence,
+                repository,
+                trace_path,
+                runner=_verifier_state_runner(state),
+                sink=CommitCheckingSink(trace_path),
+                control_only=True,
+            )
+            assert result.commit_receipts
+            current_events = [
+                event
+                for event in _events(trace_path)
+                if event["reason_code"] == "SUPPORT_VERIFICATION"
+            ]
+            if attempt == 0:
+                first_events = current_events
+            else:
+                assert len(current_events) == len(first_events)
+        events = [
+            event for event in _events(trace_path) if event["reason_code"] == "SUPPORT_VERIFICATION"
+        ]
+        assert events
+        assert len(events) == len({event["event_id"] for event in events})
+        assert all(event["status"] == "SUCCESS" for event in events)
+        assert all(event["data"]["state"] == state for event in events)
+        assert all(event["data"]["committed_edge_ids"] for event in events)
+        assert all(event["data"]["committed_classification_ids"] for event in events)
+    finally:
+        repository.close()
+
+
 def test_receipt_exists_only_after_authoritative_commit_and_replays_idempotently(tmp_path) -> None:
     chain = _chain_for_content(PASSAGE_TEXT)
     comparison = verified_comparison(chain)

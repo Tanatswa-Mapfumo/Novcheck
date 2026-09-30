@@ -947,3 +947,93 @@ These implementation checks do not replace a fresh independent Stage-1
 provenance/publication re-review.
 
 Gate 30 remains OPEN pending fresh independent Stage-1 provenance/publication re-review.
+
+---
+
+## Independent Stage-1 provenance/publication kill-test of `49504d7cfa0ff33275c1e15d828b1ffe047849e0`
+
+**Reviewed state:** clean `phase-6-evidence-verification` worktree at the exact
+commit above, before this review-only append. The reviewer did not implement
+R10/R11 or change production code, tests, fixtures, or Phase 7. Stage 1 stopped
+at the reproduced publication bypass below; Stage 2 and its full verification
+were not performed.
+
+**Stage 1: FAIL — R12 (Important), an uncommitted verifier conclusion survives
+content-authority rejection.** `phase6_pipeline.py::_assess_candidate` emits a
+`SUPPORT_VERIFICATION` trace event immediately when the verifier state is
+`CONTRADICTED` or `NOT_SUPPORTED`. Its `failure=True` path calls `publish`
+directly, bypassing `pending_success` and the `Phase6CommitReceipt` gate. The
+event contains the verification ID, source ID, MCU ID, `state=CONTRADICTED`,
+and `semantics_implemented=true`. `JsonlTraceSink` appends it durably before
+`_commit_candidate` reconciles the cited version with stored content authority.
+`TraceStatus.FAILURE` here labels a negative semantic judgment, not a failed
+verification operation; it does not make the judgment provisional or retract
+it after authority rejection. This violates the Stage-1 requirement that no
+uncommitted semantic result escape through durable output.
+
+**Independent reproduction:** Using the deterministic Phase 5 fixture, retain
+one source and its cited version. Seed the repository with a `SOURCE_VERSION`
+node for that same ID whose `content_hash` is digest A, while the incoming
+version and extractor-attested passage use digest B. Supply a valid scripted
+verifier response that marks each material commitment `CONTRADICTED`, citing
+the supplied passage. Run `verify_evidence_against_mcus` with the production
+`JsonlTraceSink`. The repository rejects the comparison with `Version content
+authority conflicts with semantic chain`; the returned result has zero edges
+and zero commit receipts. `verified_edges`, `verified_chains`,
+`verified_classifications`, and `verification_observations` each have zero
+rows. Yet `trace.jsonl` contains a durable `SUPPORT_VERIFICATION` event with
+`status=FAILURE`, `state=CONTRADICTED`, and a verification ID for the rejected
+source, followed by `CONTENT_AUTHORITY_REJECTED`. A second probe using
+`NOT_SUPPORTED` likewise left an uncommitted verifier-state event, although
+that run subsequently failed chain validation before reaching persistence.
+Both probes were read-only with temporary databases/traces outside the repo.
+
+**Required correction:** Defer publication of all verifier conclusions,
+including `CONTRADICTED` and `NOT_SUPPORTED`, until the comparison has a
+matching post-commit receipt. Processing failures such as invalid mapping or
+content-authority rejection may be traced immediately, but must not carry an
+uncommitted semantic finding. Add a regression with conflicting stored
+version content and a contradicted verifier result; assert no verifier-state
+event survives, no semantic rows or receipt exist, and an exact-match
+contradiction is published only after commit.
+
+The R10 repository authority check held in this probe; the publication
+boundary did not. No full `scripts/verify.py`, fresh checkout, or Stage-2
+review was run after this Stage-1 failure. No Phase 7 work was started.
+
+Acceptance Gate 30: FAIL — Phase 6 remains blocked.
+
+---
+
+## R12 verifier-publication implementation record (not an independent review)
+
+The independent **R12 FAIL** at `49504d7` above remains unchanged. This
+section records the implementer's bounded repair and does not close R12 or
+grant Gate 30 acceptance. No Phase 7 work was started.
+
+Every `SUPPORT_VERIFICATION` outcome now enters the existing pending event
+queue, regardless of its semantic state. The event is published with
+`TraceStatus.SUCCESS` and the committed edge/classification identities only
+after `_commit_candidate` returns a matching `Phase6CommitReceipt`. A guard
+rejects use of the immediate operational-failure path for a verifier
+conclusion. Mapper and content-authority processing failures remain immediate
+diagnostics without semantic verifier-state assertions. ADR-036 records the
+status and publication distinction.
+
+The R12 tests in `test_phase6_r11_authoritative_publication.py` were added
+first. Both contradictory and not-supported provenance-conflict cases failed
+against the reviewed behavior because a verifier-state event survived; after
+the change they assert zero semantic rows, edges and receipts, and no durable
+verifier conclusion across retries. Positive controls exercise all five
+verifier states, verify the matching semantic rows exist when the event is
+delivered, and check exact replay does not add an independent trace finding.
+An invalid mapper response still produces an immediate operational diagnostic
+with no semantic state. The focused R10/R11/provenance suites passed with
+**58 tests**. Implementation-worktree verification passed: `uv sync --dev`,
+`uv run python scripts/verify.py` (Ruff check, Ruff format on 291 files,
+Pyright 0 errors/0 warnings, **1557 passed, 5 opt-in network tests
+deselected**) and `git diff --check`. Exact-commit fresh-checkout verification
+is recorded in the implementation handoff; these checks are not independent
+semantic acceptance.
+
+Gate 30 remains OPEN pending fresh independent Stage-1 provenance/publication re-review.

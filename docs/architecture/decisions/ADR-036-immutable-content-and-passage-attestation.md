@@ -97,3 +97,15 @@ assessment, but does not require crash-safe guaranteed delivery between SQL
 commit and trace append. An outbox is therefore deferred. A partially written
 trace file may require recovery before replay, and no run is reported complete
 while trace delivery fails.
+
+## R12 amendment: verifier polarity is semantic, not execution status (1 October 2026)
+
+Every semantic interpretation of evidence is provisional until repository
+content-authority reconciliation commits, whether it is supported, partial,
+not supported, contradicted or insufficient. A `SUPPORT_VERIFICATION` trace
+event is queued for every verifier state and published with the matching
+`Phase6CommitReceipt` only after commit. Its trace status is `SUCCESS` because
+the verifier operation completed; its `state` field carries the semantic
+outcome. Operational failures may be audited before commit, but they must not
+assert an uncommitted semantic finding. Content-authority rejection remains
+an immediate operational diagnostic after the repository rejects the chain.
