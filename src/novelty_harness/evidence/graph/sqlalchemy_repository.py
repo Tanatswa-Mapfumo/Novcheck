@@ -117,6 +117,7 @@ class SqlAlchemyEvidenceGraphRepository:
                 if chain is None or _semantic_document(chain.edge) != _semantic_document(verified):
                     raise ValueError("Verified edge has no matching resolved semantic chain")
                 validate_verified_chain(chain)
+                self._check_content_authority(session, chain, nodes)
                 if (
                     verified.relation is not None
                     and verified.edge_id not in batch_classifications
@@ -127,7 +128,7 @@ class SqlAlchemyEvidenceGraphRepository:
             for chain in verified_chains:
                 self._persist_verified_chain(session, chain, nodes)
             for classified in classified_comparisons:
-                self._persist_classification(session, classified)
+                self._persist_classification(session, classified, nodes)
             derived_nodes, derived_edges = self._verify_phase6_edges(
                 session, nodes, edges, verified_edges, verified_chains, classified_comparisons
             )
@@ -226,6 +227,7 @@ class SqlAlchemyEvidenceGraphRepository:
         batch_nodes: Sequence[GraphNode],
     ) -> None:
         cited = validate_verified_chain(chain)
+        self._check_content_authority(session, chain, batch_nodes)
         by_id = {node.node_id: node for node in batch_nodes}
 
         def node(identity: str) -> GraphNode | None:
@@ -267,6 +269,78 @@ class SqlAlchemyEvidenceGraphRepository:
                 f"Verified semantic chain {chain.edge.edge_id} already exists "
                 "with different content"
             )
+
+    def _check_content_authority(
+        self,
+        session: Session,
+        chain: VerifiedEvidenceChain,
+        batch_nodes: Sequence[GraphNode],
+    ) -> None:
+        """Bind chain provenance to one stored or concurrently supplied node authority."""
+
+        def authority(identity: str, kind: GraphNodeKind, fields: tuple[str, ...]) -> GraphNode:
+            row = session.get(GraphNodeRow, identity)
+            stored = GraphNode.model_validate_json(row.document_json) if row is not None else None
+            supplied = tuple(node for node in batch_nodes if node.node_id == identity)
+            candidates = ((stored,) if stored is not None else ()) + supplied
+            if not candidates or any(node.kind != kind for node in candidates):
+                raise ValueError(f"No matching {kind.value} content authority for {identity}")
+            first = candidates[0]
+            for node in candidates[1:]:
+                if any(
+                    node.attributes.get(field) != first.attributes.get(field) for field in fields
+                ):
+                    raise ValueError(f"Conflicting {kind.value} content authority for {identity}")
+            return first
+
+        source = authority(
+            chain.source.source_id,
+            GraphNodeKind.SOURCE,
+            ("content_hash", "access_state"),
+        )
+        stored_source_hash = source.attributes.get("content_hash")
+        stored_source_access = source.attributes.get("access_state")
+        if stored_source_hash is not None and stored_source_hash != chain.source.content_hash:
+            raise ValueError("Source content authority conflicts with semantic chain")
+        if (
+            stored_source_access is not None
+            and stored_source_access != chain.source.access_state.value
+        ):
+            raise ValueError("Source access authority conflicts with semantic chain")
+
+        if chain.version is None:
+            expected_digest = chain.source.content_hash
+            expected_access = chain.source.access_state.value
+            if expected_digest is None or stored_source_hash != expected_digest:
+                raise ValueError("Unversioned source has no matching content authority")
+            if stored_source_access != expected_access:
+                raise ValueError(
+                    "Unversioned source access authority conflicts with semantic chain"
+                )
+        else:
+            version = authority(
+                chain.version.version_id,
+                GraphNodeKind.SOURCE_VERSION,
+                ("source_id", "content_hash", "access_state"),
+            )
+            expected_digest = chain.version.content_hash
+            expected_access = chain.version.access_state.value
+            if (
+                version.attributes.get("source_id") != chain.source.source_id
+                or version.attributes.get("content_hash") != expected_digest
+                or version.attributes.get("access_state") != expected_access
+            ):
+                raise ValueError("Version content authority conflicts with semantic chain")
+
+        for passage in (*chain.bundle.passages, *chain.context_passages):
+            proof = passage.attestation
+            if (
+                proof is None
+                or proof.parent_content_digest != expected_digest
+                or proof.parent.access_state.value != expected_access
+                or passage.access_state.value != expected_access
+            ):
+                raise ValueError("Passage provenance conflicts with content authority")
 
     def _verify_phase6_edges(
         self,
@@ -317,6 +391,7 @@ class SqlAlchemyEvidenceGraphRepository:
             if chain is None:
                 raise ValueError(f"Graph edge {edge.edge_id} has no resolved semantic chain")
             validate_verified_chain(chain)
+            self._check_content_authority(session, chain, nodes)
             if chain.edge != verified:
                 if _semantic_document(chain.edge) != _semantic_document(verified):
                     raise ValueError("Graph edge semantic chain differs from verified artifact")
@@ -384,6 +459,7 @@ class SqlAlchemyEvidenceGraphRepository:
                     classified = ClassifiedComparison.model_validate_json(row.document_json)
             if classified is None:
                 raise ValueError("Proposition node lacks authoritative classification")
+            self._check_content_authority(session, classified.comparison.chain, nodes)
             expected_nodes, _ = verified_edge_graph_fragment(
                 (classified.comparison.chain.edge,),
                 (classified.classification,),
@@ -396,8 +472,14 @@ class SqlAlchemyEvidenceGraphRepository:
             derived_nodes[node.node_id] = expected
         return derived_nodes, derived_edges
 
-    def _persist_classification(self, session: Session, classified: ClassifiedComparison) -> None:
+    def _persist_classification(
+        self,
+        session: Session,
+        classified: ClassifiedComparison,
+        batch_nodes: Sequence[GraphNode],
+    ) -> None:
         ClassifiedComparison.model_validate(classified.model_dump(mode="json"))
+        self._check_content_authority(session, classified.comparison.chain, batch_nodes)
         edge_id = classified.comparison.chain.edge.edge_id
         if session.get(VerifiedChainRow, edge_id) is None:
             raise ValueError("Classification has no persisted verified chain")

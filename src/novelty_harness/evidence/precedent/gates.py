@@ -128,7 +128,7 @@ def classify_verified_comparison(
     clock: Callable[[], datetime] = utc_now,
     provenance: ArtifactProvenance | None = None,
 ) -> PrecedentClassification:
-    """Classify only the identities and verified facts in a resolved chain."""
+    """Classify chain facts provisionally until repository content authority is checked."""
 
     comparison = VerifiedComparison.model_validate(comparison.model_dump(mode="json"))
     chain = comparison.chain

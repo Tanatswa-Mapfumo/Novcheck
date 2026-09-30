@@ -43,7 +43,7 @@ class VerifiedEvidenceChain(ContractModel):
 
 
 class VerifiedComparison(ContractModel):
-    """Validated, immutable comparison that owns all classification inputs."""
+    """Validated chain comparison; persisted content authority is checked on upsert."""
 
     model_config = ConfigDict(frozen=True)
     contract_kind: Literal["verified-comparison-v1"] = "verified-comparison-v1"

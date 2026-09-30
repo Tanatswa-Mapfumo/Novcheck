@@ -776,3 +776,117 @@ commit requires an independent semantic re-review before any acceptance claim.
 
 **Gate 30 remains OPEN pending fresh independent semantic re-review. Phase 7
 has not started.**
+
+---
+
+## Independent semantic re-review of `bcd4b830262ecde2dc7d4b651f721639ac0f3d6c`
+
+Review date: 30 September 2026. Branch: `phase-6-evidence-verification`.
+The reviewed worktree was clean at the exact commit before this review record
+was appended. This review followed the requested Stage 1 provenance kill-test.
+Stage 1 failed, so the substantive Stage 2 review and its full/fresh-checkout
+verification were not performed. Earlier FAIL records above are preserved.
+
+### Stage 1 result: provenance root is broken
+
+**R10 — Critical — A classified passage can be persisted against a different
+immutable source/version digest.**
+
+- **Violated invariant:** Every authoritative passage must prove exact ancestry
+  from the immutable content of the source/version represented in the graph.
+  A decisive graph edge may not cite a passage whose attested parent digest
+  differs from the stored source/version content hash (ADR-036; FR-SRC-002,
+  FR-EVID-001, FR-EVID-004).
+- **Exact location:** `verification/integrity.py::validate_semantic_chain`
+  checks the passage parent against the *chain-supplied*
+  `SourceVersionRecord.content_hash` (lines 228–242).
+  `graph/sqlalchemy_repository.py::_persist_verified_chain` checks that the
+  stored source node has the right kind and the version node has the right
+  owner, but never compares either node's `content_hash` to the chain record
+  or attested parent (lines 238–259). `resolve_version_content` likewise
+  accepts the digest in the supplied version record as authority without a
+  repository/content-store lookup.
+- **Minimal reproduction:** Start with the valid `DIRECT_PRECEDENT` chain from
+  `tests.unit.evidence.verification.test_eligibility.build` and `_valid_chain`.
+  Before persisting it, seed `SOURCE` and `SOURCE_VERSION` graph nodes for
+  those same IDs with `content_hash = text_hash("This version requires an
+  operator to switch the load.")`. Seed the cited passage node with its
+  original self-hash. Build `VerifiedComparison`, classify it, and call
+  `SqlAlchemyEvidenceGraphRepository.upsert` with the verified edge, chain,
+  classified comparison, and derived graph edges. Both public classification
+  and graph persistence accept it. An independent second probe also changed
+  the chain-supplied source/version hash and resolved parent together while
+  retaining the original stored version node; this also persisted a decisive
+  direct edge.
+- **Observed behavior:** The first probe returned a stored version hash of
+  `1a292cbe812c42e5f0c686a0cf4d7d0881224aa16cd1dc3d1d95642a83ca9fae`,
+  a cited passage parent hash of
+  `72ee56daa3b5bc6fe2eda7d9d8e5be8f5859a4b405af05f73b826c087609a98f`,
+  and **one persisted `DIRECT_PRECEDENT` graph edge**. The second probe's
+  chain/parent hash was
+  `bf0c2ab07f9d2b43f42bd5058c19cb27adbaaa46dcd1e17313efd4b8839292fb`
+  while the persisted version hash stayed
+  `72ee56daa3b5bc6fe2eda7d9d8e5be8f5859a4b405af05f73b826c087609a98f`;
+  it also persisted a decisive direct edge. The passage is self-consistent
+  inside each chain but lacks ancestry from the stored version authority.
+- **Required behavior:** Reject the mismatch before decisive classification
+  when an authoritative version is available, and reject it transactionally
+  at graph persistence in all cases. No verified artifact, classification,
+  observation, or graph edge should persist from the mismatched batch.
+- **Smallest architectural fix:** Establish one immutable content authority
+  per source/version ID. At the repository boundary, compare the attested
+  parent digest and chain source/version hashes with the already persisted or
+  concurrently supplied authoritative source/version nodes, including access
+  state and owner. Reject conflicting batch nodes instead of treating a
+  caller-supplied, internally consistent chain as authority. Public gates that
+  promise authoritative classification need to resolve that same authority
+  or explicitly remain nonauthoritative until repository validation.
+- **Required regression:** Seed an existing source/version with content A;
+  submit a fully self-consistent, `SUPPORTED` and `COMPLETE` chain for the
+  same IDs with content B and a valid extractor attestation. Assert rejection
+  and transaction rollback, with no direct graph edge or observation. Repeat
+  for an unversioned source and for conflicting source/version nodes supplied
+  in the same `upsert` batch. Retain a positive test for an exact matching
+  digest and passage slice.
+
+The two reproductions ran against the exact commit with
+`PYTHONPATH=.:src UV_CACHE_DIR=/private/tmp/uv-cache uv run python` and exited
+successfully as probes. They made no production or test changes. The first
+attempt to use the default `uv` cache was denied by the filesystem sandbox;
+the writable temporary cache resolved that environment issue. `git diff
+--check` passed after this review record was appended. The requested
+`uv sync --dev`, full `scripts/verify.py`, and detached-checkout repetition
+belong to Stage 2 and were not run after this Stage 1 failure. Passing
+implementation-suite results cited above do not close R10.
+No Phase 7 work was started.
+
+Acceptance Gate 30: FAIL — Phase 6 remains blocked.
+
+---
+
+## R10 implementation record after the Stage-1 FAIL (not an independent review)
+
+The `bcd4b83` Stage-1 **FAIL** and every earlier FAIL record remain intact.
+This section records the implementer's bounded R10 repair, not semantic
+acceptance. `SqlAlchemyEvidenceGraphRepository` now treats the persisted
+`SOURCE_VERSION` content hash, owner and access state as authority for a cited
+version. It compares the chain's version record and every passage parent
+attestation to that authority. For unversioned evidence, it uses the
+persisted `SOURCE` content hash and access state. A new version may establish
+authority only when concurrently supplied nodes, the chain and attestations
+agree. Same-ID conflicts, including multiple nodes in one batch, abort the
+transaction before any semantic write commits.
+
+The same authority check covers verified-edge replay, chain writes,
+classification-only writes, proposition nodes and Phase 6 graph edges.
+Chain-only classification is provisional until repository validation.
+ADR-036 records the persisted-authority rule. The new R10 adversarial suite
+has 15 deterministic cases, including all seven requested conflict and
+positive paths, transaction rollback, owner/access disagreement and replay
+through alternate persistence inputs. The pre-existing R01–R09 suite is
+retained. No Phase 7 work was started.
+
+Implementation tests and verification do not replace the fresh independent
+Stage-1 provenance re-review. This record does not close R10 or Gate 30.
+
+Gate 30 remains OPEN pending fresh independent Stage-1 provenance re-review.

@@ -53,3 +53,23 @@ supports unambiguous numbered blocks; unrecognized claim layouts need a
 separate extractor and remain nondecisive. Passage attestations enlarge stored
 chain artifacts because they retain the normalized parent text. Gate 30 remains
 open until an independent semantic review verifies these contracts.
+
+## R10 amendment: persisted content authority (30 September 2026)
+
+Source/version identity has one immutable persisted content authority;
+caller-supplied internally consistent provenance cannot override it. A
+versioned chain must agree with the stored or concurrently supplied
+`SOURCE_VERSION` node on owner, content hash and access state. Its attested
+parent digest and passage access state must agree with that cited version.
+The `SOURCE` node's content hash and access state must also agree with the
+chain's source record when present; a source hash need not equal every version
+hash. An unversioned chain requires a `SOURCE` node with matching content hash
+and access state.
+
+The graph repository checks these authorities in the same transaction as
+verified edges, observations, chains, classifications and Phase 6 graph
+projections. It compares all same-ID nodes supplied in one batch, using an
+existing persisted node as authority if one is present. A conflict rejects
+the whole batch. A chain-only `VerifiedComparison` or precedent classification
+is provisional until this repository validation succeeds; the classifier has
+no independent authority to replace persisted content.

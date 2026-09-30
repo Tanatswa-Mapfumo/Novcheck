@@ -456,3 +456,26 @@ entailment and prompt-injection resistance remain unmeasured.
 The final implementation commit and exact-commit fresh-checkout verification
 are recorded in the handoff. **Gate 30 remains OPEN pending fresh independent
 semantic re-review. Phase 6 is not accepted; Phase 7 has not started.**
+
+## R10 persisted content-authority remediation
+
+The independent Stage-1 review of `bcd4b830` remains a **FAIL**. This bounded
+repair makes the already stored source/version graph node the immutable content
+authority for Phase 6 persistence. The repository checks owner, content hash
+and access state for the cited version, and matches the passage's attested
+parent to that authority. Unversioned evidence is checked against the stored
+source content hash and access state. Concurrent same-ID authority nodes are
+also compared, and a conflict rolls back the complete semantic transaction.
+Verified-edge replay, classification-only writes and Phase 6 graph replay
+recheck the same authority. Chain-only classifications remain provisional
+until repository persistence validates their content ancestry (ADR-036).
+
+`tests/adversarial/test_phase6_r10_content_authority.py` covers existing and
+same-batch version conflicts, copied authority, unversioned conflict, owner
+and access mismatch, rollback, replay paths, exact matches, a genuine
+subspan, a complete document, and positive new-version/unversioned writes.
+The earlier R01–R09 adversarial suite remains in place. This implementation
+does not change chronology, context, coverage, patent, anti-stitching or
+Phase 7 behavior. Deterministic tests do not establish live-model entailment.
+
+Gate 30 remains OPEN pending fresh independent Stage-1 provenance re-review.
