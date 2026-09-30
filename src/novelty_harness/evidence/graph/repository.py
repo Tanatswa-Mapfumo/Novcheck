@@ -5,10 +5,11 @@ Implementations return domain models, never storage rows, and batch writes
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal, Protocol, Self, runtime_checkable
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, model_validator
 
 from novelty_harness.domain.base import ContractModel
 from novelty_harness.domain.ids import AssessmentId, ClassificationId, EvidenceEdgeId, SourceId
@@ -35,13 +36,45 @@ class ContentAuthorityError(ValueError):
 
 
 class Phase6CommitReceipt(ContractModel):
-    """Phase 6 identities confirmed only after the repository transaction commits."""
+    """Reference to a repository commit; never proof of authority by itself."""
 
     model_config = ConfigDict(frozen=True)
-    contract_kind: Literal["phase6-commit-receipt-v1"] = "phase6-commit-receipt-v1"
+    contract_kind: Literal["phase6-commit-receipt-v2"] = "phase6-commit-receipt-v2"
+    commit_id: str | None = None
     assessment_id: AssessmentId
     committed_edge_ids: tuple[EvidenceEdgeId, ...]
     committed_classification_ids: tuple[ClassificationId, ...]
+
+
+class Phase6CommitRecord(ContractModel):
+    """Immutable transaction manifest for one assessed Phase 6 comparison batch."""
+
+    model_config = ConfigDict(frozen=True)
+    contract_kind: Literal["phase6-commit-record-v1"] = "phase6-commit-record-v1"
+    commit_id: str
+    assessment_id: AssessmentId
+    committed_edge_ids: tuple[EvidenceEdgeId, ...]
+    committed_classification_ids: tuple[ClassificationId, ...]
+
+    @model_validator(mode="after")
+    def paired_unique_artifacts(self) -> Self:
+        if not self.committed_edge_ids or len(self.committed_edge_ids) != len(
+            self.committed_classification_ids
+        ):
+            raise ValueError("Phase 6 commit requires paired edge and classification IDs")
+        if len(set(self.committed_edge_ids)) != len(self.committed_edge_ids) or len(
+            set(self.committed_classification_ids)
+        ) != len(self.committed_classification_ids):
+            raise ValueError("Phase 6 commit IDs must be unique")
+        return self
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedPhase6Commit:
+    """Repository-loaded semantics for a validated persisted commit."""
+
+    record: Phase6CommitRecord
+    comparisons: tuple[ClassifiedComparison, ...]
 
 
 @runtime_checkable
@@ -63,6 +96,10 @@ class EvidenceGraphRepository(Protocol):
         identical content is idempotent; different content under an existing
         identity is an error because history is append-only.
         """
+        ...
+
+    def resolve_phase6_commit(self, receipt: Phase6CommitReceipt) -> ResolvedPhase6Commit:
+        """Resolve a receipt to a persisted manifest and its validated semantic artifacts."""
         ...
 
     def get_node(self, node_id: str) -> GraphNode | None: ...

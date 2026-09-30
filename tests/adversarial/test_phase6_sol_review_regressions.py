@@ -318,12 +318,12 @@ def test_f07_schema_v1_migrates_to_v3(tmp_path) -> None:
     repository = SqlAlchemyEvidenceGraphRepository(database)
     # Simulate a v1 database with no Phase 6 edges.
     with repository.engine.begin() as connection:
-        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 4"))
+        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 5"))
     repository.close()
     migrated = SqlAlchemyEvidenceGraphRepository(database)
     from novelty_harness.evidence.graph.migrations import SCHEMA_VERSION, schema_version
 
-    assert schema_version(migrated.engine) == SCHEMA_VERSION == 4
+    assert schema_version(migrated.engine) == SCHEMA_VERSION == 5
     migrated.close()
 
 
@@ -351,7 +351,7 @@ def test_f07_legacy_direct_edge_cannot_be_reinterpreted_as_verified(tmp_path) ->
         ),
     )
     with repository.engine.begin() as connection:
-        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 4"))
+        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 5"))
     repository.close()
     with pytest.raises(ValueError, match="Legacy Phase 6 graph edges"):
         SqlAlchemyEvidenceGraphRepository(database)
@@ -1423,7 +1423,6 @@ async def test_f11_pipeline_projection_passes_the_bridge_with_combination_and_wi
         trace_sink=_Sink2(),
         clock=lambda: NOW,
     )
-    repository.close()
     assert any(edge.mcu_id.startswith("mcu_comb_") for edge in result.edges)
     window_ids = {
         expansion.window_passage.passage_id
@@ -1431,7 +1430,7 @@ async def test_f11_pipeline_projection_passes_the_bridge_with_combination_and_wi
         if expansion.available and expansion.window_passage is not None
     }
     assert window_ids
-    projected = _project_edges(result)
+    projected = _project_edges(result, repository)
     assert any(set(edge.passage_ids) & window_ids for edge in projected)
 
     legacy_sources = tuple(
@@ -1460,3 +1459,4 @@ async def test_f11_pipeline_projection_passes_the_bridge_with_combination_and_wi
             legacy_passages,
             extra_mcu_ids=tuple(item.mcu_id for item in result.propositions),
         )
+    repository.close()

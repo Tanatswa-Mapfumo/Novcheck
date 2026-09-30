@@ -223,6 +223,9 @@ def test_graph_models_and_protocol_are_storage_independent() -> None:
         def upsert(self, *, nodes=(), edges=(), clusters=()):  # type: ignore[no-untyped-def]
             pass
 
+        def resolve_phase6_commit(self, receipt):  # type: ignore[no-untyped-def]
+            raise ValueError("No persisted Phase 6 commit")
+
         def get_node(self, node_id: str) -> GraphNode | None:
             return None
 

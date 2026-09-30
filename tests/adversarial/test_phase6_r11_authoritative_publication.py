@@ -465,9 +465,9 @@ async def test_legacy_projection_requires_receipt_for_every_verified_edge(tmp_pa
     try:
         result = await _run(writer, evidence, repository, tmp_path / "projection.jsonl")
         assert result.edges
-        assert project_verified_edges(result)
+        assert project_verified_edges(result, repository)
         with pytest.raises(ValueError, match="receipt|committed"):
-            project_verified_edges(replace(result, commit_receipts=()))
+            project_verified_edges(replace(result, commit_receipts=()), repository)
     finally:
         repository.close()
 

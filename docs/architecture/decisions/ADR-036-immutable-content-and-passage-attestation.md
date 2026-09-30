@@ -109,3 +109,30 @@ the verifier operation completed; its `state` field carries the semantic
 outcome. Operational failures may be audited before commit, but they must not
 assert an uncommitted semantic finding. Content-authority rejection remains
 an immediate operational diagnostic after the repository rejects the chain.
+
+## R13 amendment: persisted commit authority (1 October 2026)
+
+A `Phase6CommitReceipt` is a reference to authoritative repository state, not
+a capability or proof of commit. Its public constructor, serialization and
+copy methods confer no authority. Schema v5 adds an immutable
+`phase6_commits` manifest containing the assessment and ordered verified-edge
+and classification IDs. The repository writes that manifest in the same SQL
+transaction as those semantic artifacts and returns its stable commit ID only
+after the transaction commits. A rejected batch leaves no manifest.
+
+Authority-sensitive consumers resolve the receipt against the persisted
+manifest and revalidate its exact classified comparisons, verified edges,
+semantic chains, cited passage nodes and source/version content authority.
+The legacy compatibility projection requires an open repository, checks its
+caller result against the repository-loaded comparison and projects the
+repository copy. A graph path string or matching IDs inside a caller result
+are never sufficient. The pipeline also resolves the receipt before publishing
+queued semantic events. This validation is independent of semantic polarity.
+
+Existing v4 databases may migrate their schema metadata to v5, but their old
+semantic rows have no commit manifest and cannot authorize projection until
+an exact validated upsert replays them and creates one. A repository replica
+carrying the same persisted manifest and semantic artifacts can resolve the
+same receipt; an unrelated repository cannot. Receipt signing and an offline
+trust mode are outside this local repository contract. Gate 30 remains open
+pending independent Stage-1 re-review.

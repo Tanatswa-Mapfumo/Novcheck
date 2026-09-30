@@ -479,3 +479,25 @@ does not change chronology, context, coverage, patent, anti-stitching or
 Phase 7 behavior. Deterministic tests do not establish live-model entailment.
 
 Gate 30 remains OPEN pending fresh independent Stage-1 provenance re-review.
+
+## R13 persisted commit-receipt authority remediation
+
+The Stage-1 R13 **FAIL** at `6abaefc7` remains open pending independent
+re-review. This implementation adds a schema-v5 `phase6_commits` manifest in
+the same transaction as each classified comparison. A public receipt names
+that manifest but never establishes authority by itself. Repository resolution
+checks exact verified edges, chains, classifications, passage nodes and
+source/version content authority. Legacy projection requires that repository
+resolution and projects its stored artifacts after checking caller-result
+agreement. The pipeline resolves a receipt before publishing semantic events.
+Existing v4 semantic rows require validated replay to gain a manifest;
+unrelated Phase 6 semantics and Phase 7 behavior were not changed.
+
+The new R13 adversarial suite reproduces the old fabricated-receipt bypass
+before the repair and tests forged, copied, deserialized, foreign and stale
+receipts, caller mutations, authority tampering, migration/replay and positive
+semantic polarities. The focused R10–R13/provenance suites passed **84 tests**.
+ADR-036 records the receipt authority rule. Full and fresh-checkout results
+are reported in the implementation handoff.
+
+Gate 30 remains OPEN pending fresh independent Stage-1 provenance/publication re-review.

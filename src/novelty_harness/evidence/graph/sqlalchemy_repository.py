@@ -31,12 +31,15 @@ from novelty_harness.evidence.graph.repository import (
     ContentAuthorityError,
     GraphDirection,
     Phase6CommitReceipt,
+    Phase6CommitRecord,
+    ResolvedPhase6Commit,
 )
 from novelty_harness.evidence.graph.sqlalchemy_models import (
     GraphEdgeRow,
     GraphNodeRow,
     LineageClusterMemberRow,
     LineageClusterRow,
+    Phase6CommitRow,
     VerificationObservationRow,
     VerifiedChainRow,
     VerifiedClassificationRow,
@@ -65,6 +68,23 @@ def _semantic_document(value: JsonValue | BaseModel) -> str:
         json.loads(value) if isinstance(value, str) else json.loads(canonical_json(value)),
     )
     return canonical_json(without_clock(document))
+
+
+def _phase6_commit_id(
+    assessment_id: str,
+    edge_ids: tuple[str, ...],
+    classification_ids: tuple[str, ...],
+) -> str:
+    return "p6commit_" + canonical_hash(
+        cast(
+            JsonValue,
+            {
+                "assessment_id": assessment_id,
+                "edge_ids": list(edge_ids),
+                "classification_ids": list(classification_ids),
+            },
+        )
+    )
 
 
 def _sqlite_engine(database: Path | None) -> Engine:
@@ -109,18 +129,27 @@ class SqlAlchemyEvidenceGraphRepository:
         classified_comparisons: Sequence[ClassifiedComparison] = (),
     ) -> Phase6CommitReceipt | None:
         receipt: Phase6CommitReceipt | None = None
+        commit_record: Phase6CommitRecord | None = None
         if classified_comparisons:
             assessments = {item.comparison.assessment_id for item in classified_comparisons}
             if len(assessments) != 1:
                 raise ValueError("One Phase 6 commit must belong to one assessment")
+            assessment_id = next(iter(assessments))
+            edge_ids = tuple(item.comparison.chain.edge.edge_id for item in classified_comparisons)
+            classification_ids = tuple(
+                item.classification.classification_id for item in classified_comparisons
+            )
+            commit_record = Phase6CommitRecord(
+                commit_id=_phase6_commit_id(assessment_id, edge_ids, classification_ids),
+                assessment_id=assessment_id,
+                committed_edge_ids=edge_ids,
+                committed_classification_ids=classification_ids,
+            )
             receipt = Phase6CommitReceipt(
-                assessment_id=next(iter(assessments)),
-                committed_edge_ids=tuple(
-                    item.comparison.chain.edge.edge_id for item in classified_comparisons
-                ),
-                committed_classification_ids=tuple(
-                    item.classification.classification_id for item in classified_comparisons
-                ),
+                commit_id=commit_record.commit_id,
+                assessment_id=commit_record.assessment_id,
+                committed_edge_ids=commit_record.committed_edge_ids,
+                committed_classification_ids=commit_record.committed_classification_ids,
             )
         with Session(self._engine) as session, session.begin():
             self._verify_edge_endpoints(session, nodes, edges)
@@ -156,7 +185,89 @@ class SqlAlchemyEvidenceGraphRepository:
                 self._persist_edge(session, derived_edges.get(edge.edge_id, edge))
             for cluster in clusters:
                 self._persist_cluster(session, cluster)
+            if commit_record is not None:
+                self._persist_phase6_commit(session, commit_record)
         return receipt
+
+    def _persist_phase6_commit(self, session: Session, record: Phase6CommitRecord) -> None:
+        """Write the manifest inside the transaction that wrote its semantic rows."""
+
+        session.flush()
+        for edge_id, classification_id in zip(
+            record.committed_edge_ids, record.committed_classification_ids, strict=True
+        ):
+            edge = session.get(VerifiedEdgeRow, edge_id)
+            chain = session.get(VerifiedChainRow, edge_id)
+            classification = session.get(VerifiedClassificationRow, edge_id)
+            if (
+                edge is None
+                or chain is None
+                or classification is None
+                or classification.classification_id != classification_id
+            ):
+                raise ValueError("Phase 6 commit references unresolved semantic artifacts")
+        document = canonical_json(record)
+        row = session.get(Phase6CommitRow, record.commit_id)
+        if row is None:
+            session.add(
+                Phase6CommitRow(
+                    commit_id=record.commit_id,
+                    assessment_id=record.assessment_id,
+                    document_json=document,
+                )
+            )
+        elif row.document_json != document:
+            raise ValueError("Phase 6 commit identity already exists with different content")
+
+    def resolve_phase6_commit(self, receipt: Phase6CommitReceipt) -> ResolvedPhase6Commit:
+        """Resolve caller-held IDs to the exact persisted transaction manifest."""
+
+        receipt = Phase6CommitReceipt.model_validate(receipt.model_dump(mode="json"))
+        if receipt.commit_id is None:
+            raise ValueError("Phase 6 commit receipt has no persisted commit identity")
+        with Session(self._engine) as session:
+            row = session.get(Phase6CommitRow, receipt.commit_id)
+            if row is None:
+                raise ValueError("Phase 6 commit receipt has no persisted commit record")
+            record = Phase6CommitRecord.model_validate_json(row.document_json)
+            if (
+                row.assessment_id != record.assessment_id
+                or record.commit_id != receipt.commit_id
+                or record.assessment_id != receipt.assessment_id
+                or record.committed_edge_ids != receipt.committed_edge_ids
+                or record.committed_classification_ids != receipt.committed_classification_ids
+                or record.commit_id
+                != _phase6_commit_id(
+                    record.assessment_id,
+                    record.committed_edge_ids,
+                    record.committed_classification_ids,
+                )
+            ):
+                raise ValueError("Phase 6 commit receipt differs from persisted authority")
+            comparisons: list[ClassifiedComparison] = []
+            for edge_id, classification_id in zip(
+                record.committed_edge_ids, record.committed_classification_ids, strict=True
+            ):
+                edge = self._resolve_verified_edge(session, edge_id)
+                chain = self._resolve_verified_chain(session, edge_id)
+                classification_row = session.get(VerifiedClassificationRow, edge_id)
+                if edge is None or chain is None or classification_row is None:
+                    raise ValueError("Phase 6 commit has missing authoritative semantic artifacts")
+                classified = ClassifiedComparison.model_validate_json(
+                    classification_row.document_json
+                )
+                self._check_chain_nodes(session, chain, ())
+                if (
+                    classification_row.classification_id != classification_id
+                    or classified.classification.classification_id != classification_id
+                    or classified.comparison.assessment_id != record.assessment_id
+                    or chain.assessment_id != record.assessment_id
+                    or _semantic_document(chain.edge) != _semantic_document(edge)
+                    or _semantic_document(classified.comparison.chain) != _semantic_document(chain)
+                ):
+                    raise ValueError("Phase 6 commit artifacts differ from persisted authority")
+                comparisons.append(classified)
+            return ResolvedPhase6Commit(record=record, comparisons=tuple(comparisons))
 
     def _verify_edge_endpoints(
         self,
@@ -245,6 +356,23 @@ class SqlAlchemyEvidenceGraphRepository:
         chain: VerifiedEvidenceChain,
         batch_nodes: Sequence[GraphNode],
     ) -> None:
+        self._check_chain_nodes(session, chain, batch_nodes)
+        document = canonical_json(chain)
+        row = session.get(VerifiedChainRow, chain.edge.edge_id)
+        if row is None:
+            session.add(VerifiedChainRow(edge_id=chain.edge.edge_id, document_json=document))
+        elif _semantic_document(row.document_json) != _semantic_document(document):
+            raise ValueError(
+                f"Verified semantic chain {chain.edge.edge_id} already exists "
+                "with different content"
+            )
+
+    def _check_chain_nodes(
+        self,
+        session: Session,
+        chain: VerifiedEvidenceChain,
+        batch_nodes: Sequence[GraphNode],
+    ) -> None:
         cited = validate_verified_chain(chain)
         self._check_content_authority(session, chain, batch_nodes)
         by_id = {node.node_id: node for node in batch_nodes}
@@ -279,15 +407,6 @@ class SqlAlchemyEvidenceGraphRepository:
                 raise ValueError(
                     f"Verified semantic chain cites unresolved passage {passage.passage_id}"
                 )
-        document = canonical_json(chain)
-        row = session.get(VerifiedChainRow, chain.edge.edge_id)
-        if row is None:
-            session.add(VerifiedChainRow(edge_id=chain.edge.edge_id, document_json=document))
-        elif _semantic_document(row.document_json) != _semantic_document(document):
-            raise ValueError(
-                f"Verified semantic chain {chain.edge.edge_id} already exists "
-                "with different content"
-            )
 
     def _check_content_authority(
         self,

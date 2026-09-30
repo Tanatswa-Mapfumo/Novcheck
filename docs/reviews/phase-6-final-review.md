@@ -1037,3 +1037,91 @@ is recorded in the implementation handoff; these checks are not independent
 semantic acceptance.
 
 Gate 30 remains OPEN pending fresh independent Stage-1 provenance/publication re-review.
+
+---
+
+## Stage-1 provenance/publication kill-test of `6abaefc7ea12b9d20ebc397739c8bdc0ac8984ee`
+
+**Scope and reviewer limitation:** This was a read-only Stage-1 attack on the exact
+commit, before this review-only append. The reviewer in this Codex session also
+implemented the R12 remediation, so this record cannot satisfy the request for
+an *independent* reviewer. It records a reproduced failure, not semantic
+acceptance. No production code, tests, fixtures or Phase 7 work were changed.
+
+**Stage 1: FAIL — R13 (Important), a caller-created receipt authorizes an
+uncommitted direct precedent in the legacy projection.** The
+`Phase6CommitReceipt` contract in `evidence/graph/repository.py` is a public,
+constructible Pydantic model containing only an assessment ID and edge and
+classification ID tuples. `application/evidence_phase6.py::project_verified_edges`
+checks those supplied IDs against the supplied result, but does not resolve the
+receipt or the semantic artifacts from the authoritative repository. Possession
+of a matching caller-created receipt is therefore sufficient to project an
+unpersisted `DIRECT_PRECEDENT` edge for the later-phase compatibility boundary.
+The normal pipeline's post-commit receipt path does not cure this public
+projection bypass.
+
+**Minimal reproduction:** Build the valid supported chain from
+`tests.adversarial.test_phase6_sol_review_regressions._valid_chain` and
+`tests.unit.evidence.verification.test_eligibility.build`, and classify its
+`VerifiedComparison`. Do **not** create or write any repository. Construct
+`Phase6CommitReceipt(assessment_id=chain.assessment_id,
+committed_edge_ids=(chain.edge.edge_id,),
+committed_classification_ids=(classification.classification_id,))`, then place
+the chain's edge and classification and this receipt into a
+`Phase6EvidenceResult` with `graph_ref='nonexistent.sqlite'`. Calling
+`project_verified_edges(result)` returns one legacy edge with
+`relation_type=DIRECT_PRECEDENT`. The offline probe printed
+`repository_used=False`, `receipt_constructed_by_caller=True`,
+`projected_count=1`, and `relation=DIRECT_PRECEDENT`.
+
+**Violated boundary and required behavior:** Stage 1 requires fabricated or
+cross-wired receipts to be unable to authorize later-phase projection. This
+receipt has never been issued by a repository transaction, yet the projected
+edge is presented as implemented Phase 6 evidence. Projection must validate
+the exact assessment, edge, classification and provenance against committed
+repository artifacts, or consume an authority-controlled projection rather
+than a freely constructible result/receipt pair. A regression should construct
+this fully matching but unpersisted receipt and require rejection, then retain
+the positive exact-commit projection path. Test a receipt from another
+repository and an older successful run against a rejected new comparison.
+
+The requested kill-test stops at this reproduced Important bypass. The
+focused verification command, full Gate-30 Stage 2 review and fresh checkout
+were not run for this review. Earlier implementation test results do not close
+R13. Gate 30 remains blocked, and an independent reviewer is still required.
+
+Stage 1 provenance/publication re-review: FAIL — Phase 6 remains blocked.
+
+---
+
+## R13 commit-receipt authority implementation record (not an independent review)
+
+The preceding R13 Stage-1 **FAIL** at `6abaefc7` remains unchanged. This
+section records the implementer's bounded repair only; it does not close R13
+or grant Gate 30 acceptance. Phase 7 was not started.
+
+Schema v5 stores an immutable Phase 6 commit manifest in the same repository
+transaction as its verified edge, chain and classification. The returned
+`Phase6CommitReceipt` references that manifest. Repository resolution checks
+the receipt against persisted IDs, exact classified comparisons, cited passage
+nodes and source/version content authority. The public legacy projection now
+requires a repository, rejects caller-result disagreement and projects the
+repository-loaded edge and classification. The Phase 6 pipeline resolves its
+receipt before publishing queued semantic events. Existing v4 semantic rows
+have no manifest and require exact validated replay before projection.
+
+`tests/adversarial/test_phase6_r13_commit_receipt_authority.py` first
+reproduced a fabricated receipt projecting an unpersisted direct edge, then
+covered empty and foreign repositories; receipt copy, construct and JSON
+forgery; missing manifests; an old receipt paired with rejected new content;
+caller-mutated identity, citations, classification, chronology and provenance;
+content-authority revalidation; v4 replay; exact commit/replay; and positive
+projection for direct, partial, component, contradiction, no-direct and
+unresolved states. The focused R10–R13/provenance suites passed **84 tests**.
+ADR-036 records that a receipt is a repository reference rather than proof.
+
+Implementation verification and a fresh exact-commit checkout are recorded
+with the implementation handoff. These checks cannot replace a fresh
+independent Stage-1 provenance/publication re-review.
+
+Gate 30 remains OPEN pending fresh independent Stage-1 provenance/publication re-review.

@@ -354,6 +354,15 @@ def _commit_candidate(
         or receipt.committed_classification_ids != (candidate.classification.classification_id,)
     ):
         raise ValueError("Repository did not confirm the committed Phase 6 comparison")
+    resolved = repository.resolve_phase6_commit(receipt)
+    if (
+        resolved.record.commit_id != receipt.commit_id
+        or len(resolved.comparisons) != 1
+        or resolved.comparisons[0].comparison.chain.edge.edge_id != chain.edge.edge_id
+        or resolved.comparisons[0].classification.classification_id
+        != candidate.classification.classification_id
+    ):
+        raise ValueError("Repository did not resolve the committed Phase 6 comparison")
     return receipt
 
 

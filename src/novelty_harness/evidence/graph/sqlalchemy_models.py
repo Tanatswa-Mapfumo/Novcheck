@@ -76,6 +76,14 @@ class VerifiedClassificationRow(Base):
     document_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class Phase6CommitRow(Base):
+    __tablename__ = "phase6_commits"
+
+    commit_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    assessment_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    document_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class LineageClusterRow(Base):
     __tablename__ = "lineage_clusters"
 

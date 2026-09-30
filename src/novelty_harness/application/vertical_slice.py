@@ -16,6 +16,7 @@ from novelty_harness.application.evidence_phase5 import (
     project_source as project_source_legacy,
 )
 from novelty_harness.application.evidence_phase6 import (
+    GRAPH_REF,
     Phase6EvidenceComponents,
     project_verified_edges,
 )
@@ -53,6 +54,7 @@ from novelty_harness.domain.mcu import MCU, MCUGraph
 from novelty_harness.domain.reporting import CompiledReport
 from novelty_harness.domain.research import SearchPlan, SearchPlanReview
 from novelty_harness.domain.state_machine import advance_stage, change_status, complete_assessment
+from novelty_harness.evidence.graph.sqlalchemy_repository import SqlAlchemyEvidenceGraphRepository
 from novelty_harness.evidence.phase6_pipeline import Phase6EvidenceResult
 from novelty_harness.ports.content import ContentResolver
 from novelty_harness.ports.models import (
@@ -737,7 +739,15 @@ async def run_vertical_slice(
                 ),
             )
         if phase6_result is not None:
-            verified: list[EvidenceEdge] = list(project_verified_edges(phase6_result))
+            phase6_repository = SqlAlchemyEvidenceGraphRepository(
+                artifact_writer.assessment_dir(record.assessment_id) / GRAPH_REF
+            )
+            try:
+                verified: list[EvidenceEdge] = list(
+                    project_verified_edges(phase6_result, phase6_repository)
+                )
+            finally:
+                phase6_repository.close()
             _check_edges(
                 verified,
                 graph.mcus,
