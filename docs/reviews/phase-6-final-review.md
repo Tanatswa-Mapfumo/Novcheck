@@ -512,3 +512,236 @@ deselected**. `git diff --check` passed. The exact final commit will receive
 separate fresh-checkout verification in the implementation handoff.
 
 Gate 30 remains OPEN pending fresh independent GPT-6 Sol High/Max semantic re-review.
+
+---
+
+## Independent review of the final consolidation at `47021af` (30 September 2026)
+
+**Reviewed state:** `phase-6-evidence-verification` at
+`47021af9826c431b8900589e57099bd2749d4872`, before this review-only
+append. The worktree was clean at that commit. The reviewer did not implement
+the consolidation or change production code, tests, fixtures, or Phase 7.
+The active Codex session identifies itself as GPT-6; it did not expose a way
+to select or attest the requested GPT-6 Sol Max preset. This record therefore
+does not claim that model-specific requirement was met.
+
+**Decision: FAIL.** The consolidation tests are green, but new direct probes
+found a persistable false direct precedent and several other contract bypasses.
+The prior FAIL records above remain historical and unchanged.
+
+### Method and verification
+
+I checked the master-spec evidence, chronology, equivalence, audit, and
+abstention requirements; the Phase 6 completion record and prior reviews;
+ADR-026 through ADR-035; the Phase 6 mapping, context, verification,
+precedent, pipeline, graph, migration, and application paths; and the
+consolidation, Sol-derived, unit, integration, full-slice, and benchmark
+tests/fixtures. I then used read-only, offline Python probes against the
+reviewed code. These probes were not added to the repository.
+
+On the exact worktree, `uv sync --dev` (with a writable temporary uv cache),
+`uv run python scripts/verify.py`, and `git diff --check` passed: Ruff check,
+Ruff format on 288 files, Pyright with 0 errors and 0 warnings, and **1498
+passed, 5 opt-in network tests deselected**. A fresh local clone at
+`/private/tmp/novcheck-phase6-review-fresh`, detached at the exact commit,
+passed the literal `uv sync --dev`, `uv run python scripts/verify.py`, and
+`git diff --check` with the same results. Initial sandboxed fresh-checkout
+sync could not reach its package cache; the requested sync subsequently
+succeeded with access to the existing uv cache. Green checks establish the
+baseline, not semantic correctness.
+
+### Critical finding
+
+**R01 (F03/F06/F07) — A passage from different content can become a persisted
+direct precedent.** Violated invariant: FR-EVID-001/004, FR-SRC-002 and
+INV-14 require the decisive cited text to belong to the exact cited
+source/version. `passages/extraction.py::extract_resolved_content` attests a
+whole document from caller-supplied text; `verification/integrity.py::
+validate_semantic_chain` checks the passage's self-hash and owner IDs but not
+its relationship to `SourceVersionRecord.content_hash` or
+`SourceRecord.content_hash`; `graph/sqlalchemy_repository.py::
+_persist_verified_chain` checks the passage node against that same passage
+self-hash. Minimal reproduction: make a pre-cutoff version and source whose
+content hash is for `"Actually the relay requires an operator."`; construct
+a complete resolved-content passage for the same IDs containing `"A threshold
+drives a relay coil and switches a load without an operator."`; make otherwise
+valid, fully supported mapping/verification/claim models. All contracts
+validate, `build_verified_evidence_edge` is decisive, classification is
+`DIRECT_PRECEDENT`, and `upsert` persists a `DIRECT_PRECEDENT` graph edge while
+the passage hash differs from the cited version's hash. Required: source
+content provenance must prove that each passage was extracted from the cited
+immutable version, and complete-document/abstract attestations must be checked
+against that version's content hash. Smallest architectural fix: carry the
+resolved parent-content digest and extraction span/unit proof in the passage
+contract, validate it against the owned version (or source for genuinely
+unversioned evidence) at chain and repository boundaries, and require exact
+digest equality for a complete document. Regression: the conflicting-content
+case must fail before classification and roll back graph persistence; genuine
+subspans, abstracts, and complete documents must still work.
+
+### Important findings
+
+**R02 (F03) — Callers can assert a complete evidence unit.** Violated
+invariant: unknown surrounding content cannot make support decisive.
+`passages/extraction.py::extract_span` accepts any `unit_boundary`, and
+`context/expansion.py::inspect_passage_context` returns `COMPLETE` immediately
+when its two Boolean flags are true, without checking who established the
+boundary or whether it encloses the cited unit. Minimal reproduction:
+`extract_span` of the first `"Support."` from `"Support. However not in
+production."`, with a caller-created `EvidenceUnitBoundary(scope=DOCUMENT,
+starts_unit=True, ends_unit=True)`, returns `COMPLETE` even though the qualifier
+lies outside the passage. Required: both boundaries must be tied to verified
+extraction from the same immutable resolved content and exact unit span.
+Smallest fix: make boundary attestations extractor-owned, record their parent
+digest and offsets, and recheck them in context inspection and the semantic
+chain; unknown provenance abstains. Regression: a caller-declared boundary,
+including one with a matching-looking locator, cannot rescue a short excerpt.
+
+**R03 (F10) — The verification contract admits duplicate commitments, and an
+unchecked copy can create a decisive direct edge.** Violated invariant:
+every material commitment is judged exactly once and aggregate support is
+derived from those judgments. `verification/models.py::SupportVerification.
+state_matches_payload` derives a state from a set of record states but does
+not require unique commitment IDs. A JSON payload with records `mech,
+outcome, mech`, all `SUPPORTED`, validates as aggregate `SUPPORTED`.
+Separately, `model_copy(update={"state": SUPPORTED})` on a genuine partial
+verification leaves one `NOT_SUPPORTED` record; `verification/gates.py::
+build_verified_evidence_edge` accepts it and emits a decisive
+`DIRECT_PRECEDENT` edge. The later semantic-chain/repository checks reject
+these particular invalid aggregates, but the public verification and edge
+construction boundaries do not. Required: no schema-valid duplicate-record
+verification, and every public edge/classification gate must revalidate
+untrusted model instances before relying on aggregate state. Smallest fix:
+enforce unique IDs in `SupportVerification`, revalidate through serialized
+data at the edge boundary, and derive decisiveness from validated commitment
+records. Regression: duplicate JSON records and partial-to-supported copies
+must fail at the first authoritative boundary; real scoped partials stay
+nondecisive.
+
+**R04 (F04) — Source routing silently omits eligible discovered evidence.**
+Violated invariant: bounded local coverage must expose unassessed candidates;
+no absence claim may rest on an invisible omission. `phase6_pipeline.py::
+select_candidate_sources` uses `routed or all sources`, then computes
+`unassessed_sources` only inside that chosen pool. Minimal reproduction: one
+source routed to target `mcu_A`, another full-text source with passages routed
+to `mcu_B`, and target `mcu_A`. The latter is neither selected nor listed as
+unassessed, even with room under `max_sources`. A source may be relevant to
+more than its discovery route. Required: disclose all eligible skipped
+sources for this target, or assess them under an explicit policy. Smallest
+fix: separate routing priority from coverage accounting and include every
+eligible nonselected source in `unassessed_sources`. Regression: a relevant
+unrouted later source is assessed or visibly unassessed when a routed source
+exists.
+
+**R05 (F04/F11 failure path) — A handled mapping failure aborts Phase 6
+instead of returning unassessable evidence.** Violated invariant: failed
+untrusted model output must become an explicit failure state, not erase the
+assessment. `phase6_pipeline.py::_assess_candidate` appends an `UNASSESSABLE`
+classification for an invalid mapper response but no chain; `run` later
+constructs `classified_comparisons` with `zip(chains, classifications,
+strict=True)` (lines 715-721). Minimal reproduction: run the real Phase 5
+evidence and Phase 6 pipeline with a mapper response having no dimensions.
+Current result is `ValueError: zip() argument 2 is longer than argument 1`;
+the unassessable result and coverage record never return. Required: preserve
+the selection/mapping failure and finish the Phase 6 local assessment.
+Smallest fix: pair classifications with their chain at creation, or retain a
+separate list of only chain-backed classifications for persistence. Regression:
+one failed and one successful source, and all failed sources, both return
+explicit unassessable classifications without a graph crash.
+
+**R06 (F08/F02 patent boundary) — Patent screening accepts a caller-asserted
+eligible date for a cited version.** Violated invariant: one-reference
+anticipation-like screening must use the exact cited version's verified
+disclosure. `precedent/patent.py::PatentEvidenceEntry` accepts a free
+`ChronologyAssessment`; for a versioned entry it checks only the date-field
+name. `screen_patent_references` treats its `PREDATES_CUTOFF` state as
+eligibility. Minimal reproduction: a versioned direct/decisive classification
+with parent publication in 2027 and a caller-provided
+`version_published_date=2020` chronology produces
+`SINGLE_REFERENCE_ANTICIPATION_LIKE`; no version record or
+`CitedDisclosure` is supplied or checked. Required: the patent view must
+consume the validated `ClassifiedComparison`/cited disclosure, not an
+independent date assertion. Smallest fix: derive the patent entry from that
+authoritative comparison, or validate the entry against it at screening.
+Regression: a post-cutoff version paired with an earlier asserted chronology
+cannot yield anticipation; a genuine earlier preprint remains eligible.
+
+**R07 (cross-target anti-stitching) — A foreign MCU classification influences
+another target's multi-source result.** Violated invariant: local source/MCU
+reasoning cannot transfer support or direct eligibility between MCUs.
+`precedent/gates.py::summarize_multi_source` never checks the input
+classifications' `mcu_id` against its `mcu_id` argument. Minimal reproduction:
+pass a direct classification for `mcu_1` while requesting a summary for
+`mcu_other`; the result reports `single_source_direct_eligible=True` for
+`mcu_other`. The normal pipeline currently passes a target-local list, but
+the public summary contract accepts this cross-wire. Required: reject or
+filter foreign classifications before counting roots/direct hits. Smallest
+fix: require every input classification to match the requested target.
+Regression: a direct hit or two partials for another MCU cannot change this
+MCU's summary, including a combination target.
+
+### Additional bypass and migration observations
+
+- **R08 (Important, F06 public API):** `classify_verified_comparison` does
+  not revalidate an incoming `VerifiedComparison` instance. A valid 2027
+  comparison whose chain is copied with a 2020 decisive edge returns a
+  decisive `DIRECT_PRECEDENT`. `ClassifiedComparison` construction and the
+  repository reject that forged copy, so persistence is protected, but the
+  public classifier has already emitted a valid-looking classification.
+  Required: revalidate the comparison at the public classifier boundary.
+  Regression: a `model_copy(update=...)` chronology/chain substitution cannot
+  return direct. See `precedent/gates.py::classify_verified_comparison` and
+  `verification/integrity.py::VerifiedComparison.authoritative_chain`.
+- **R09 (Minor, F07 migration):** `graph/migrations.py::ensure_schema` blocks
+  nonempty legacy `verified_edges` only when `current == 3`. An offline v2
+  database with an orphan `verified_edges` row and no Phase 6 graph edge
+  migrated to v4 in a direct probe. That row cannot establish a current graph
+  edge without a chain, but the migration contradicts ADR-035's stated rule
+  that legacy verified artifacts lacking the v4 chain/classification contract
+  require reprocessing. Reject nonempty legacy verified tables for every
+  version that can have them; add a v2 orphan-row migration regression.
+
+### New cross-contract interaction probes
+
+These are fresh variants exercised against this commit, not acceptance inferred
+from existing tests. `ACCEPTED` means the unsafe input reached the stated
+public boundary; it does not imply every later boundary accepted it.
+
+| # | Interaction | Observed |
+| --- | --- | --- |
+| 1 | Cited version hash × complete resolved passage with different text | **ACCEPTED:** decisive direct classification and graph persistence (R01). |
+| 2 | Truncated span × caller-supplied `DOCUMENT` start/end flags | **ACCEPTED:** context `COMPLETE` (R02). |
+| 3 | Hidden qualifier outside that span × all-supported verifier | **ACCEPTED:** completeness gate can permit decisiveness (R02). |
+| 4 | Future version identity × independently asserted old patent chronology | **ACCEPTED:** anticipation-like mode (R06). |
+| 5 | Future validated comparison × copied old edge × public classifier | **ACCEPTED:** direct classification; `ClassifiedComparison` rejects it (R08). |
+| 6 | Duplicate material ID × derived aggregate state × JSON validation | **ACCEPTED:** three records validate as `SUPPORTED` (R03). |
+| 7 | Partial commitment records × copied aggregate `SUPPORTED` × edge gate | **ACCEPTED:** decisive direct edge; later chain validation rejects (R03). |
+| 8 | Direct classification for MCU A × summary requested for MCU B | **ACCEPTED:** B reports direct eligible (R07). |
+| 9 | Routed candidate × eligible source routed elsewhere × coverage | **ACCEPTED:** second source absent from selected and unassessed (R04). |
+| 10 | Mapper validation failure × chain/classification persistence pairing | **FAILED CLOSED:** pipeline raises `zip` error instead of reporting `UNASSESSABLE` (R05). |
+| 11 | Legacy v2 verified artifact × v4 migration without a chain | **ACCEPTED:** schema advances to v4 (R09). |
+
+### Finding status and gate
+
+F02's normal edge/chain chronology authority resisted the old-parent,
+post-cutoff-revision, earlier-preprint, unknown-date and foreign-owner cases;
+the patent-view assertion in R06 remains open. F03 is open (R01/R02). F06 is
+open (R01/R08). F07 is open for passage/version content provenance (R01),
+with the additional migration issue R09. F10 is open at the verification and
+edge construction boundaries (R03). N02's semantic edge/observation split
+passed the repeated-time, exact-replay, assessment/cutoff separation, reopen,
+and transaction tests in the full suite; no new N02 failure was reproduced.
+
+Of the previously closed findings, F01's ordered statement commitments,
+F05's canonical verifier citations, F09's verified-fact classifier rule,
+N01's cutoff-dependent edge IDs, F11's valid combination/expanded-passage
+full slice, and M01's explicit diagnostic benchmark description resisted the
+reviewed attacks. F04 is reopened by R04/R05. F08 is reopened by R06. The
+deterministic benchmark remains a fixture diagnostic, not measured live
+entailment or calibration. No Phase 7 implementation was found or started.
+
+Gate 30 cannot pass with R01 and the Important findings open. Remediation
+requires new regressions and another independent review of the repaired
+commit. This review made no implementation changes.
+
+Acceptance Gate 30: FAIL — Phase 6 remains blocked.
