@@ -352,6 +352,9 @@ def test_r10_replayed_semantic_input_rechecks_stored_content(tmp_path, semantic_
     try:
         repository.upsert(nodes=_authority_nodes(chain))
         _persist(repository, chain)
+        direct = next(
+            edge for edge in repository.edges() if edge.kind == GraphEdgeKind.DIRECT_PRECEDENT
+        )
         stored_version = repository.get_node(chain.version.version_id)
         assert stored_version is not None
         changed_version = stored_version.model_copy(
@@ -369,9 +372,7 @@ def test_r10_replayed_semantic_input_rechecks_stored_content(tmp_path, semantic_
             )
         comparison = verified_comparison(chain)
         classification = classify_verified_comparison(comparison, clock=lambda: NOW)
-        direct = next(
-            edge for edge in repository.edges() if edge.kind == GraphEdgeKind.DIRECT_PRECEDENT
-        )
+        assert repository.get_edge(direct.edge_id) is None
         with pytest.raises(ValueError, match="content|authority|provenance"):
             if semantic_input == "verified":
                 repository.upsert(verified_edges=(chain.edge,))
@@ -382,6 +383,11 @@ def test_r10_replayed_semantic_input_rechecks_stored_content(tmp_path, semantic_
                     )
                 )
             else:
-                repository.upsert(edges=(direct,))
+                repository.upsert(
+                    edges=(direct,),
+                    classified_comparisons=(
+                        ClassifiedComparison(comparison=comparison, classification=classification),
+                    ),
+                )
     finally:
         repository.close()

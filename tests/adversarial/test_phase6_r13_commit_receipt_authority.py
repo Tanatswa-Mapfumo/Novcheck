@@ -370,12 +370,12 @@ def test_v4_semantic_rows_need_replay_to_gain_a_v5_commit_manifest(tmp_path) -> 
         result = _commit(repository)
         with repository.engine.begin() as connection:
             connection.execute(text("DELETE FROM phase6_commits"))
-            connection.execute(text("UPDATE schema_version SET version = 4 WHERE version = 5"))
+            connection.execute(text("UPDATE schema_version SET version = 4 WHERE version = 6"))
     finally:
         repository.close()
     reopened = SqlAlchemyEvidenceGraphRepository(database)
     try:
-        assert schema_version(reopened.engine) == SCHEMA_VERSION == 5
+        assert schema_version(reopened.engine) == SCHEMA_VERSION == 6
         with pytest.raises(ValueError, match="commit|authorit|persist"):
             project_verified_edges(result, reopened)
         replay = _commit(reopened)

@@ -136,3 +136,29 @@ carrying the same persisted manifest and semantic artifacts can resolve the
 same receipt; an unrelated repository cannot. Receipt signing and an offline
 trust mode are outside this local repository contract. Gate 30 remains open
 pending independent Stage-1 re-review.
+
+## R14 amendment: graph projections require commit membership (1 October 2026)
+
+The Phase 6 semantic transaction is the sole authority-establishing write
+path. Generic graph mutation APIs cannot create authoritative Phase 6 semantic
+relations. Phase 6 graph edges and evidence-proposition nodes are derived
+projections whose authority requires valid commit-manifest membership and
+repository validation. This covers the complete `PHASE6_EDGE_KINDS` family,
+including negative, partial and contradiction relations.
+
+Schema v6 adds foreign-key-backed membership rows from each Phase 6 graph edge
+and proposition node to its commit manifest, verified edge and classification.
+The membership is written in the same transaction as the semantic artifacts
+and graph projection. A graph-only `upsert` cannot establish new Phase 6
+authority, even when it copies an existing committed edge. Ordinary Phase 5
+graph relations keep their generic write path.
+
+A semantic-looking graph row without valid commit-manifest ancestry is
+orphan, untrusted state. Public graph reads exclude it after rechecking the
+manifest, semantic chain, classification, passage and content authority, and
+the derived graph fields. Migrated v4/v5 rows gain no membership merely by
+upgrading schema metadata. Validated replay through the current semantic
+transaction can add the membership; migration alone cannot. The legacy
+compatibility projection continues to resolve committed semantic artifacts
+directly through `Phase6CommitReceipt` and does not infer authority from graph
+rows. Gate 30 remains open pending fresh independent Stage-1 re-review.

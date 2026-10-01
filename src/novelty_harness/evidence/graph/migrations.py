@@ -12,7 +12,7 @@ from novelty_harness.evidence.graph.sqlalchemy_models import (
     VerifiedEdgeRow,
 )
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def schema_version(engine: Engine) -> int | None:
@@ -43,13 +43,13 @@ def ensure_schema(engine: Engine) -> int:
             ).first()
         if unsafe is not None:
             raise ValueError(
-                "Legacy Phase 6 graph edges lack the authoritative v5 contract; "
+                "Legacy Phase 6 graph edges lack the authoritative v6 contract; "
                 "migration is blocked until those edges are reprocessed"
             )
     if current in {2, 3} and "verified_edges" in existing_tables:
         with engine.connect() as connection:
             if connection.execute(select(VerifiedEdgeRow.edge_id)).first() is not None:
-                raise ValueError("Legacy verified edges require reprocessing before v5 migration")
+                raise ValueError("Legacy verified edges require reprocessing before v6 migration")
     Base.metadata.create_all(engine)
     if current is None:
         with engine.begin() as connection:
@@ -65,9 +65,9 @@ def ensure_schema(engine: Engine) -> int:
             f"{SCHEMA_VERSION}; refusing to reinterpret"
         )
     if current < SCHEMA_VERSION:
-        if current in {1, 2, 3, 4}:
-            # Existing v4 artifacts gain no commit manifests; replay is required
-            # before they can authorize projection. Older unsafe edges were blocked.
+        if current in {1, 2, 3, 4, 5}:
+            # Existing Phase 6 graph rows gain no commit membership; validated
+            # replay is required before authoritative graph reads can expose them.
             with engine.begin() as connection:
                 connection.execute(
                     update(SchemaVersionRow)

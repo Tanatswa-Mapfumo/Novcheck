@@ -40,6 +40,8 @@ from novelty_harness.evidence.graph.sqlalchemy_models import (
     LineageClusterMemberRow,
     LineageClusterRow,
     Phase6CommitRow,
+    Phase6GraphEdgeMembershipRow,
+    Phase6GraphNodeMembershipRow,
     VerificationObservationRow,
     VerifiedChainRow,
     VerifiedClassificationRow,
@@ -179,6 +181,11 @@ class SqlAlchemyEvidenceGraphRepository:
             derived_nodes, derived_edges = self._verify_phase6_edges(
                 session, nodes, edges, verified_edges, verified_chains, classified_comparisons
             )
+            if commit_record is None and (
+                any(edge.kind in PHASE6_EDGE_KINDS for edge in edges)
+                or any(node.kind == GraphNodeKind.EVIDENCE_PROPOSITION for node in nodes)
+            ):
+                raise ValueError("Phase 6 graph projection requires a semantic commit")
             for node in nodes:
                 self._persist_node(session, derived_nodes.get(node.node_id, node))
             for edge in edges:
@@ -187,7 +194,73 @@ class SqlAlchemyEvidenceGraphRepository:
                 self._persist_cluster(session, cluster)
             if commit_record is not None:
                 self._persist_phase6_commit(session, commit_record)
+                for edge in edges:
+                    if edge.kind in PHASE6_EDGE_KINDS:
+                        self._persist_phase6_graph_membership(session, edge, commit_record)
+                for node in nodes:
+                    if node.kind == GraphNodeKind.EVIDENCE_PROPOSITION:
+                        self._persist_phase6_node_membership(session, node, commit_record)
         return receipt
+
+    def _persist_phase6_graph_membership(
+        self, session: Session, edge: GraphEdge, commit: Phase6CommitRecord
+    ) -> None:
+        """Bind a derived graph relation to its exact semantic transaction."""
+
+        reference = edge.verification
+        if reference is None:
+            raise ValueError("Phase 6 graph projection lacks a verified edge")
+        membership = dict(
+            zip(commit.committed_edge_ids, commit.committed_classification_ids, strict=True)
+        )
+        classification_id = membership.get(reference.verified_edge_id)
+        if classification_id is None:
+            raise ValueError("Phase 6 graph projection is outside the semantic commit")
+        row = session.get(Phase6GraphEdgeMembershipRow, edge.edge_id)
+        if row is None:
+            session.add(
+                Phase6GraphEdgeMembershipRow(
+                    edge_id=edge.edge_id,
+                    commit_id=commit.commit_id,
+                    verified_edge_id=reference.verified_edge_id,
+                    classification_id=classification_id,
+                )
+            )
+        elif (
+            row.commit_id != commit.commit_id
+            or row.verified_edge_id != reference.verified_edge_id
+            or row.classification_id != classification_id
+        ):
+            raise ValueError("Phase 6 graph projection has different commit membership")
+
+    def _persist_phase6_node_membership(
+        self, session: Session, node: GraphNode, commit: Phase6CommitRecord
+    ) -> None:
+        verified_edge_id = node.attributes.get("verified_edge_id")
+        membership = dict(
+            zip(commit.committed_edge_ids, commit.committed_classification_ids, strict=True)
+        )
+        classification_id = (
+            membership.get(verified_edge_id) if isinstance(verified_edge_id, str) else None
+        )
+        if classification_id is None:
+            raise ValueError("Phase 6 proposition node is outside the semantic commit")
+        row = session.get(Phase6GraphNodeMembershipRow, node.node_id)
+        if row is None:
+            session.add(
+                Phase6GraphNodeMembershipRow(
+                    node_id=node.node_id,
+                    commit_id=commit.commit_id,
+                    verified_edge_id=verified_edge_id,
+                    classification_id=classification_id,
+                )
+            )
+        elif (
+            row.commit_id != commit.commit_id
+            or row.verified_edge_id != verified_edge_id
+            or row.classification_id != classification_id
+        ):
+            raise ValueError("Phase 6 proposition node has different commit membership")
 
     def _persist_phase6_commit(self, session: Session, record: Phase6CommitRecord) -> None:
         """Write the manifest inside the transaction that wrote its semantic rows."""
@@ -226,48 +299,53 @@ class SqlAlchemyEvidenceGraphRepository:
         if receipt.commit_id is None:
             raise ValueError("Phase 6 commit receipt has no persisted commit identity")
         with Session(self._engine) as session:
-            row = session.get(Phase6CommitRow, receipt.commit_id)
-            if row is None:
-                raise ValueError("Phase 6 commit receipt has no persisted commit record")
-            record = Phase6CommitRecord.model_validate_json(row.document_json)
+            return self._resolve_phase6_commit_in_session(session, receipt)
+
+    def _resolve_phase6_commit_in_session(
+        self, session: Session, receipt: Phase6CommitReceipt
+    ) -> ResolvedPhase6Commit:
+        if receipt.commit_id is None:
+            raise ValueError("Phase 6 commit receipt has no persisted commit identity")
+        row = session.get(Phase6CommitRow, receipt.commit_id)
+        if row is None:
+            raise ValueError("Phase 6 commit receipt has no persisted commit record")
+        record = Phase6CommitRecord.model_validate_json(row.document_json)
+        if (
+            row.assessment_id != record.assessment_id
+            or record.commit_id != receipt.commit_id
+            or record.assessment_id != receipt.assessment_id
+            or record.committed_edge_ids != receipt.committed_edge_ids
+            or record.committed_classification_ids != receipt.committed_classification_ids
+            or record.commit_id
+            != _phase6_commit_id(
+                record.assessment_id,
+                record.committed_edge_ids,
+                record.committed_classification_ids,
+            )
+        ):
+            raise ValueError("Phase 6 commit receipt differs from persisted authority")
+        comparisons: list[ClassifiedComparison] = []
+        for edge_id, classification_id in zip(
+            record.committed_edge_ids, record.committed_classification_ids, strict=True
+        ):
+            edge = self._resolve_verified_edge(session, edge_id)
+            chain = self._resolve_verified_chain(session, edge_id)
+            classification_row = session.get(VerifiedClassificationRow, edge_id)
+            if edge is None or chain is None or classification_row is None:
+                raise ValueError("Phase 6 commit has missing authoritative semantic artifacts")
+            classified = ClassifiedComparison.model_validate_json(classification_row.document_json)
+            self._check_chain_nodes(session, chain, ())
             if (
-                row.assessment_id != record.assessment_id
-                or record.commit_id != receipt.commit_id
-                or record.assessment_id != receipt.assessment_id
-                or record.committed_edge_ids != receipt.committed_edge_ids
-                or record.committed_classification_ids != receipt.committed_classification_ids
-                or record.commit_id
-                != _phase6_commit_id(
-                    record.assessment_id,
-                    record.committed_edge_ids,
-                    record.committed_classification_ids,
-                )
+                classification_row.classification_id != classification_id
+                or classified.classification.classification_id != classification_id
+                or classified.comparison.assessment_id != record.assessment_id
+                or chain.assessment_id != record.assessment_id
+                or _semantic_document(chain.edge) != _semantic_document(edge)
+                or _semantic_document(classified.comparison.chain) != _semantic_document(chain)
             ):
-                raise ValueError("Phase 6 commit receipt differs from persisted authority")
-            comparisons: list[ClassifiedComparison] = []
-            for edge_id, classification_id in zip(
-                record.committed_edge_ids, record.committed_classification_ids, strict=True
-            ):
-                edge = self._resolve_verified_edge(session, edge_id)
-                chain = self._resolve_verified_chain(session, edge_id)
-                classification_row = session.get(VerifiedClassificationRow, edge_id)
-                if edge is None or chain is None or classification_row is None:
-                    raise ValueError("Phase 6 commit has missing authoritative semantic artifacts")
-                classified = ClassifiedComparison.model_validate_json(
-                    classification_row.document_json
-                )
-                self._check_chain_nodes(session, chain, ())
-                if (
-                    classification_row.classification_id != classification_id
-                    or classified.classification.classification_id != classification_id
-                    or classified.comparison.assessment_id != record.assessment_id
-                    or chain.assessment_id != record.assessment_id
-                    or _semantic_document(chain.edge) != _semantic_document(edge)
-                    or _semantic_document(classified.comparison.chain) != _semantic_document(chain)
-                ):
-                    raise ValueError("Phase 6 commit artifacts differ from persisted authority")
-                comparisons.append(classified)
-            return ResolvedPhase6Commit(record=record, comparisons=tuple(comparisons))
+                raise ValueError("Phase 6 commit artifacts differ from persisted authority")
+            comparisons.append(classified)
+        return ResolvedPhase6Commit(record=record, comparisons=tuple(comparisons))
 
     def _verify_edge_endpoints(
         self,
@@ -690,7 +768,70 @@ class SqlAlchemyEvidenceGraphRepository:
     def get_node(self, node_id: str) -> GraphNode | None:
         with Session(self._engine) as session:
             row = session.get(GraphNodeRow, node_id)
-            return GraphNode.model_validate_json(row.document_json) if row else None
+            return self._authoritative_graph_node(session, row) if row else None
+
+    def _committed_graph_comparison(
+        self,
+        session: Session,
+        *,
+        commit_id: str,
+        verified_edge_id: str,
+        classification_id: str,
+    ) -> ClassifiedComparison | None:
+        commit_row = session.get(Phase6CommitRow, commit_id)
+        if commit_row is None:
+            return None
+        try:
+            record = Phase6CommitRecord.model_validate_json(commit_row.document_json)
+            resolved = self._resolve_phase6_commit_in_session(
+                session,
+                Phase6CommitReceipt(
+                    commit_id=record.commit_id,
+                    assessment_id=record.assessment_id,
+                    committed_edge_ids=record.committed_edge_ids,
+                    committed_classification_ids=record.committed_classification_ids,
+                ),
+            )
+        except ValueError:
+            return None
+        if commit_id != record.commit_id:
+            return None
+        for classified in resolved.comparisons:
+            if classified.comparison.chain.edge.edge_id == verified_edge_id:
+                return (
+                    classified
+                    if classified.classification.classification_id == classification_id
+                    else None
+                )
+        return None
+
+    def _authoritative_graph_node(self, session: Session, row: GraphNodeRow) -> GraphNode | None:
+        node = GraphNode.model_validate_json(row.document_json)
+        if row.node_id != node.node_id or row.kind != node.kind.value or row.label != node.label:
+            return None
+        if node.kind != GraphNodeKind.EVIDENCE_PROPOSITION:
+            return node
+        membership = session.get(Phase6GraphNodeMembershipRow, row.node_id)
+        if membership is None:
+            return None
+        classified = self._committed_graph_comparison(
+            session,
+            commit_id=membership.commit_id,
+            verified_edge_id=membership.verified_edge_id,
+            classification_id=membership.classification_id,
+        )
+        if (
+            classified is None
+            or node.attributes.get("verified_edge_id") != membership.verified_edge_id
+        ):
+            return None
+        expected_nodes, _ = verified_edge_graph_fragment(
+            (classified.comparison.chain.edge,),
+            (classified.classification,),
+            observed_at=node.observed_at,
+            provenance=node.provenance,
+        )
+        return node if node in expected_nodes else None
 
     def observations(self, edge_id: str) -> tuple[datetime, ...]:
         """Return append-only observation times for one semantic edge."""
@@ -706,7 +847,39 @@ class SqlAlchemyEvidenceGraphRepository:
     def get_edge(self, edge_id: str) -> GraphEdge | None:
         with Session(self._engine) as session:
             row = session.get(GraphEdgeRow, edge_id)
-            return GraphEdge.model_validate_json(row.document_json) if row else None
+            return self._authoritative_graph_edge(session, row) if row else None
+
+    def _authoritative_graph_edge(self, session: Session, row: GraphEdgeRow) -> GraphEdge | None:
+        edge = GraphEdge.model_validate_json(row.document_json)
+        if (
+            row.kind != edge.kind.value
+            or row.source_node_id != edge.source_node_id
+            or row.target_node_id != edge.target_node_id
+            or row.edge_id != edge.edge_id
+        ):
+            return None
+        if edge.kind not in PHASE6_EDGE_KINDS:
+            return edge
+        membership = session.get(Phase6GraphEdgeMembershipRow, row.edge_id)
+        if membership is None or edge.verification is None:
+            return None
+        classified = self._committed_graph_comparison(
+            session,
+            commit_id=membership.commit_id,
+            verified_edge_id=membership.verified_edge_id,
+            classification_id=membership.classification_id,
+        )
+        if (
+            classified is None
+            or edge.verification.verified_edge_id != membership.verified_edge_id
+            or edge.attributes.get("classification_id") != membership.classification_id
+        ):
+            return None
+        try:
+            self._verify_phase6_edges(session, (), (edge,), (), (), ())
+        except ValueError:
+            return None
+        return edge
 
     def nodes(self, *, kinds: frozenset[GraphNodeKind] | None = None) -> tuple[GraphNode, ...]:
         statement = select(GraphNodeRow).order_by(GraphNodeRow.node_id)
@@ -714,7 +887,11 @@ class SqlAlchemyEvidenceGraphRepository:
             statement = statement.where(GraphNodeRow.kind.in_([kind.value for kind in kinds]))
         with Session(self._engine) as session:
             rows = session.scalars(statement).all()
-        return tuple(GraphNode.model_validate_json(row.document_json) for row in rows)
+            return tuple(
+                node
+                for row in rows
+                if (node := self._authoritative_graph_node(session, row)) is not None
+            )
 
     def edges(
         self,
@@ -738,7 +915,11 @@ class SqlAlchemyEvidenceGraphRepository:
             statement = statement.where(GraphEdgeRow.kind.in_([kind.value for kind in kinds]))
         with Session(self._engine) as session:
             rows = session.scalars(statement).all()
-        return tuple(GraphEdge.model_validate_json(row.document_json) for row in rows)
+            return tuple(
+                edge
+                for row in rows
+                if (edge := self._authoritative_graph_edge(session, row)) is not None
+            )
 
     def neighbors(
         self,
@@ -760,7 +941,11 @@ class SqlAlchemyEvidenceGraphRepository:
                 .where(GraphNodeRow.node_id.in_(sorted(neighbour_ids)))
                 .order_by(GraphNodeRow.node_id)
             ).all()
-        return tuple(GraphNode.model_validate_json(row.document_json) for row in rows)
+            return tuple(
+                node
+                for row in rows
+                if (node := self._authoritative_graph_node(session, row)) is not None
+            )
 
     def lineage_cluster_for_source(self, source_id: SourceId) -> EvidenceLineageCluster | None:
         with Session(self._engine) as session:

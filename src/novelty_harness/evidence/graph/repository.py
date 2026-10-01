@@ -91,10 +91,11 @@ class EvidenceGraphRepository(Protocol):
     ) -> Phase6CommitReceipt | None:
         """Atomically insert-or-verify nodes, edges, clusters and verified edges.
 
-        Phase 6 graph edges must resolve their verification reference against a
-        persisted verified artifact inside the same transaction. Re-persisting
-        identical content is idempotent; different content under an existing
-        identity is an error because history is append-only.
+        Phase 6 graph edges and proposition nodes are derived only from the
+        classified semantic comparisons committed in this transaction. Their
+        repository membership links them to its persisted commit manifest.
+        Re-persisting identical content is idempotent; different content under
+        an existing identity is an error because history is append-only.
         """
         ...
 
@@ -102,9 +103,13 @@ class EvidenceGraphRepository(Protocol):
         """Resolve a receipt to a persisted manifest and its validated semantic artifacts."""
         ...
 
-    def get_node(self, node_id: str) -> GraphNode | None: ...
+    def get_node(self, node_id: str) -> GraphNode | None:
+        """Return ordinary nodes and commit-authorized Phase 6 proposition nodes."""
+        ...
 
-    def get_edge(self, edge_id: str) -> GraphEdge | None: ...
+    def get_edge(self, edge_id: str) -> GraphEdge | None:
+        """Return ordinary edges and commit-authorized Phase 6 relations."""
+        ...
 
     def nodes(self, *, kinds: frozenset[GraphNodeKind] | None = None) -> tuple[GraphNode, ...]: ...
 

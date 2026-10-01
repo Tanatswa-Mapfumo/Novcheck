@@ -84,6 +84,44 @@ class Phase6CommitRow(Base):
     document_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class Phase6GraphEdgeMembershipRow(Base):
+    """A derived Phase 6 graph edge belongs to one semantic commit."""
+
+    __tablename__ = "phase6_graph_edge_memberships"
+
+    edge_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("graph_edges.edge_id"), primary_key=True
+    )
+    commit_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("phase6_commits.commit_id"), nullable=False, index=True
+    )
+    verified_edge_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("verified_edges.edge_id"), nullable=False
+    )
+    classification_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("verified_classifications.classification_id"), nullable=False
+    )
+
+
+class Phase6GraphNodeMembershipRow(Base):
+    """A derived Phase 6 proposition node belongs to one semantic commit."""
+
+    __tablename__ = "phase6_graph_node_memberships"
+
+    node_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("graph_nodes.node_id"), primary_key=True
+    )
+    commit_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("phase6_commits.commit_id"), nullable=False, index=True
+    )
+    verified_edge_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("verified_edges.edge_id"), nullable=False
+    )
+    classification_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("verified_classifications.classification_id"), nullable=False
+    )
+
+
 class LineageClusterRow(Base):
     __tablename__ = "lineage_clusters"
 

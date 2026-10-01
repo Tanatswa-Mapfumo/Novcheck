@@ -1125,3 +1125,106 @@ with the implementation handoff. These checks cannot replace a fresh
 independent Stage-1 provenance/publication re-review.
 
 Gate 30 remains OPEN pending fresh independent Stage-1 provenance/publication re-review.
+
+---
+
+## Stage-1 commit-authority probe of `2b8605a948b4992e357f0e94ffc0577802b65f4c`
+
+**Scope and independence limitation:** This read-only probe used the exact
+commit above on `phase-6-evidence-verification`; the worktree was clean before
+this review-only append. The reviewer in this Codex session also implemented
+R12 and R13, so this record cannot satisfy the requested *independent*
+review. No production code, tests, fixtures, or Phase 7 work were changed.
+The reproduced Important bypass below is sufficient for a Stage-1 FAIL;
+the full A–V attack matrix, focused suites, and Gate-30 Stage 2 review were
+not run.
+
+**R14 — Important — A Phase 6 direct graph edge is readable and writable
+without a v5 commit manifest.** The v5 receipt resolver correctly rejects a
+missing manifest, and `project_verified_edges` uses that resolver. The public
+graph interface does not enforce the same authority boundary.
+`graph/migrations.py::ensure_schema` permits v4 Phase 6 graph edges to migrate
+without a manifest. `graph/sqlalchemy_repository.py::edges` and `get_edge`
+return those edges without commit resolution. Its `upsert` path also accepts
+Phase 6 graph edges backed by migrated verified rows when no
+`classified_comparisons` are supplied; `_verify_phase6_edges` resolves the
+old chain and classification but does not require a manifest, and `upsert`
+returns no receipt. The resulting `GraphEdge` has
+`kind=DIRECT_PRECEDENT` and no provisional marker.
+
+Three offline probes against temporary SQLite databases reproduced the gap:
+
+1. Persist a valid direct graph edge and semantic chain, remove only the v5
+   manifest, mark the database v4, then reopen it. Migration advances the
+   schema to v5 with **zero** manifests, while `edges(kinds={DIRECT_PRECEDENT})`
+   returns one edge and `get_edge` returns that direct edge.
+2. Persist valid semantic rows without a graph edge, remove the manifest,
+   mark the database v4, and reopen it. A graph-only `upsert(nodes=...,
+   edges=...)` then returns `None` yet stores one readable
+   `DIRECT_PRECEDENT` edge with **zero** manifests.
+3. In a v5 database, remove the manifest after a valid commit.
+   `resolve_phase6_commit(receipt)` raises `ValueError`, but
+   `edges(kinds={DIRECT_PRECEDENT})` still returns the direct edge.
+
+**Violated boundary:** A v4 semantic row must not become a v5 committed
+finding merely through migration or a graph-only write. A later missing
+manifest must also revoke authoritative retrieval. The graph is the central
+analytical structure under master-spec section 26, and its public repository
+methods return ordinary domain `GraphEdge` objects; callers have no way to
+distinguish these uncommitted edges from committed ones. This is a graph
+read/write bypass, not a bypass of `project_verified_edges`, which rejected
+the tested missing-manifest state.
+
+**Required correction:** Phase 6 graph-edge writes and authority-sensitive
+reads must resolve a matching v5 commit manifest and its exact classified
+chain. Quarantine or hide migrated v4 Phase 6 graph edges until validated
+replay creates that manifest, while retaining Phase 5 graph behavior.
+Regression tests should cover all three probes and a positive exact-replay
+direct edge. The probes changed only temporary databases; no repository
+production or test files were modified. `git diff --check` passed after
+this review-only append.
+
+Stage 1 provenance/publication/commit-authority re-review: FAIL — Phase 6 remains blocked.
+
+---
+
+## R14 graph-authority implementation record (not an independent review)
+
+The R14 **FAIL** at `2b8605a` above and every earlier FAIL record remain
+unchanged. This section records the implementer's repair only; it does not
+close R14 or grant Gate 30 acceptance. Phase 7 was not started.
+
+Schema v6 adds foreign-key-backed commit membership for Phase 6 graph edges
+and evidence-proposition nodes. The repository writes those derived graph
+projections, semantic artifacts, manifest and membership in one transaction.
+A graph-only `upsert` cannot create or replay a Phase 6 semantic relation.
+Public `get_edge`, `edges`, `get_node`, `nodes` and `neighbors` resolve the
+membership, manifest, exact classified comparison, passage/content authority
+and derived graph fields before returning Phase 6 semantics. Orphan rows from
+v4/v5 migration or later corruption are excluded; validated semantic replay
+can establish membership. Ordinary Phase 5 graph relations retain generic
+write and read behavior. ADR-036 records the sole-authority rule and the
+schema migration.
+
+`tests/adversarial/test_phase6_r14_graph_authority.py` was added before the
+production repair. Its initial three tests failed against the reviewed code:
+migrated v4 direct graph read, graph-only write over legacy semantic rows and
+missing-manifest read. The final 24-case suite also covers proposition nodes,
+missing membership, cross-manifest association, caller copies, graph citation
+corruption, relation-family orphan reads and committed positive controls,
+validated replay, exact replay and ordinary nonsemantic graph edges. The
+focused R10–R14/provenance suites passed **108 tests**. The R10 replay test
+now checks that a content-authority-corrupted direct graph edge disappears
+from authoritative reads before testing write rejection. Historical schema
+version assertions were updated from v5 to v6 because the persisted schema
+changed.
+
+Implementation worktree verification after the production, test and ADR
+changes: `uv sync --dev` passed; `uv run python scripts/verify.py` passed
+Ruff check, Ruff format (293 files), Pyright with 0 errors/0 warnings, and
+**1607 passed, 5 opt-in network tests deselected**; `git diff --check`
+passed. The exact implementation commit and detached-checkout verification
+are reported in the implementation handoff. These implementation checks
+cannot substitute for an independent Stage-1 attack.
+
+Gate 30 remains OPEN pending fresh independent Stage-1 provenance/publication/commit-authority re-review.
