@@ -2,6 +2,8 @@
 
 Implementation commit: `7f3a892354e2c540b9590cec0b9ba7f98c782075`
 
+Task 7 relation-matrix test remediation: `f151fa8335b6e332510d1f054f74ba391d8d976b`
+
 ## Scope and requirements
 
 Implemented Task 7, “Enforce R15 graph authority in the assessment loader,” from the approved Phase 6 downstream authority consolidation plan.
@@ -38,6 +40,20 @@ Passing commands after the final implementation change:
 - `git diff --check` — passed.
 
 The tests cover direct relation replay, expected relation IDs across generated graph relation kinds, explicit semantic-only status, exact node/edge membership, deleted membership and graph rows, citation corruption, malformed graph JSON, foreign manifest association, v5 migration without membership backfill, and an attempted second-connection membership deletion during the pinned snapshot read.
+
+## Review remediation: projected relation/status matrix
+
+The review found that the original pipeline fixture did not assert every graph edge kind. Added a parameterized loader-level matrix using separately committed valid chains for `SUPPORTS`, `CONTRADICTS`, `DIRECT_PRECEDENT`, `STRONG_PARTIAL_PRECEDENT`, `COMPONENT_PRECEDENT`, `ANALOGOUS`, `NO_MATCH`, and `UNRESOLVED`. Each case checks the exact authorized edge kinds and IDs, the typed projection status, and proposition-node linkage. A graph-fragment regression also confirms that a well-formed `SUPERFICIAL_SIMILARITY` classification yields no relation edge.
+
+A `SUPERFICIAL_SIMILARITY` loader fixture is not valid under the current semantic commit contract: `ClassifiedComparison` re-runs `classify_verified_comparison`, and `_classify_facts` does not produce that state. Hand-authored or raw-seeded classifications are rejected before loading. The test therefore checks its graph-fragment no-edge behavior without weakening classifier validation or introducing a fabricated classification. Record this classifier reachability gap for Task 8 parity and Task 12 limitations.
+
+Verification after remediation:
+
+- `UV_CACHE_DIR=/private/tmp/uvcache uv run pytest tests/adversarial/test_phase6_r15_assessment_authority.py tests/integration/test_phase6_assessment_view.py -q` — 23 passed.
+- `UV_CACHE_DIR=/private/tmp/uvcache uv run pyright` — 0 errors, 0 warnings, 0 informations.
+- `UV_CACHE_DIR=/private/tmp/uvcache uv run ruff check .` — all checks passed.
+- `UV_CACHE_DIR=/private/tmp/uvcache uv run ruff format --check .` — 301 files already formatted.
+- `git diff --check` — passed.
 
 ## Limitations and deferred work
 
