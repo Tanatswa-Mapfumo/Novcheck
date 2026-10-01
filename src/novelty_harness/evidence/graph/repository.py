@@ -19,6 +19,7 @@ from novelty_harness.evidence.graph.assessment_ledger import (
     Phase6DerivedLedgerRecord,
     Phase6TargetLedgerRecord,
 )
+from novelty_harness.evidence.graph.assessment_view import Phase6AssessmentView
 from novelty_harness.evidence.graph.models import (
     GraphEdge,
     GraphEdgeKind,
@@ -85,6 +86,12 @@ class ResolvedPhase6Commit:
 
 @runtime_checkable
 class EvidenceGraphRepository(Protocol):
+    def load_phase6_assessment(
+        self, assessment_id: AssessmentId, *, snapshot_id: str
+    ) -> Phase6AssessmentView:
+        """Load one exact completed assessment snapshot from repository authority."""
+        ...
+
     def record_phase6_assessment(
         self,
         snapshot: Phase6AssessmentSnapshotRecord,

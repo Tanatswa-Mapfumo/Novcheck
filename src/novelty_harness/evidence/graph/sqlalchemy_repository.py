@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from novelty_harness.domain.enums import PrecedentState
-from novelty_harness.domain.ids import SourceId
+from novelty_harness.domain.ids import AssessmentId, SourceId
 from novelty_harness.evidence.graph.assessment_ledger import (
     Phase6AssessmentSnapshotRecord,
     Phase6CandidateLedgerRecord,
@@ -28,6 +28,12 @@ from novelty_harness.evidence.graph.assessment_ledger import (
     phase6_derived_record_id,
     phase6_ledger_identity_value,
     phase6_target_record_id,
+)
+from novelty_harness.evidence.graph.assessment_view import (
+    CitedPassageView,
+    CommittedComparisonView,
+    Phase6AssessmentAuthorityError,
+    Phase6AssessmentView,
 )
 from novelty_harness.evidence.graph.migrations import ensure_schema
 from novelty_harness.evidence.graph.models import (
@@ -462,6 +468,311 @@ class SqlAlchemyEvidenceGraphRepository:
                     "Phase 6 derived record",
                 )
         return snapshot.snapshot_id
+
+    def load_phase6_assessment(
+        self, assessment_id: AssessmentId, *, snapshot_id: str
+    ) -> Phase6AssessmentView:
+        """Load one validated semantic snapshot in a single SQLite read transaction.
+
+        Graph-backed comparisons intentionally remain unavailable until the graph
+        membership authority gate is implemented in the following plan task.
+        """
+        with Session(self._engine) as session:
+            # pysqlite otherwise delays the database-level BEGIN until a write;
+            # issue it before the first SELECT so every table read shares one snapshot.
+            session.connection().exec_driver_sql("BEGIN")
+            snapshot_row = session.get(Phase6AssessmentSnapshotRow, snapshot_id)
+            if snapshot_row is None or snapshot_row.assessment_id != assessment_id:
+                raise Phase6AssessmentAuthorityError(
+                    "Requested Phase 6 assessment snapshot is missing or foreign"
+                )
+            snapshot = Phase6AssessmentSnapshotRecord.model_validate_json(
+                snapshot_row.document_json
+            )
+            if snapshot.snapshot_id != snapshot_id or snapshot.assessment_id != assessment_id:
+                raise Phase6AssessmentAuthorityError("Persisted snapshot locator is inconsistent")
+
+            target_rows = tuple(
+                session.scalars(
+                    select(Phase6AssessmentTargetRow)
+                    .where(Phase6AssessmentTargetRow.snapshot_id == snapshot_id)
+                    .order_by(Phase6AssessmentTargetRow.record_id)
+                ).all()
+            )
+            candidate_rows = tuple(
+                session.scalars(
+                    select(Phase6AssessmentCandidateRow)
+                    .where(Phase6AssessmentCandidateRow.snapshot_id == snapshot_id)
+                    .order_by(Phase6AssessmentCandidateRow.record_id)
+                ).all()
+            )
+            derived_rows = tuple(
+                session.scalars(
+                    select(Phase6AssessmentDerivedRow)
+                    .where(Phase6AssessmentDerivedRow.snapshot_id == snapshot_id)
+                    .order_by(Phase6AssessmentDerivedRow.record_id)
+                ).all()
+            )
+            target_by_id = {
+                row.record_id: Phase6TargetLedgerRecord.model_validate_json(row.document_json)
+                for row in target_rows
+            }
+            candidate_by_id = {
+                row.record_id: Phase6CandidateLedgerRecord.model_validate_json(row.document_json)
+                for row in candidate_rows
+            }
+            derived_by_id = {
+                row.record_id: Phase6DerivedLedgerRecord.model_validate_json(row.document_json)
+                for row in derived_rows
+            }
+            if (
+                set(target_by_id) != set(snapshot.target_record_ids)
+                or set(candidate_by_id) != set(snapshot.candidate_record_ids)
+                or set(derived_by_id) != set(snapshot.derived_record_ids)
+                or len(target_by_id) != len(snapshot.target_record_ids)
+                or len(candidate_by_id) != len(snapshot.candidate_record_ids)
+                or len(derived_by_id) != len(snapshot.derived_record_ids)
+            ):
+                raise Phase6AssessmentAuthorityError(
+                    "Snapshot ledger references do not resolve to the exact stored records"
+                )
+            targets = tuple(target_by_id[item] for item in snapshot.target_record_ids)
+            candidates = tuple(candidate_by_id[item] for item in snapshot.candidate_record_ids)
+            derived = tuple(derived_by_id[item] for item in snapshot.derived_record_ids)
+            if (
+                tuple(phase6_target_record_id(item) for item in targets)
+                != snapshot.target_record_ids
+                or tuple(phase6_candidate_record_id(item) for item in candidates)
+                != snapshot.candidate_record_ids
+                or tuple(phase6_derived_record_id(item) for item in derived)
+                != snapshot.derived_record_ids
+            ):
+                raise Phase6AssessmentAuthorityError(
+                    "Ledger row content does not match its identity"
+                )
+            for record in (*targets, *candidates, *derived):
+                if record.assessment_id != assessment_id or record.snapshot_id != snapshot_id:
+                    raise Phase6AssessmentAuthorityError(
+                        "Ledger record belongs to another snapshot"
+                    )
+            target_ids = {str(item.profile.target_id) for item in targets}
+            if any(str(item.target_id) not in target_ids for item in (*candidates, *derived)):
+                raise Phase6AssessmentAuthorityError("Ledger record references an unknown target")
+
+            if (
+                phase6_assessment_snapshot_id(
+                    snapshot, targets=targets, candidates=candidates, derived=derived
+                )
+                != snapshot_id
+            ):
+                raise Phase6AssessmentAuthorityError("Snapshot content does not match its identity")
+
+            resolved_by_commit: dict[str, ResolvedPhase6Commit] = {}
+            for commit_id in snapshot.commit_ids:
+                commit_row = session.get(Phase6CommitRow, commit_id)
+                if commit_row is None:
+                    raise Phase6AssessmentAuthorityError("Snapshot references a missing commit")
+                manifest = Phase6CommitRecord.model_validate_json(commit_row.document_json)
+                if manifest.assessment_id != assessment_id or manifest.commit_id != commit_id:
+                    raise Phase6AssessmentAuthorityError("Snapshot references a foreign commit")
+                receipt = Phase6CommitReceipt(
+                    commit_id=manifest.commit_id,
+                    assessment_id=manifest.assessment_id,
+                    committed_edge_ids=manifest.committed_edge_ids,
+                    committed_classification_ids=manifest.committed_classification_ids,
+                )
+                resolved = self._resolve_phase6_commit_in_session(session, receipt)
+                for comparison in resolved.comparisons:
+                    self._check_content_authority(session, comparison.comparison.chain, ())
+                resolved_by_commit[commit_id] = resolved
+
+            assessed_candidates = [item for item in candidates if item.decision == "ASSESSED"]
+            if {str(item.commit_id) for item in assessed_candidates} != set(snapshot.commit_ids):
+                raise Phase6AssessmentAuthorityError(
+                    "Snapshot commits do not exactly match assessed candidate outcomes"
+                )
+            comparisons_by_key: dict[tuple[str, str, str], ClassifiedComparison] = {}
+            for candidate in assessed_candidates:
+                assert candidate.commit_id is not None
+                resolved = resolved_by_commit.get(candidate.commit_id)
+                if resolved is None:
+                    raise Phase6AssessmentAuthorityError("Candidate references a foreign commit")
+                matching = [
+                    item
+                    for item in resolved.comparisons
+                    if item.comparison.chain.edge.edge_id == candidate.verified_edge_id
+                    and item.classification.classification_id == candidate.classification_id
+                ]
+                if len(matching) != 1:
+                    raise Phase6AssessmentAuthorityError(
+                        "Candidate references missing or ambiguous committed semantics"
+                    )
+                classified = matching[0]
+                chain = classified.comparison.chain
+                if (
+                    chain.source.source_id != candidate.source_id
+                    or chain.edge.mcu_id != candidate.target_id
+                    or (chain.version.version_id if chain.version is not None else None)
+                    != candidate.source_version_id
+                ):
+                    raise Phase6AssessmentAuthorityError(
+                        "Candidate source/version/target differs from committed semantics"
+                    )
+                _, expected_edges = verified_edge_graph_fragment(
+                    (chain.edge,),
+                    (classified.classification,),
+                    observed_at=chain.edge.observed_at,
+                    provenance=chain.edge.provenance,
+                )
+                if expected_edges:
+                    raise Phase6AssessmentAuthorityError(
+                        "Graph-dependent comparison requires the Task 7 graph authority gate"
+                    )
+                if candidate.projection_intent == "GRAPH_BACKED":
+                    raise Phase6AssessmentAuthorityError(
+                        "Graph-backed intent has no repository-authorized graph relation"
+                    )
+                if candidate.projection_intent != "SEMANTIC_ONLY":
+                    raise Phase6AssessmentAuthorityError(
+                        "Assessed candidate has invalid projection intent"
+                    )
+                comparisons_by_key[
+                    (
+                        candidate.commit_id,
+                        str(candidate.verified_edge_id),
+                        str(candidate.classification_id),
+                    )
+                ] = classified
+
+            lineage: list[EvidenceLineageCluster] = []
+            lineage_roots: set[str] = set()
+            for cluster_id in snapshot.lineage_cluster_ids:
+                lineage_row = session.get(LineageClusterRow, cluster_id)
+                if lineage_row is None:
+                    raise Phase6AssessmentAuthorityError(
+                        "Snapshot references a missing lineage cluster"
+                    )
+                cluster = EvidenceLineageCluster.model_validate_json(lineage_row.document_json)
+                if cluster.cluster_id != cluster_id:
+                    raise Phase6AssessmentAuthorityError("Lineage cluster identity is inconsistent")
+                lineage.append(cluster)
+                lineage_roots.update(str(item) for item in cluster.root_source_ids)
+
+            committed: list[CommittedComparisonView] = []
+            for candidate in assessed_candidates:
+                assert candidate.commit_id is not None
+                assert candidate.verified_edge_id is not None
+                assert candidate.classification_id is not None
+                classified = comparisons_by_key[
+                    (
+                        candidate.commit_id,
+                        str(candidate.verified_edge_id),
+                        str(candidate.classification_id),
+                    )
+                ]
+                chain = classified.comparison.chain
+                commitments: dict[str, list[str]] = {}
+                for state in chain.verification.commitment_states:
+                    for passage_id in state.passage_ids:
+                        commitments.setdefault(str(passage_id), []).append(str(state.commitment_id))
+                passages = {
+                    str(item.passage_id): item
+                    for item in (*chain.bundle.passages, *chain.context_passages)
+                }
+                if set(commitments) - set(passages):
+                    raise Phase6AssessmentAuthorityError(
+                        "Committed verifier citation passage is missing"
+                    )
+                cited = tuple(
+                    CitedPassageView(
+                        passage=passages[passage_id],
+                        commitment_ids=tuple(commitment_ids),
+                    )
+                    for passage_id, commitment_ids in sorted(commitments.items())
+                )
+                committed.append(
+                    CommittedComparisonView(
+                        comparison=classified,
+                        commit_id=candidate.commit_id,
+                        projection_status="SEMANTIC_ONLY",
+                        proposition_node_id=None,
+                        graph_edge_ids=(),
+                        cited_passages=cited,
+                    )
+                )
+
+            for record in derived:
+                if not set(record.input_commit_ids) <= set(snapshot.commit_ids):
+                    raise Phase6AssessmentAuthorityError("Derived input references foreign commit")
+                for commit_id, edge_id, classification_id in zip(
+                    record.input_commit_ids,
+                    record.input_edge_ids,
+                    record.input_classification_ids,
+                    strict=True,
+                ):
+                    resolved = resolved_by_commit.get(commit_id)
+                    if resolved is None or (edge_id, classification_id) not in set(
+                        zip(
+                            resolved.record.committed_edge_ids,
+                            resolved.record.committed_classification_ids,
+                            strict=True,
+                        )
+                    ):
+                        raise Phase6AssessmentAuthorityError(
+                            "Derived input identity is absent from its exact commit manifest"
+                        )
+                source_by_pair = {
+                    (
+                        commit_id,
+                        edge_id,
+                        classification_id,
+                    ): classified.comparison.chain.source.source_id
+                    for (
+                        commit_id,
+                        edge_id,
+                        classification_id,
+                    ), classified in comparisons_by_key.items()
+                }
+                expected_roots = {
+                    str(cluster.root_source_ids[0])
+                    for cluster in lineage
+                    if any(
+                        source_by_pair.get((commit_id, str(edge_id), str(classification_id)))
+                        in cluster.source_ids
+                        for commit_id, edge_id, classification_id in zip(
+                            record.input_commit_ids,
+                            record.input_edge_ids,
+                            record.input_classification_ids,
+                            strict=True,
+                        )
+                    )
+                }
+                if (
+                    not set(str(item) for item in record.lineage_root_ids) <= lineage_roots
+                    or set(str(item) for item in record.lineage_root_ids) != expected_roots
+                ):
+                    raise Phase6AssessmentAuthorityError(
+                        "Derived input lineage roots do not match its actual committed sources"
+                    )
+
+            view = Phase6AssessmentView(
+                assessment_id=assessment_id,
+                snapshot_id=snapshot_id,
+                as_of=snapshot.as_of,
+                view_version=1,
+                commit_ids=snapshot.commit_ids,
+                committed_comparisons=tuple(committed),
+                authorized_graph_relations=(),
+                targets=tuple(item.profile for item in targets),
+                candidate_outcomes=candidates,
+                coverage=snapshot.coverage,
+                multi_source_context=tuple(item for item in derived if item.kind == "MULTI_SOURCE"),
+                patent_screenings=tuple(item for item in derived if item.kind == "PATENT"),
+                lineage=tuple(lineage),
+                audit_refs=snapshot.audit_refs,
+            )
+            session.commit()
+            return view
 
     @staticmethod
     def _insert_or_verify_ledger_row(
