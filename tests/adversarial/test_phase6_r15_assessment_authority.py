@@ -7,9 +7,11 @@ import pytest
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
+from novelty_harness.domain.enums import PrecedentState, SupportVerificationState
 from novelty_harness.evidence.graph.assessment_ledger import (
     Phase6AssessmentSnapshotRecord,
     Phase6CandidateLedgerRecord,
+    Phase6CoverageLedger,
     Phase6TargetLedgerRecord,
     phase6_assessment_snapshot_id,
     phase6_candidate_record_id,
@@ -17,7 +19,11 @@ from novelty_harness.evidence.graph.assessment_ledger import (
 )
 from novelty_harness.evidence.graph.assessment_view import Phase6AssessmentAuthorityError
 from novelty_harness.evidence.graph.migrations import ensure_schema
-from novelty_harness.evidence.graph.phase6_mapping import verified_edge_graph_fragment
+from novelty_harness.evidence.graph.models import GraphEdgeKind
+from novelty_harness.evidence.graph.phase6_mapping import (
+    phase6_graph_provenance,
+    verified_edge_graph_fragment,
+)
 from novelty_harness.evidence.graph.sqlalchemy_models import (
     GraphEdgeRow,
     GraphNodeRow,
@@ -29,8 +35,231 @@ from novelty_harness.evidence.graph.sqlalchemy_models import (
     Phase6GraphNodeMembershipRow,
 )
 from novelty_harness.evidence.graph.sqlalchemy_repository import SqlAlchemyEvidenceGraphRepository
+from novelty_harness.evidence.mapping.dimensions import ComparisonDimension, MCUComparisonProfile
+from novelty_harness.evidence.precedent.gates import (
+    ClassifiedComparison,
+    classify_verified_comparison,
+)
+from novelty_harness.evidence.precedent.models import PrecedentClassification
+from novelty_harness.evidence.verification.gates import build_verified_evidence_edge
+from novelty_harness.evidence.verification.integrity import (
+    VerifiedEvidenceChain,
+    verified_comparison,
+)
+from novelty_harness.evidence.verification.models import CommitmentStateRecord, SupportVerification
 from novelty_harness.runtime.tracing.hashing import canonical_json
+from tests.adversarial.test_phase6_r10_content_authority import _authority_nodes, _chain_for_content
 from tests.integration.test_phase6_evidence_pipeline import graph_database, run_phase6_for_ledger
+from tests.unit.evidence.verification.test_eligibility import AS_OF, NOW, PASSAGE_TEXT, verification
+
+
+def _matrix_chain(case: str) -> VerifiedEvidenceChain:
+    baseline = _chain_for_content(PASSAGE_TEXT)
+    proposition = baseline.proposition
+    bundle = baseline.bundle
+    relation_by_case = {
+        "SUPPORTS": (SupportVerificationState.SUPPORTED, PrecedentState.DIRECT_PRECEDENT),
+        "DIRECT_PRECEDENT": (SupportVerificationState.SUPPORTED, PrecedentState.DIRECT_PRECEDENT),
+        "CONTRADICTS": (
+            SupportVerificationState.CONTRADICTED,
+            PrecedentState.CONTRADICTORY_EVIDENCE,
+        ),
+        "COMPONENT_PRECEDENT": (
+            SupportVerificationState.PARTIALLY_SUPPORTED,
+            PrecedentState.COMPONENT_PRECEDENT_ONLY,
+        ),
+        "NO_MATCH": (
+            SupportVerificationState.NOT_SUPPORTED,
+            PrecedentState.NO_DIRECT_PRECEDENT_IDENTIFIED,
+        ),
+        "UNRESOLVED": (SupportVerificationState.INSUFFICIENT_CONTEXT, PrecedentState.UNRESOLVED),
+    }
+    if case in relation_by_case:
+        state, relation = relation_by_case[case]
+        judged = verification(state)
+    elif case in {"STRONG_PARTIAL_PRECEDENT", "ANALOGOUS"}:
+        commitment_states = baseline.verification.commitment_states
+        if case == "STRONG_PARTIAL_PRECEDENT":
+            relation = PrecedentState.STRONG_PARTIAL_PRECEDENT
+            extra = baseline.proposition.commitments[0].model_copy(
+                update={
+                    "commitment_id": "feature_extra",
+                    "dimension": ComparisonDimension.FEATURES,
+                    "text": "the load is remotely logged",
+                }
+            )
+            commitments = (*baseline.proposition.commitments, extra)
+            proposition = baseline.proposition.model_copy(update={"commitments": commitments})
+            claim = baseline.bundle.claim.model_copy(update={"commitments": commitments})
+            bundle = baseline.bundle.model_copy(update={"claim": claim})
+            extra_state = CommitmentStateRecord(
+                commitment_id=extra.commitment_id,
+                dimension=extra.dimension,
+                state="NOT_SUPPORTED",
+                rationale="No passage supports remote logging",
+                passage_ids=baseline.edge.passage_ids,
+            )
+            judged = SupportVerification.model_validate(
+                baseline.verification.model_copy(
+                    update={
+                        "state": SupportVerificationState.PARTIALLY_SUPPORTED,
+                        "commitment_states": (*commitment_states, extra_state),
+                        "material_commitment_ids": tuple(
+                            item.commitment_id for item in commitments
+                        ),
+                        "unsupported_portions": (extra.text,),
+                    }
+                ).model_dump(mode="json")
+            )
+        else:
+            relation = PrecedentState.ANALOGOUS_PRECEDENT
+            unsupported_id = "mech"
+            supported_id = "outcome"
+            updated_states = tuple(
+                item.model_copy(
+                    update={
+                        "state": "NOT_SUPPORTED"
+                        if item.commitment_id == unsupported_id
+                        else "SUPPORTED",
+                        "rationale": "Matrix case support state",
+                    }
+                )
+                for item in commitment_states
+            )
+            unsupported = next(
+                item
+                for item in baseline.proposition.commitments
+                if item.commitment_id == unsupported_id
+            )
+            supported = next(
+                item
+                for item in baseline.proposition.commitments
+                if item.commitment_id == supported_id
+            )
+            judged = SupportVerification.model_validate(
+                baseline.verification.model_copy(
+                    update={
+                        "state": SupportVerificationState.PARTIALLY_SUPPORTED,
+                        "commitment_states": updated_states,
+                        "supported_portions": (supported.text,),
+                        "unsupported_portions": (unsupported.text,),
+                    }
+                ).model_dump(mode="json")
+            )
+            proposition = baseline.proposition
+            bundle = baseline.bundle
+    else:
+        raise AssertionError(f"Unknown graph relation matrix case: {case}")
+
+    mapping = baseline.mapping.model_copy(
+        update={"source_version_id": baseline.version.version_id if baseline.version else None}
+    )
+    edge = build_verified_evidence_edge(
+        mapping=mapping,
+        verification=judged,
+        proposition=proposition,
+        source=baseline.source,
+        bundle=bundle,
+        version=baseline.version,
+        as_of=AS_OF,
+        observed_at=NOW,
+        assessment_id=baseline.assessment_id,
+        relation=relation,
+    )
+    return VerifiedEvidenceChain.model_validate(
+        baseline.model_copy(
+            update={
+                "proposition": proposition,
+                "mapping": mapping,
+                "bundle": bundle,
+                "verification": judged,
+                "edge": edge,
+            }
+        ).model_dump(mode="json")
+    )
+
+
+def _load_committed_matrix_case(tmp_path, case: str):
+    chain = _matrix_chain(case)
+    comparison = verified_comparison(chain)
+    classification = classify_verified_comparison(comparison, clock=lambda: NOW)
+    graph_nodes, graph_edges = verified_edge_graph_fragment(
+        (chain.edge,),
+        (classification,),
+        observed_at=NOW,
+        provenance=phase6_graph_provenance(),
+    )
+    repository = SqlAlchemyEvidenceGraphRepository(tmp_path / f"{case}.sqlite")
+    receipt = repository.upsert(
+        nodes=(*_authority_nodes(chain), *graph_nodes),
+        edges=graph_edges,
+        verified_edges=(chain.edge,),
+        verified_chains=(chain,),
+        classified_comparisons=(
+            ClassifiedComparison(comparison=comparison, classification=classification),
+        ),
+    )
+    assert receipt is not None
+    target = Phase6TargetLedgerRecord(
+        snapshot_id="pending",
+        assessment_id=chain.assessment_id,
+        profile=MCUComparisonProfile(
+            target_id=chain.edge.mcu_id,
+            label="Graph relation matrix target",
+            statement="One local matrix assessment target",
+        ),
+    )
+    candidate = Phase6CandidateLedgerRecord(
+        snapshot_id="pending",
+        assessment_id=chain.assessment_id,
+        target_id=chain.edge.mcu_id,
+        source_id=chain.source.source_id,
+        source_version_id=chain.version.version_id if chain.version else None,
+        source_content_hash=chain.source.content_hash,
+        version_content_hash=chain.version.content_hash if chain.version else None,
+        source_access_state=chain.source.access_state,
+        version_access_state=chain.version.access_state if chain.version else None,
+        decision="ASSESSED",
+        projection_intent="GRAPH_BACKED",
+        commit_id=receipt.commit_id,
+        verified_edge_id=chain.edge.edge_id,
+        classification_id=classification.classification_id,
+    )
+    snapshot = Phase6AssessmentSnapshotRecord(
+        snapshot_id="pending",
+        assessment_id=chain.assessment_id,
+        as_of=chain.edge.chronology.as_of,
+        method_version="phase6-r15-relation-matrix-v1",
+        max_sources_per_mcu=1,
+        max_versions_per_source=1,
+        max_expansions=0,
+        window_chars=0,
+        target_record_ids=(),
+        candidate_record_ids=(),
+        derived_record_ids=(),
+        lineage_cluster_ids=(),
+        commit_ids=(receipt.commit_id,),
+        coverage=Phase6CoverageLedger(),
+        audit_refs=(),
+        completed_at=NOW,
+    )
+    snapshot_id = phase6_assessment_snapshot_id(
+        snapshot, targets=(target,), candidates=(candidate,), derived=()
+    )
+    target = target.model_copy(update={"snapshot_id": snapshot_id})
+    candidate = candidate.model_copy(update={"snapshot_id": snapshot_id})
+    snapshot = snapshot.model_copy(
+        update={
+            "snapshot_id": snapshot_id,
+            "target_record_ids": (phase6_target_record_id(target),),
+            "candidate_record_ids": (phase6_candidate_record_id(candidate),),
+        }
+    )
+    repository.record_phase6_assessment(
+        snapshot, targets=(target,), candidates=(candidate,), derived=()
+    )
+    view = repository.load_phase6_assessment(chain.assessment_id, snapshot_id=snapshot_id)
+    return repository, view, classification, graph_edges
 
 
 @pytest.mark.asyncio
@@ -359,3 +588,122 @@ async def test_membership_cannot_change_between_snapshot_and_graph_reads(tmp_pat
         repository.close()
     assert view.authorized_graph_relations
     assert blocked and all(blocked)
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_relation", "expected_kinds", "expected_status"),
+    [
+        (
+            "SUPPORTS",
+            PrecedentState.DIRECT_PRECEDENT,
+            {GraphEdgeKind.SUPPORTS, GraphEdgeKind.DIRECT_PRECEDENT},
+            "GRAPH_AUTHORIZED",
+        ),
+        (
+            "DIRECT_PRECEDENT",
+            PrecedentState.DIRECT_PRECEDENT,
+            {GraphEdgeKind.SUPPORTS, GraphEdgeKind.DIRECT_PRECEDENT},
+            "GRAPH_AUTHORIZED",
+        ),
+        (
+            "CONTRADICTS",
+            PrecedentState.CONTRADICTORY_EVIDENCE,
+            {GraphEdgeKind.CONTRADICTS},
+            "GRAPH_AUTHORIZED",
+        ),
+        (
+            "STRONG_PARTIAL_PRECEDENT",
+            PrecedentState.STRONG_PARTIAL_PRECEDENT,
+            {GraphEdgeKind.STRONG_PARTIAL_PRECEDENT},
+            "GRAPH_AUTHORIZED",
+        ),
+        (
+            "COMPONENT_PRECEDENT",
+            PrecedentState.COMPONENT_PRECEDENT_ONLY,
+            {GraphEdgeKind.COMPONENT_PRECEDENT},
+            "GRAPH_AUTHORIZED",
+        ),
+        (
+            "ANALOGOUS",
+            PrecedentState.ANALOGOUS_PRECEDENT,
+            {GraphEdgeKind.ANALOGOUS},
+            "GRAPH_AUTHORIZED",
+        ),
+        (
+            "NO_MATCH",
+            PrecedentState.NO_DIRECT_PRECEDENT_IDENTIFIED,
+            {GraphEdgeKind.NO_MATCH},
+            "GRAPH_AUTHORIZED",
+        ),
+        (
+            "UNRESOLVED",
+            PrecedentState.UNRESOLVED,
+            set(),
+            "NONRELATIONAL_STATUS",
+        ),
+    ],
+)
+def test_loader_preserves_exact_projected_graph_relation_matrix(
+    tmp_path, case, expected_relation, expected_kinds, expected_status
+) -> None:
+    repository, view, classification, expected_edges = _load_committed_matrix_case(tmp_path, case)
+    try:
+        assert classification.relation == expected_relation
+        assert len(view.committed_comparisons) == 1
+        comparison = view.committed_comparisons[0]
+        assert comparison.projection_status == expected_status
+        actual_kinds = {item.edge.kind for item in view.authorized_graph_relations}
+        assert actual_kinds == expected_kinds
+        assert set(comparison.graph_edge_ids) == {item.edge_id for item in expected_edges}
+        assert {item.edge.edge_id for item in view.authorized_graph_relations} == {
+            item.edge_id for item in expected_edges
+        }
+        if expected_status == "NONRELATIONAL_STATUS":
+            assert comparison.proposition_node_id is None
+            assert view.authorized_graph_relations == ()
+        else:
+            assert comparison.proposition_node_id is not None
+            assert all(
+                item.proposition_node.node_id == comparison.proposition_node_id
+                for item in view.authorized_graph_relations
+            )
+    finally:
+        repository.close()
+
+
+def test_superficial_similarity_fragment_does_not_create_relation_edges() -> None:
+    chain = _chain_for_content(PASSAGE_TEXT)
+    unsupported = verification(SupportVerificationState.NOT_SUPPORTED)
+    edge = build_verified_evidence_edge(
+        mapping=chain.mapping,
+        verification=unsupported,
+        proposition=chain.proposition,
+        source=chain.source,
+        bundle=chain.bundle,
+        version=chain.version,
+        as_of=AS_OF,
+        observed_at=NOW,
+        assessment_id=chain.assessment_id,
+        relation=PrecedentState.SUPERFICIAL_SIMILARITY,
+    )
+    classification = PrecedentClassification(
+        classification_id="cls_superficial_matrix",
+        source_id=edge.source_id,
+        source_version_id=edge.source_version_id,
+        mcu_id=edge.mcu_id,
+        mapping_id=edge.mapping_id,
+        verification_id=edge.verification_id,
+        relation=PrecedentState.SUPERFICIAL_SIMILARITY,
+        basis=("Superficial similarity matrix fixture",),
+        classifier_version="precedent-classifier-v2",
+        observed_at=NOW,
+        provenance=phase6_graph_provenance(),
+    )
+    nodes, edges = verified_edge_graph_fragment(
+        (edge,),
+        (classification,),
+        observed_at=NOW,
+        provenance=phase6_graph_provenance(),
+    )
+    assert any(node.kind.value == "EVIDENCE_PROPOSITION" for node in nodes)
+    assert edges == ()
