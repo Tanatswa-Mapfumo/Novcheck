@@ -51,3 +51,20 @@ The suite covers zero-comparison snapshots, missing/foreign locators, two-target
 - Graph-backed citation, chronology, scoped-support, combination-profile and all-five-verifier-state loader matrix cases are deferred to the Task 7/8 R15 and parity suites because Task 6 intentionally rejects graph-dependent snapshots before constructing their downstream view.
 - Full repository verification was not run; Task 6 focused suites, R10/R13 suites, Ruff, format check, Pyright and diff check were run.
 - R15 and Phase 6 acceptance remain open for independent review.
+
+## Multi-comparison manifest review remediation
+
+Implementation commit: `bfe62e6c42973e737f1fd49ea283e6f1d8715193`
+
+The follow-up review found that one candidate could join successfully to one pair in a multi-comparison commit while another pair in that manifest was omitted. Added `_validate_manifest_candidate_pairs` and invoke it in both `record_phase6_assessment` and `load_phase6_assessment`. For each referenced commit, the assessed candidate `(verified_edge_id, classification_id)` pairs must now cover every manifest pair exactly once. Missing pairs and duplicate candidate references fail closed. Empty snapshots retain an empty manifest/candidate mapping and remain loadable.
+
+New regressions model a two-pair manifest with only one candidate, duplicate references to one pair, and loader-specific `Phase6AssessmentAuthorityError` behavior. The checks run against the exact shared validator used at both persistence boundaries.
+
+Verification after the code commit:
+
+- `UV_CACHE_DIR=/private/tmp/novcheck-uv-cache uv run pytest tests/unit/evidence/graph/test_assessment_ledger.py tests/unit/evidence/graph/test_assessment_view.py tests/integration/test_phase6_assessment_view.py -q` — 38 passed.
+- `UV_CACHE_DIR=/private/tmp/novcheck-uv-cache uv run pytest tests/adversarial/test_phase6_r10_content_authority.py tests/adversarial/test_phase6_r13_commit_receipt_authority.py -q` — 41 passed.
+- `UV_CACHE_DIR=/private/tmp/novcheck-uv-cache uv run ruff check .` — all checks passed.
+- `UV_CACHE_DIR=/private/tmp/novcheck-uv-cache uv run ruff format --check .` — 300 files already formatted.
+- `UV_CACHE_DIR=/private/tmp/novcheck-uv-cache uv run pyright` — 0 errors, 0 warnings, 0 informations.
+- `git diff --check` — passed.
