@@ -15,10 +15,13 @@ from novelty_harness.evidence.graph.assessment_ledger import (
     phase6_derived_record_id,
     phase6_target_record_id,
 )
+from novelty_harness.evidence.graph.assessment_view import Phase6AssessmentAuthorityError
 from novelty_harness.evidence.graph.models import GraphNode, GraphNodeKind
+from novelty_harness.evidence.graph.repository import Phase6CommitRecord
 from novelty_harness.evidence.graph.sqlalchemy_models import Phase6AssessmentCandidateRow
 from novelty_harness.evidence.graph.sqlalchemy_repository import (
     SqlAlchemyEvidenceGraphRepository,
+    _validate_manifest_candidate_pairs,
 )
 from novelty_harness.evidence.mapping.dimensions import MCUComparisonProfile
 from novelty_harness.evidence.normalization.models import SourceAccessState
@@ -171,6 +174,61 @@ def test_zero_comparison_snapshot_is_persisted_and_exact_replay_is_idempotent() 
         == snapshot.snapshot_id
     )
     repository.close()
+
+
+def test_manifest_pair_coverage_rejects_omitted_comparison_in_multi_pair_commit() -> None:
+    manifest = Phase6CommitRecord(
+        commit_id="p6commit_multi",
+        assessment_id="asm_ledger",
+        committed_edge_ids=("edge_first", "edge_second"),
+        committed_classification_ids=("cls_first", "cls_second"),
+    )
+    candidate = _candidate(
+        snapshot_id="p6snap_ledger",
+        decision="ASSESSED",
+        commit_id=manifest.commit_id,
+    ).model_copy(update={"verified_edge_id": "edge_first", "classification_id": "cls_first"})
+
+    with pytest.raises(ValueError, match="exactly cover"):
+        _validate_manifest_candidate_pairs({manifest.commit_id: manifest}, (candidate,))
+
+
+def test_manifest_pair_coverage_rejects_duplicate_candidate_pair() -> None:
+    manifest = Phase6CommitRecord(
+        commit_id="p6commit_single",
+        assessment_id="asm_ledger",
+        committed_edge_ids=("edge_first",),
+        committed_classification_ids=("cls_first",),
+    )
+    candidate = _candidate(
+        snapshot_id="p6snap_ledger",
+        decision="ASSESSED",
+        commit_id=manifest.commit_id,
+    ).model_copy(update={"verified_edge_id": "edge_first", "classification_id": "cls_first"})
+
+    with pytest.raises(ValueError, match="exactly cover"):
+        _validate_manifest_candidate_pairs({manifest.commit_id: manifest}, (candidate, candidate))
+
+
+def test_loader_manifest_pair_coverage_uses_authority_error() -> None:
+    manifest = Phase6CommitRecord(
+        commit_id="p6commit_loader_multi",
+        assessment_id="asm_ledger",
+        committed_edge_ids=("edge_first", "edge_second"),
+        committed_classification_ids=("cls_first", "cls_second"),
+    )
+    candidate = _candidate(
+        snapshot_id="p6snap_ledger",
+        decision="ASSESSED",
+        commit_id=manifest.commit_id,
+    ).model_copy(update={"verified_edge_id": "edge_first", "classification_id": "cls_first"})
+
+    with pytest.raises(Phase6AssessmentAuthorityError, match="exactly cover"):
+        _validate_manifest_candidate_pairs(
+            {manifest.commit_id: manifest},
+            (candidate,),
+            error_type=Phase6AssessmentAuthorityError,
+        )
 
 
 def test_same_snapshot_id_cannot_be_reused_for_changed_facts() -> None:

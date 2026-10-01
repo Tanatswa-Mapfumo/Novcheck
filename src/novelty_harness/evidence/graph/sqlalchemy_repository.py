@@ -6,7 +6,7 @@ rejected because graph history is append-only.
 """
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -109,6 +109,38 @@ def _ledger_row_identity_document(value: str) -> str:
     """Compare persisted ledger facts without nested observation clocks."""
 
     return canonical_json(phase6_ledger_identity_value(cast(JsonValue, json.loads(value))))
+
+
+def _validate_manifest_candidate_pairs(
+    manifests: Mapping[str, Phase6CommitRecord],
+    candidates: Sequence[Phase6CandidateLedgerRecord],
+    *,
+    error_type: type[Exception] = ValueError,
+) -> None:
+    """Require exact one-to-one candidate representation of each commit pair."""
+    pairs_by_commit: dict[str, list[tuple[str, str]]] = {}
+    for candidate in candidates:
+        if candidate.decision != "ASSESSED":
+            continue
+        assert candidate.commit_id is not None
+        assert candidate.verified_edge_id is not None
+        assert candidate.classification_id is not None
+        pairs_by_commit.setdefault(candidate.commit_id, []).append(
+            (str(candidate.verified_edge_id), str(candidate.classification_id))
+        )
+    for commit_id, manifest in manifests.items():
+        expected = tuple(
+            zip(manifest.committed_edge_ids, manifest.committed_classification_ids, strict=True)
+        )
+        actual = pairs_by_commit.get(commit_id, [])
+        if (
+            len(actual) != len(expected)
+            or len(set(actual)) != len(actual)
+            or set(actual) != set(expected)
+        ):
+            raise error_type(
+                "Assessed candidates do not exactly cover committed manifest comparison pairs"
+            )
 
 
 def _phase6_commit_id(
@@ -345,6 +377,10 @@ class SqlAlchemyEvidenceGraphRepository:
                         != candidate.source_version_id
                     ):
                         raise ValueError("Assessed candidate source/version/target join is invalid")
+            _validate_manifest_candidate_pairs(
+                {commit_id: resolved.record for commit_id, resolved in resolved_by_commit.items()},
+                candidate_records,
+            )
             for commit_id in snapshot.commit_ids:
                 row = session.get(Phase6CommitRow, commit_id)
                 if (
@@ -624,6 +660,12 @@ class SqlAlchemyEvidenceGraphRepository:
                 for comparison in resolved.comparisons:
                     self._check_content_authority(session, comparison.comparison.chain, ())
                 resolved_by_commit[commit_id] = resolved
+
+            _validate_manifest_candidate_pairs(
+                {commit_id: resolved.record for commit_id, resolved in resolved_by_commit.items()},
+                candidates,
+                error_type=Phase6AssessmentAuthorityError,
+            )
 
             assessed_candidates = [item for item in candidates if item.decision == "ASSESSED"]
             if {str(item.commit_id) for item in assessed_candidates} != set(snapshot.commit_ids):
