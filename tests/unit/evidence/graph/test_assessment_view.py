@@ -10,6 +10,7 @@ from novelty_harness.evidence.graph.assessment_ledger import (
     Phase6AssessmentSnapshotRecord,
     Phase6CoverageLedger,
     phase6_assessment_snapshot_id,
+    phase6_candidate_record_id,
 )
 from novelty_harness.evidence.graph.assessment_view import (
     AuthorizedGraphRelation,
@@ -144,6 +145,223 @@ def test_repository_rejects_missing_or_foreign_snapshot_locator() -> None:
     repository = SqlAlchemyEvidenceGraphRepository()
     with pytest.raises(Phase6AssessmentAuthorityError, match="snapshot"):
         repository.load_phase6_assessment("asm_other", snapshot_id="p6snap_missing")
+    repository.close()
+
+
+def test_loader_rejects_candidate_row_target_column_mismatch() -> None:
+    from sqlalchemy import text
+
+    from novelty_harness.evidence.graph.assessment_ledger import Phase6TargetLedgerRecord
+    from novelty_harness.evidence.graph.models import GraphNodeKind
+    from tests.unit.evidence.graph.test_assessment_ledger import (
+        _candidate,
+        _graph_node,
+        _ledger,
+        _profile,
+    )
+
+    repository = SqlAlchemyEvidenceGraphRepository()
+    repository.upsert(nodes=(_graph_node("src_ledger", GraphNodeKind.SOURCE),))
+    pending_targets = tuple(
+        Phase6TargetLedgerRecord(
+            snapshot_id="pending", assessment_id="asm_ledger", profile=_profile(target_id)
+        )
+        for target_id in ("mcu_ledger", "mcu_other")
+    )
+    snapshot, targets, candidates = _ledger(
+        targets=pending_targets, candidates=(_candidate(snapshot_id="pending"),)
+    )
+    repository.record_phase6_assessment(
+        snapshot, targets=targets, candidates=candidates, derived=()
+    )
+    with repository.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE phase6_assessment_candidates SET target_id = 'mcu_other' "
+                "WHERE record_id = :record_id"
+            ),
+            {"record_id": phase6_candidate_record_id(candidates[0])},
+        )
+
+    from novelty_harness.evidence.graph.assessment_view import Phase6AssessmentAuthorityError
+
+    with pytest.raises(Phase6AssessmentAuthorityError, match="row metadata"):
+        repository.load_phase6_assessment(snapshot.assessment_id, snapshot_id=snapshot.snapshot_id)
+    repository.close()
+
+
+def test_loader_revalidates_failed_candidate_content_descriptors() -> None:
+    from sqlalchemy import text
+
+    from novelty_harness.evidence.graph.assessment_ledger import Phase6TargetLedgerRecord
+    from novelty_harness.evidence.graph.assessment_view import Phase6AssessmentAuthorityError
+    from novelty_harness.evidence.graph.models import GraphNodeKind
+    from novelty_harness.evidence.normalization.models import SourceAccessState
+    from novelty_harness.runtime.tracing.hashing import canonical_json
+    from tests.unit.evidence.graph.test_assessment_ledger import (
+        _candidate,
+        _graph_node,
+        _ledger,
+        _profile,
+    )
+
+    repository = SqlAlchemyEvidenceGraphRepository()
+    source_node = _graph_node(
+        "src_ledger",
+        GraphNodeKind.SOURCE,
+        content_hash="hash_expected",
+        access_state=SourceAccessState.METADATA_ONLY.value,
+    )
+    repository.upsert(nodes=(source_node,))
+    candidate = _candidate(snapshot_id="pending").model_copy(
+        update={
+            "source_content_hash": "hash_expected",
+            "source_access_state": SourceAccessState.METADATA_ONLY,
+        }
+    )
+    snapshot, targets, candidates = _ledger(
+        targets=(
+            Phase6TargetLedgerRecord(
+                snapshot_id="pending", assessment_id="asm_ledger", profile=_profile()
+            ),
+        ),
+        candidates=(candidate,),
+    )
+    repository.record_phase6_assessment(
+        snapshot, targets=targets, candidates=candidates, derived=()
+    )
+    changed_node = source_node.model_copy(
+        update={"attributes": {**source_node.attributes, "content_hash": "hash_tampered"}}
+    )
+    with repository.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE graph_nodes SET document_json = :document WHERE node_id = :node_id"),
+            {"document": canonical_json(changed_node), "node_id": source_node.node_id},
+        )
+
+    with pytest.raises(Phase6AssessmentAuthorityError, match="source content descriptor"):
+        repository.load_phase6_assessment(snapshot.assessment_id, snapshot_id=snapshot.snapshot_id)
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    ("result_target", "derived_as_of", "expected_message"),
+    [
+        ("mcu_other", date(2026, 10, 1), "Derived result target"),
+        ("mcu_ledger", date(2026, 9, 30), "Derived record cutoff"),
+    ],
+)
+def test_loader_revalidates_derived_result_target_and_cutoff(
+    result_target, derived_as_of, expected_message
+) -> None:
+    from novelty_harness.evidence.graph.assessment_ledger import (
+        Phase6AssessmentSnapshotRecord,
+        Phase6CoverageLedger,
+        Phase6DerivedLedgerRecord,
+        Phase6TargetLedgerRecord,
+        phase6_assessment_snapshot_id,
+        phase6_derived_record_id,
+        phase6_target_record_id,
+    )
+    from novelty_harness.evidence.graph.assessment_view import Phase6AssessmentAuthorityError
+    from novelty_harness.evidence.graph.sqlalchemy_models import (
+        Phase6AssessmentDerivedRow,
+        Phase6AssessmentSnapshotRow,
+        Phase6AssessmentTargetRow,
+    )
+    from novelty_harness.evidence.mapping.dimensions import MCUComparisonProfile
+    from novelty_harness.evidence.precedent.gates import MultiSourceAssessment
+    from novelty_harness.runtime.tracing.hashing import canonical_json
+
+    repository = SqlAlchemyEvidenceGraphRepository()
+    snapshot = Phase6AssessmentSnapshotRecord(
+        snapshot_id="pending",
+        assessment_id="asm_invalid_derived",
+        as_of=date(2026, 10, 1),
+        method_version="phase6-v1",
+        max_sources_per_mcu=1,
+        max_versions_per_source=1,
+        max_expansions=0,
+        window_chars=100,
+        target_record_ids=(),
+        candidate_record_ids=(),
+        derived_record_ids=(),
+        lineage_cluster_ids=(),
+        commit_ids=(),
+        coverage=Phase6CoverageLedger(),
+        audit_refs=(),
+        completed_at=NOW,
+    )
+    target = Phase6TargetLedgerRecord(
+        snapshot_id="pending",
+        assessment_id=snapshot.assessment_id,
+        profile=MCUComparisonProfile(
+            target_id="mcu_ledger", label="Target", statement="The assessment target"
+        ),
+    )
+    result = MultiSourceAssessment(
+        mcu_id=result_target,
+        combination_context="NONE",
+        single_source_direct_eligible=False,
+        independent_roots=0,
+        contributing_roots=0,
+        summary=("No multi-source result was produced.",),
+    )
+    derived = Phase6DerivedLedgerRecord(
+        snapshot_id="pending",
+        assessment_id=snapshot.assessment_id,
+        target_id="mcu_ledger",
+        kind="MULTI_SOURCE",
+        input_commit_ids=(),
+        input_edge_ids=(),
+        input_classification_ids=(),
+        lineage_root_ids=(),
+        as_of=derived_as_of,
+        method_version="phase6-v1",
+        result=result,
+    )
+    snapshot_id = phase6_assessment_snapshot_id(
+        snapshot, targets=(target,), candidates=(), derived=(derived,)
+    )
+    target = target.model_copy(update={"snapshot_id": snapshot_id})
+    derived = derived.model_copy(update={"snapshot_id": snapshot_id})
+    snapshot = snapshot.model_copy(
+        update={
+            "snapshot_id": snapshot_id,
+            "target_record_ids": (phase6_target_record_id(target),),
+            "derived_record_ids": (phase6_derived_record_id(derived),),
+        }
+    )
+    with repository.engine.begin() as connection:
+        connection.execute(
+            Phase6AssessmentSnapshotRow.__table__.insert().values(
+                snapshot_id=snapshot_id,
+                assessment_id=snapshot.assessment_id,
+                document_json=canonical_json(snapshot),
+            )
+        )
+        connection.execute(
+            Phase6AssessmentTargetRow.__table__.insert().values(
+                record_id=phase6_target_record_id(target),
+                snapshot_id=snapshot_id,
+                assessment_id=target.assessment_id,
+                target_id=target.profile.target_id,
+                document_json=canonical_json(target),
+            )
+        )
+        connection.execute(
+            Phase6AssessmentDerivedRow.__table__.insert().values(
+                record_id=phase6_derived_record_id(derived),
+                snapshot_id=snapshot_id,
+                assessment_id=derived.assessment_id,
+                target_id=derived.target_id,
+                kind=derived.kind,
+                document_json=canonical_json(derived),
+            )
+        )
+
+    with pytest.raises(Phase6AssessmentAuthorityError, match=expected_message):
+        repository.load_phase6_assessment(snapshot.assessment_id, snapshot_id=snapshot_id)
     repository.close()
 
 

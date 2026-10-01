@@ -94,6 +94,10 @@ from novelty_harness.evidence.precedent.patent import (
     patent_locator_from_passage,
     screen_patent_references,
 )
+from novelty_harness.evidence.provenance.independence import (
+    independent_root_map,
+    independent_roots_for_sources,
+)
 from novelty_harness.evidence.quality.models import EvidenceQualityAssessment
 from novelty_harness.evidence.verification.gates import build_verified_evidence_edge
 from novelty_harness.evidence.verification.integrity import (
@@ -710,35 +714,15 @@ class EvidenceVerificationPipeline:
             assessment.source_id: assessment for assessment in evidence.quality_assessments
         }
         independent_root_of = {
-            source_id: cluster.root_source_ids[0]
-            for cluster in phase5_lineage_clusters
-            for source_id in cluster.source_ids
-            if cluster.root_source_ids
+            source_id: root_id
+            for source_id, root_id in independent_root_map(phase5_lineage_clusters).items()
+            if root_id is not None
         }
 
         def lineage_facts(
             source_ids: Sequence[SourceId],
         ) -> tuple[tuple[SourceId, ...], tuple[str, ...]]:
-            missing_sources = tuple(sorted(set(source_ids) - independent_root_of.keys()))
-            roots = tuple(
-                sorted(
-                    {
-                        independent_root_of[source_id]
-                        for source_id in source_ids
-                        if source_id in independent_root_of
-                    }
-                )
-            )
-            limitations = (
-                (
-                    f"No persisted Phase 5 lineage cluster was available for "
-                    f"{len(missing_sources)} derived input source(s); "
-                    "independent-root coverage is incomplete",
-                )
-                if missing_sources
-                else ()
-            )
-            return roots, limitations
+            return independent_roots_for_sources(source_ids, phase5_lineage_clusters)
 
         pending_success: list[tuple[str, dict[str, JsonValue], AssessmentStage]] = []
         post_commit_trace_refs: list[str] = []

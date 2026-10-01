@@ -69,6 +69,7 @@ from novelty_harness.evidence.graph.sqlalchemy_models import (
     VerifiedEdgeRow,
 )
 from novelty_harness.evidence.precedent.gates import ClassifiedComparison
+from novelty_harness.evidence.provenance.independence import independent_roots_for_sources
 from novelty_harness.evidence.provenance.models import EvidenceLineageCluster
 from novelty_harness.evidence.verification.gates import validate_verified_chain
 from novelty_harness.evidence.verification.integrity import VerifiedEvidenceChain
@@ -298,6 +299,10 @@ class SqlAlchemyEvidenceGraphRepository:
             raise ValueError("Candidate references a target absent from its snapshot")
         if any(item.target_id not in target_by_id for item in derived_records):
             raise ValueError("Derived record references a target absent from its snapshot")
+        if any(item.as_of != snapshot.as_of for item in derived_records):
+            raise ValueError("Derived record cutoff differs from its assessment snapshot")
+        if any(item.result.mcu_id != item.target_id for item in derived_records):
+            raise ValueError("Derived result target differs from its ledger target")
 
         assessed_commit_ids = {
             item.commit_id for item in candidate_records if item.decision == "ASSESSED"
@@ -306,28 +311,9 @@ class SqlAlchemyEvidenceGraphRepository:
             raise ValueError("Snapshot commit IDs must exactly match assessed candidate commits")
 
         with Session(self._engine) as session, session.begin():
+            resolved_by_commit: dict[str, ResolvedPhase6Commit] = {}
             for candidate in candidate_records:
-                source_row = session.get(GraphNodeRow, candidate.source_id)
-                source_node = (
-                    GraphNode.model_validate_json(source_row.document_json)
-                    if source_row is not None
-                    else None
-                )
-                if source_node is None or source_node.kind != GraphNodeKind.SOURCE:
-                    raise ValueError("Candidate source does not resolve to a source record")
-                if candidate.source_version_id is not None:
-                    version_row = session.get(GraphNodeRow, candidate.source_version_id)
-                    version_node = (
-                        GraphNode.model_validate_json(version_row.document_json)
-                        if version_row is not None
-                        else None
-                    )
-                    if (
-                        version_node is None
-                        or version_node.kind != GraphNodeKind.SOURCE_VERSION
-                        or version_node.attributes.get("source_id") != candidate.source_id
-                    ):
-                        raise ValueError("Candidate source version does not belong to its source")
+                self._validate_candidate_source_descriptors(session, candidate)
                 if candidate.decision == "ASSESSED":
                     assert candidate.commit_id is not None
                     commit_row = session.get(Phase6CommitRow, candidate.commit_id)
@@ -341,6 +327,7 @@ class SqlAlchemyEvidenceGraphRepository:
                         committed_classification_ids=commit.committed_classification_ids,
                     )
                     resolved = self._resolve_phase6_commit_in_session(session, receipt)
+                    resolved_by_commit[commit.commit_id] = resolved
                     matches = [
                         comparison
                         for comparison in resolved.comparisons
@@ -387,6 +374,20 @@ class SqlAlchemyEvidenceGraphRepository:
                         )
                     ):
                         raise ValueError("Derived input is absent from its commit manifest")
+                    resolved = resolved_by_commit.get(commit_id)
+                    if resolved is None:
+                        raise ValueError("Derived input commit is not an assessed candidate commit")
+                    matching = [
+                        comparison
+                        for comparison in resolved.comparisons
+                        if comparison.comparison.chain.edge.edge_id == edge_id
+                        and comparison.classification.classification_id == classification_id
+                    ]
+                    if (
+                        len(matching) != 1
+                        or matching[0].comparison.chain.edge.mcu_id != record.target_id
+                    ):
+                        raise ValueError("Derived input comparison MCU differs from its target")
 
             snapshot_lineage_roots: set[str] = set()
             for cluster_id in snapshot.lineage_cluster_ids:
@@ -539,6 +540,9 @@ class SqlAlchemyEvidenceGraphRepository:
             targets = tuple(target_by_id[item] for item in snapshot.target_record_ids)
             candidates = tuple(candidate_by_id[item] for item in snapshot.candidate_record_ids)
             derived = tuple(derived_by_id[item] for item in snapshot.derived_record_ids)
+            target_row_by_id = {row.record_id: row for row in target_rows}
+            candidate_row_by_id = {row.record_id: row for row in candidate_rows}
+            derived_row_by_id = {row.record_id: row for row in derived_rows}
             if (
                 tuple(phase6_target_record_id(item) for item in targets)
                 != snapshot.target_record_ids
@@ -550,6 +554,41 @@ class SqlAlchemyEvidenceGraphRepository:
                 raise Phase6AssessmentAuthorityError(
                     "Ledger row content does not match its identity"
                 )
+            for record_id, record in zip(snapshot.target_record_ids, targets, strict=True):
+                row = target_row_by_id[record_id]
+                if (
+                    row.snapshot_id != record.snapshot_id
+                    or row.assessment_id != record.assessment_id
+                    or row.target_id != record.profile.target_id
+                ):
+                    raise Phase6AssessmentAuthorityError(
+                        "Target row metadata differs from its payload"
+                    )
+            for record_id, record in zip(snapshot.candidate_record_ids, candidates, strict=True):
+                row = candidate_row_by_id[record_id]
+                if (
+                    row.snapshot_id != record.snapshot_id
+                    or row.assessment_id != record.assessment_id
+                    or row.target_id != record.target_id
+                    or row.source_id != record.source_id
+                    or row.source_version_id != record.source_version_id
+                    or row.commit_id != record.commit_id
+                ):
+                    raise Phase6AssessmentAuthorityError(
+                        "Candidate row metadata differs from its payload"
+                    )
+                self._validate_candidate_source_descriptors(session, record)
+            for record_id, record in zip(snapshot.derived_record_ids, derived, strict=True):
+                row = derived_row_by_id[record_id]
+                if (
+                    row.snapshot_id != record.snapshot_id
+                    or row.assessment_id != record.assessment_id
+                    or row.target_id != record.target_id
+                    or row.kind != record.kind
+                ):
+                    raise Phase6AssessmentAuthorityError(
+                        "Derived row metadata differs from its payload"
+                    )
             for record in (*targets, *candidates, *derived):
                 if record.assessment_id != assessment_id or record.snapshot_id != snapshot_id:
                     raise Phase6AssessmentAuthorityError(
@@ -645,7 +684,6 @@ class SqlAlchemyEvidenceGraphRepository:
                 ] = classified
 
             lineage: list[EvidenceLineageCluster] = []
-            lineage_roots: set[str] = set()
             for cluster_id in snapshot.lineage_cluster_ids:
                 lineage_row = session.get(LineageClusterRow, cluster_id)
                 if lineage_row is None:
@@ -656,7 +694,6 @@ class SqlAlchemyEvidenceGraphRepository:
                 if cluster.cluster_id != cluster_id:
                     raise Phase6AssessmentAuthorityError("Lineage cluster identity is inconsistent")
                 lineage.append(cluster)
-                lineage_roots.update(str(item) for item in cluster.root_source_ids)
 
             committed: list[CommittedComparisonView] = []
             for candidate in assessed_candidates:
@@ -702,8 +739,17 @@ class SqlAlchemyEvidenceGraphRepository:
                 )
 
             for record in derived:
+                if record.as_of != snapshot.as_of:
+                    raise Phase6AssessmentAuthorityError(
+                        "Derived record cutoff differs from its assessment snapshot"
+                    )
+                if record.result.mcu_id != record.target_id:
+                    raise Phase6AssessmentAuthorityError(
+                        "Derived result target differs from its ledger target"
+                    )
                 if not set(record.input_commit_ids) <= set(snapshot.commit_ids):
                     raise Phase6AssessmentAuthorityError("Derived input references foreign commit")
+                input_sources: list[SourceId] = []
                 for commit_id, edge_id, classification_id in zip(
                     record.input_commit_ids,
                     record.input_edge_ids,
@@ -721,38 +767,28 @@ class SqlAlchemyEvidenceGraphRepository:
                         raise Phase6AssessmentAuthorityError(
                             "Derived input identity is absent from its exact commit manifest"
                         )
-                source_by_pair = {
-                    (
-                        commit_id,
-                        edge_id,
-                        classification_id,
-                    ): classified.comparison.chain.source.source_id
-                    for (
-                        commit_id,
-                        edge_id,
-                        classification_id,
-                    ), classified in comparisons_by_key.items()
-                }
-                expected_roots = {
-                    str(cluster.root_source_ids[0])
-                    for cluster in lineage
-                    if any(
-                        source_by_pair.get((commit_id, str(edge_id), str(classification_id)))
-                        in cluster.source_ids
-                        for commit_id, edge_id, classification_id in zip(
-                            record.input_commit_ids,
-                            record.input_edge_ids,
-                            record.input_classification_ids,
-                            strict=True,
-                        )
+                    classified = comparisons_by_key.get(
+                        (commit_id, str(edge_id), str(classification_id))
                     )
-                }
-                if (
-                    not set(str(item) for item in record.lineage_root_ids) <= lineage_roots
-                    or set(str(item) for item in record.lineage_root_ids) != expected_roots
-                ):
+                    if classified is None:
+                        raise Phase6AssessmentAuthorityError(
+                            "Derived input is not joined to an assessed candidate"
+                        )
+                    if classified.comparison.chain.edge.mcu_id != record.target_id:
+                        raise Phase6AssessmentAuthorityError(
+                            "Derived input comparison MCU differs from its target"
+                        )
+                    input_sources.append(classified.comparison.chain.source.source_id)
+                expected_roots, lineage_limitations = independent_roots_for_sources(
+                    input_sources, lineage
+                )
+                if set(record.lineage_root_ids) != set(expected_roots):
                     raise Phase6AssessmentAuthorityError(
                         "Derived input lineage roots do not match its actual committed sources"
+                    )
+                if lineage_limitations and not record.lineage_limitations:
+                    raise Phase6AssessmentAuthorityError(
+                        "Derived record omits ambiguous or unavailable input lineage limitations"
                     )
 
             view = Phase6AssessmentView(
@@ -940,6 +976,65 @@ class SqlAlchemyEvidenceGraphRepository:
                 raise ValueError("Phase 6 commit artifacts differ from persisted authority")
             comparisons.append(classified)
         return ResolvedPhase6Commit(record=record, comparisons=tuple(comparisons))
+
+    @staticmethod
+    def _validate_candidate_source_descriptors(
+        session: Session, candidate: Phase6CandidateLedgerRecord
+    ) -> None:
+        source_row = session.get(GraphNodeRow, candidate.source_id)
+        source = (
+            GraphNode.model_validate_json(source_row.document_json)
+            if source_row is not None
+            else None
+        )
+        if source is None or source.kind != GraphNodeKind.SOURCE:
+            raise Phase6AssessmentAuthorityError(
+                "Candidate source does not resolve to a source node"
+            )
+        if source.attributes.get(
+            "content_hash"
+        ) != candidate.source_content_hash or source.attributes.get("access_state") != (
+            candidate.source_access_state.value
+            if candidate.source_access_state is not None
+            else None
+        ):
+            raise Phase6AssessmentAuthorityError(
+                "Candidate source content descriptor differs from stored source authority"
+            )
+
+        if candidate.source_version_id is None:
+            if (
+                candidate.version_content_hash is not None
+                or candidate.version_access_state is not None
+            ):
+                raise Phase6AssessmentAuthorityError(
+                    "Candidate has version descriptors without a source version"
+                )
+            return
+        version_row = session.get(GraphNodeRow, candidate.source_version_id)
+        version = (
+            GraphNode.model_validate_json(version_row.document_json)
+            if version_row is not None
+            else None
+        )
+        if (
+            version is None
+            or version.kind != GraphNodeKind.SOURCE_VERSION
+            or version.attributes.get("source_id") != candidate.source_id
+        ):
+            raise Phase6AssessmentAuthorityError(
+                "Candidate source version does not resolve to a version of its source"
+            )
+        if version.attributes.get(
+            "content_hash"
+        ) != candidate.version_content_hash or version.attributes.get("access_state") != (
+            candidate.version_access_state.value
+            if candidate.version_access_state is not None
+            else None
+        ):
+            raise Phase6AssessmentAuthorityError(
+                "Candidate version content descriptor differs from stored version authority"
+            )
 
     def _verify_edge_endpoints(
         self,
