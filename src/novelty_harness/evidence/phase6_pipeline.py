@@ -28,6 +28,16 @@ from novelty_harness.evidence.context.selection import (
     SupportEvidenceBundle,
     select_support_passages,
 )
+from novelty_harness.evidence.graph.assessment_ledger import (
+    Phase6AssessmentSnapshotRecord,
+    Phase6CandidateLedgerRecord,
+    Phase6CoverageExclusion,
+    Phase6CoverageLedger,
+    Phase6TargetLedgerRecord,
+    phase6_assessment_snapshot_id,
+    phase6_candidate_record_id,
+    phase6_target_record_id,
+)
 from novelty_harness.evidence.graph.models import GraphNode, GraphNodeKind
 from novelty_harness.evidence.graph.phase6_mapping import (
     phase6_graph_provenance,
@@ -179,6 +189,7 @@ class Phase6EvidenceResult:
     failures: tuple[str, ...]
     limitations: tuple[str, ...]
     graph_ref: str
+    snapshot_id: str
 
 
 def _profile_and_proposition(target: MCU) -> tuple[MCUComparisonProfile, EvidenceProposition]:
@@ -762,6 +773,25 @@ class EvidenceVerificationPipeline:
         multi_source_summaries: list[MultiSourceAssessment] = []
         unassessed_sources: list[SourceId] = []
         unassessed_versions: list[str] = []
+        selected_source_ids: list[SourceId] = []
+        selected_version_ids: list[str] = []
+        source_exclusions: list[Phase6CoverageExclusion] = []
+        version_exclusions: list[Phase6CoverageExclusion] = []
+        candidate_descriptors: dict[
+            tuple[MCUId, SourceId, str | None],
+            tuple[SourceRecord, SourceVersionRecord | None, int],
+        ] = {}
+        excluded_candidate_facts: list[
+            tuple[
+                MCUId,
+                SourceRecord,
+                SourceVersionRecord | None,
+                int,
+                Literal["EXCLUDED_SOURCE_BOUND", "EXCLUDED_VERSION_BOUND"],
+                Literal["SOURCE_BOUND", "VERSION_BOUND", "UNVERSIONED", "MISSING_VERSION_RECORD"],
+            ]
+        ] = []
+        eligible_selection_count = 0
         failures: list[str] = []
         committed_comparisons: list[ClassifiedComparison] = []
         committed_receipts: list[Phase6CommitReceipt] = []
@@ -777,10 +807,116 @@ class EvidenceVerificationPipeline:
                 passages_by_source=passages_by_source,
                 max_sources=self.max_sources_per_mcu,
             )
+            eligible_selection_count += len(selection.selected) + len(selection.unassessed_sources)
             unassessed_sources.extend(selection.unassessed_sources)
+            selected_source_ids.extend(item.source_id for item in selection.selected)
+            for source_id in selection.unassessed_sources:
+                source = next(item for item in sources if item.source_id == source_id)
+                priority = int(
+                    not any(
+                        path.mcu_id in {profile.target_id, *member_ids}
+                        for path in source.discovery_paths
+                    )
+                )
+                source_exclusions.append(
+                    Phase6CoverageExclusion(
+                        source_id=source.source_id,
+                        target_id=profile.target_id,
+                        reason="SOURCE_BOUND",
+                        source_content_hash=source.content_hash,
+                        source_access_state=source.access_state,
+                        evidence_families=tuple(
+                            sorted(item.value for item in source.evidence_families)
+                        ),
+                        routing_priority=priority,
+                    )
+                )
+                source_versions = versions_by_source.get(source.source_id, ())
+                version_ids = {item.version_id for item in source_versions}
+                for version in source_versions:
+                    version_exclusions.append(
+                        Phase6CoverageExclusion(
+                            source_id=source.source_id,
+                            target_id=profile.target_id,
+                            source_version_id=version.version_id,
+                            reason="SOURCE_BOUND",
+                            source_content_hash=source.content_hash,
+                            source_access_state=source.access_state,
+                            version_content_hash=version.content_hash,
+                            version_access_state=version.access_state,
+                            evidence_families=tuple(
+                                sorted(item.value for item in source.evidence_families)
+                            ),
+                            routing_priority=priority,
+                        )
+                    )
+                    excluded_candidate_facts.append(
+                        (
+                            profile.target_id,
+                            source,
+                            version,
+                            priority,
+                            "EXCLUDED_SOURCE_BOUND",
+                            "SOURCE_BOUND",
+                        )
+                    )
+                source_passages = passages_by_source.get(source.source_id, ())
+                if any(passage.source_version_id is None for passage in source_passages):
+                    version_exclusions.append(
+                        Phase6CoverageExclusion(
+                            source_id=source.source_id,
+                            target_id=profile.target_id,
+                            reason="UNVERSIONED",
+                            source_content_hash=source.content_hash,
+                            source_access_state=source.access_state,
+                            evidence_families=tuple(
+                                sorted(item.value for item in source.evidence_families)
+                            ),
+                            routing_priority=priority,
+                        )
+                    )
+                    excluded_candidate_facts.append(
+                        (
+                            profile.target_id,
+                            source,
+                            None,
+                            priority,
+                            "EXCLUDED_SOURCE_BOUND",
+                            "UNVERSIONED",
+                        )
+                    )
+                missing_version_ids = sorted(
+                    {
+                        passage.source_version_id
+                        for passage in source_passages
+                        if passage.source_version_id is not None
+                        and passage.source_version_id not in version_ids
+                    }
+                )
+                for source_version_id in missing_version_ids:
+                    version_exclusions.append(
+                        Phase6CoverageExclusion(
+                            source_id=source.source_id,
+                            target_id=profile.target_id,
+                            source_version_id=source_version_id,
+                            reason="MISSING_VERSION_RECORD",
+                            source_content_hash=source.content_hash,
+                            source_access_state=source.access_state,
+                            evidence_families=tuple(
+                                sorted(item.value for item in source.evidence_families)
+                            ),
+                            routing_priority=priority,
+                        )
+                    )
             target_classifications: list[PrecedentClassification] = []
             for source in selection.selected:
                 all_passages = passages_by_source[source.source_id]
+                routing_priority = int(
+                    not any(
+                        path.mcu_id in {profile.target_id, *member_ids}
+                        for path in source.discovery_paths
+                    )
+                )
                 version_slots, excluded_versions = select_versions(
                     versions_by_source.get(source.source_id, ()),
                     all_passages,
@@ -789,6 +925,53 @@ class EvidenceVerificationPipeline:
                 unassessed_versions.extend(
                     f"{source.source_id}:{version_id}" for version_id in excluded_versions
                 )
+                known_versions = {
+                    item.version_id: item for item in versions_by_source.get(source.source_id, ())
+                }
+                for exclusion in excluded_versions:
+                    if exclusion.startswith("unversioned:"):
+                        version = None
+                        source_version_id = None
+                        reason = "UNVERSIONED"
+                    elif exclusion.startswith("missing-version-record:"):
+                        source_version_id = exclusion.removeprefix("missing-version-record:")
+                        version = None
+                        reason = "MISSING_VERSION_RECORD"
+                    else:
+                        source_version_id = exclusion
+                        version = known_versions.get(exclusion)
+                        reason = "VERSION_BOUND"
+                    version_exclusions.append(
+                        Phase6CoverageExclusion(
+                            source_id=source.source_id,
+                            target_id=profile.target_id,
+                            source_version_id=source_version_id,
+                            reason=reason,
+                            source_content_hash=source.content_hash,
+                            source_access_state=source.access_state,
+                            version_content_hash=version.content_hash
+                            if version is not None
+                            else None,
+                            version_access_state=version.access_state
+                            if version is not None
+                            else None,
+                            evidence_families=tuple(
+                                sorted(item.value for item in source.evidence_families)
+                            ),
+                            routing_priority=routing_priority,
+                        )
+                    )
+                    if reason != "MISSING_VERSION_RECORD":
+                        excluded_candidate_facts.append(
+                            (
+                                profile.target_id,
+                                source,
+                                version,
+                                routing_priority,
+                                "EXCLUDED_VERSION_BOUND",
+                                reason,
+                            )
+                        )
                 for version in version_slots:
                     source_passages = tuple(
                         passage
@@ -798,6 +981,15 @@ class EvidenceVerificationPipeline:
                     )
                     if not source_passages:
                         continue
+                    if version is not None:
+                        selected_version_ids.append(version.version_id)
+                    candidate_descriptors[
+                        (
+                            profile.target_id,
+                            source.source_id,
+                            version.version_id if version is not None else None,
+                        )
+                    ] = (source, version, routing_priority)
                     start = (
                         len(mappings),
                         len(claims),
@@ -1021,6 +1213,11 @@ class EvidenceVerificationPipeline:
                 f"{len(unassessed_versions)} source version(s) were outside the "
                 "bounded local coverage and remain unassessed"
             )
+        if eligible_selection_count == 0:
+            coverage_limitations.append(
+                "No eligible source candidate with accessible passages was selected in this "
+                "bounded local run; this ledger does not establish search completeness or absence."
+            )
         limitations: list[str] = [
             "Mapping and verification are local source/MCU comparisons; "
             "no global absence or novelty claim is produced",
@@ -1031,6 +1228,193 @@ class EvidenceVerificationPipeline:
         limitations.extend(coverage_limitations)
         if not edges:
             limitations.append("No source could be mapped to any MCU target locally")
+        target_records = tuple(
+            Phase6TargetLedgerRecord(
+                snapshot_id="pending",
+                assessment_id=assessment_id,
+                profile=profile,
+            )
+            for profile in profiles
+        )
+        outcome_by_key = {
+            (
+                candidate.target_mcu_id,
+                candidate.source_id,
+                candidate.chain.chain.version.version_id
+                if candidate.chain is not None and candidate.chain.chain.version is not None
+                else None,
+            ): candidate
+            for candidate in candidate_assessments
+        }
+        candidate_records: list[Phase6CandidateLedgerRecord] = []
+        for key, (source, version, routing_priority) in candidate_descriptors.items():
+            outcome = outcome_by_key.get(key)
+            if outcome is None:
+                continue
+            if outcome.chain is None:
+                candidate_records.append(
+                    Phase6CandidateLedgerRecord(
+                        snapshot_id="pending",
+                        assessment_id=assessment_id,
+                        target_id=key[0],
+                        source_id=source.source_id,
+                        source_version_id=version.version_id if version is not None else None,
+                        source_content_hash=source.content_hash,
+                        version_content_hash=version.content_hash if version is not None else None,
+                        source_access_state=source.access_state,
+                        version_access_state=version.access_state if version is not None else None,
+                        evidence_families=tuple(
+                            sorted(item.value for item in source.evidence_families)
+                        ),
+                        routing_priority=routing_priority,
+                        decision="UNASSESSABLE",
+                        reason=outcome.failure,
+                    )
+                )
+                continue
+            verified_edge = outcome.chain.chain.edge
+            receipt = receipt_by_edge[verified_edge.edge_id]
+            if receipt.commit_id is None:
+                raise ValueError("Repository returned a Phase 6 receipt without a commit ID")
+            candidate_records.append(
+                Phase6CandidateLedgerRecord(
+                    snapshot_id="pending",
+                    assessment_id=assessment_id,
+                    target_id=key[0],
+                    source_id=source.source_id,
+                    source_version_id=version.version_id if version is not None else None,
+                    source_content_hash=source.content_hash,
+                    version_content_hash=version.content_hash if version is not None else None,
+                    source_access_state=source.access_state,
+                    version_access_state=version.access_state if version is not None else None,
+                    evidence_families=tuple(
+                        sorted(item.value for item in source.evidence_families)
+                    ),
+                    routing_priority=routing_priority,
+                    decision="ASSESSED",
+                    projection_intent="GRAPH_BACKED",
+                    commit_id=receipt.commit_id,
+                    verified_edge_id=verified_edge.edge_id,
+                    classification_id=outcome.classification.classification_id,
+                )
+            )
+        for target_id, source, version, priority, decision, reason in excluded_candidate_facts:
+            candidate_records.append(
+                Phase6CandidateLedgerRecord(
+                    snapshot_id="pending",
+                    assessment_id=assessment_id,
+                    target_id=target_id,
+                    source_id=source.source_id,
+                    source_version_id=version.version_id if version is not None else None,
+                    source_content_hash=source.content_hash,
+                    version_content_hash=version.content_hash if version is not None else None,
+                    source_access_state=source.access_state,
+                    version_access_state=version.access_state if version is not None else None,
+                    evidence_families=tuple(
+                        sorted(item.value for item in source.evidence_families)
+                    ),
+                    routing_priority=priority,
+                    decision=decision,
+                    reason=reason,
+                )
+            )
+        coverage = Phase6CoverageLedger(
+            selected_source_ids=tuple(dict.fromkeys(selected_source_ids)),
+            excluded_sources=tuple(source_exclusions),
+            selected_version_ids=tuple(dict.fromkeys(selected_version_ids)),
+            excluded_versions=tuple(version_exclusions),
+            limitations=tuple(coverage_limitations),
+        )
+        # Ledger rows carry source/version foreign keys. Ensure those descriptive
+        # nodes exist even for bounded-out candidates; node storage alone does not
+        # create a semantic commit or graph relation. Existing nodes are left intact
+        # so repository content-authority checks remain in force for later commits.
+        ledger_sources: dict[SourceId, SourceRecord] = {}
+        ledger_versions: dict[str, SourceVersionRecord] = {}
+        for _, (source, version, _) in candidate_descriptors.items():
+            ledger_sources[source.source_id] = source
+            if version is not None:
+                ledger_versions[version.version_id] = version
+        for _, source, version, _, _, _ in excluded_candidate_facts:
+            ledger_sources[source.source_id] = source
+            if version is not None:
+                ledger_versions[version.version_id] = version
+        descriptive_nodes = [
+            source_graph_node(source, observed_at=clock(), provenance=_PIPELINE_PROVENANCE)
+            for source in ledger_sources.values()
+            if repository.get_node(source.source_id) is None
+        ]
+        descriptive_nodes.extend(
+            version_graph_node(version, observed_at=clock(), provenance=_PIPELINE_PROVENANCE)
+            for version in ledger_versions.values()
+            if repository.get_node(version.version_id) is None
+        )
+        if descriptive_nodes:
+            repository.upsert(nodes=tuple(descriptive_nodes))
+        persisted_lineage_ids = {cluster.cluster_id for cluster in repository.lineage_clusters()}
+        lineage_cluster_ids = tuple(
+            cluster.cluster_id
+            for cluster in evidence.lineage_clusters
+            if cluster.cluster_id in persisted_lineage_ids
+        )
+        missing_lineage_count = len(evidence.lineage_clusters) - len(lineage_cluster_ids)
+        if missing_lineage_count:
+            coverage_limitations.append(
+                f"{missing_lineage_count} input lineage cluster(s) were not present in the "
+                "repository snapshot and are not represented as repository lineage authority"
+            )
+            coverage = coverage.model_copy(update={"limitations": tuple(coverage_limitations)})
+        commit_ids = tuple(
+            receipt.commit_id for receipt in committed_receipts if receipt.commit_id is not None
+        )
+        snapshot = Phase6AssessmentSnapshotRecord(
+            snapshot_id="pending",
+            assessment_id=assessment_id,
+            as_of=as_of,
+            method_version="phase6-v1",
+            max_sources_per_mcu=self.max_sources_per_mcu,
+            max_versions_per_source=self.max_versions_per_source,
+            max_expansions=self.max_expansions,
+            window_chars=self.window_chars,
+            target_record_ids=(),
+            candidate_record_ids=(),
+            derived_record_ids=(),
+            lineage_cluster_ids=lineage_cluster_ids,
+            commit_ids=commit_ids,
+            coverage=coverage,
+            audit_refs=(),
+            completed_at=clock(),
+        )
+        candidate_record_tuple = tuple(candidate_records)
+        snapshot_id = phase6_assessment_snapshot_id(
+            snapshot,
+            targets=target_records,
+            candidates=candidate_record_tuple,
+            derived=(),
+        )
+        target_records = tuple(
+            item.model_copy(update={"snapshot_id": snapshot_id}) for item in target_records
+        )
+        candidate_record_tuple = tuple(
+            item.model_copy(update={"snapshot_id": snapshot_id}) for item in candidate_record_tuple
+        )
+        snapshot = snapshot.model_copy(
+            update={
+                "snapshot_id": snapshot_id,
+                "target_record_ids": tuple(
+                    phase6_target_record_id(item) for item in target_records
+                ),
+                "candidate_record_ids": tuple(
+                    phase6_candidate_record_id(item) for item in candidate_record_tuple
+                ),
+            }
+        )
+        stored_snapshot_id = repository.record_phase6_assessment(
+            snapshot,
+            targets=target_records,
+            candidates=candidate_record_tuple,
+            derived=(),
+        )
         result = Phase6EvidenceResult(
             profiles=tuple(profiles),
             propositions=tuple(propositions),
@@ -1051,6 +1435,7 @@ class EvidenceVerificationPipeline:
             failures=tuple(failures),
             limitations=tuple(limitations),
             graph_ref=graph_ref,
+            snapshot_id=stored_snapshot_id,
         )
         write_phase6_artifacts(writer, assessment_id, result)
         return result
@@ -1093,6 +1478,7 @@ def write_phase6_artifacts(
         "phase6/phase6_result.json",
         {
             "graph_ref": result.graph_ref,
+            "snapshot_id": result.snapshot_id,
             "mapping_count": len(result.mappings),
             "verification_count": len(result.verifications),
             "verified_edge_count": len(result.edges),

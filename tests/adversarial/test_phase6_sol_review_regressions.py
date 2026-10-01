@@ -318,12 +318,12 @@ def test_f07_schema_v1_migrates_to_v3(tmp_path) -> None:
     repository = SqlAlchemyEvidenceGraphRepository(database)
     # Simulate a v1 database with no Phase 6 edges.
     with repository.engine.begin() as connection:
-        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 6"))
+        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 7"))
     repository.close()
     migrated = SqlAlchemyEvidenceGraphRepository(database)
     from novelty_harness.evidence.graph.migrations import SCHEMA_VERSION, schema_version
 
-    assert schema_version(migrated.engine) == SCHEMA_VERSION == 6
+    assert schema_version(migrated.engine) == SCHEMA_VERSION == 7
     migrated.close()
 
 
@@ -351,7 +351,7 @@ def test_f07_legacy_direct_edge_cannot_be_reinterpreted_as_verified(tmp_path) ->
         ),
     )
     with repository.engine.begin() as connection:
-        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 6"))
+        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 7"))
     repository.close()
     with pytest.raises(ValueError, match="Legacy Phase 6 graph edges"):
         SqlAlchemyEvidenceGraphRepository(database)
@@ -563,6 +563,17 @@ async def _run_f04_pipeline(tmp_path, evidence, *, max_sources=3, max_versions=3
         max_versions_per_source=max_versions,
         clock=lambda: NOW,
     )
+    for source_id in result.unassessed_sources:
+        assert repository.get_node(source_id) is not None
+    for excluded in result.unassessed_versions:
+        source_id, version_id = excluded.split(":", maxsplit=1)
+        version_node = repository.get_node(version_id)
+        assert version_node is not None
+        assert version_node.attributes["source_id"] == source_id
+        assert not any(
+            edge.source_id == source_id and edge.source_version_id == version_id
+            for edge in result.edges
+        )
     repository.close()
     return result
 

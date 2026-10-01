@@ -77,7 +77,7 @@ def test_r14_migrated_v4_direct_graph_row_is_not_authoritative(tmp_path) -> None
             connection.execute(text("DROP TABLE phase6_graph_edge_memberships"))
             connection.execute(text("DROP TABLE phase6_graph_node_memberships"))
             connection.execute(text("DELETE FROM phase6_commits"))
-            connection.execute(text("UPDATE schema_version SET version = 4 WHERE version = 6"))
+            connection.execute(text("UPDATE schema_version SET version = 4 WHERE version = 7"))
     finally:
         repository.close()
 
@@ -112,7 +112,7 @@ def test_r14_graph_only_write_cannot_project_uncommitted_legacy_semantics(tmp_pa
         )
         with repository.engine.begin() as connection:
             connection.execute(text("DELETE FROM phase6_commits"))
-            connection.execute(text("UPDATE schema_version SET version = 4 WHERE version = 6"))
+            connection.execute(text("UPDATE schema_version SET version = 4 WHERE version = 7"))
     finally:
         repository.close()
 
@@ -300,7 +300,7 @@ def test_r14_exact_semantic_replay_restores_legacy_graph_authority(tmp_path) -> 
             connection.execute(text("DROP TABLE phase6_graph_edge_memberships"))
             connection.execute(text("DROP TABLE phase6_graph_node_memberships"))
             connection.execute(text("DELETE FROM phase6_commits"))
-            connection.execute(text("UPDATE schema_version SET version = 5 WHERE version = 6"))
+            connection.execute(text("UPDATE schema_version SET version = 5 WHERE version = 7"))
     finally:
         repository.close()
     migrated = SqlAlchemyEvidenceGraphRepository(database)

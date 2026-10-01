@@ -490,6 +490,28 @@ def test_candidate_projection_intent_is_explicit_and_frozen() -> None:
         candidate.decision = "FAILED_MAPPING"  # type: ignore[misc]
 
 
+def test_candidate_retains_source_and_version_routing_descriptors() -> None:
+    candidate = Phase6CandidateLedgerRecord(
+        snapshot_id="p6snap_1",
+        assessment_id="asm_1",
+        target_id="mcu_1",
+        source_id="src_1",
+        source_version_id="srcv_1",
+        source_content_hash="sha256:source",
+        version_content_hash="sha256:version",
+        source_access_state="FULL_TEXT",
+        version_access_state="ABSTRACT_ONLY",
+        routing_priority=0,
+        evidence_families=("PAPER",),
+        decision="EXCLUDED_VERSION_BOUND",
+        reason="VERSION_BOUND",
+    )
+
+    assert candidate.source_access_state.value == "FULL_TEXT"
+    assert candidate.version_access_state.value == "ABSTRACT_ONLY"
+    assert candidate.routing_priority == 0
+
+
 def test_snapshot_retains_lineage_cluster_ids() -> None:
     coverage = Phase6CoverageLedger(
         selected_source_ids=(),

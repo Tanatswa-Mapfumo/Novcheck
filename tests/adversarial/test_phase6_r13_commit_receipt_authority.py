@@ -70,6 +70,7 @@ def _result(
         failures=(),
         limitations=(),
         graph_ref="nonexistent.sqlite",
+        snapshot_id="p6snap_fixture",
     )
 
 

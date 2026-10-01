@@ -15,6 +15,7 @@ from novelty_harness.domain.ids import (
     SourceVersionId,
 )
 from novelty_harness.evidence.mapping.dimensions import MCUComparisonProfile
+from novelty_harness.evidence.normalization.models import SourceAccessState
 from novelty_harness.evidence.precedent.gates import MultiSourceAssessment
 from novelty_harness.evidence.precedent.models import PatentScreeningResult
 from novelty_harness.evidence.verification.models import ContextExpansion
@@ -28,8 +29,15 @@ class Phase6CoverageExclusion(ContractModel):
     contract_kind: Literal["phase6-coverage-exclusion-v1"] = "phase6-coverage-exclusion-v1"
 
     source_id: SourceId
+    target_id: MCUId | None = None
     source_version_id: SourceVersionId | None = None
     reason: Literal["SOURCE_BOUND", "VERSION_BOUND", "UNVERSIONED", "MISSING_VERSION_RECORD"]
+    source_content_hash: str | None = None
+    source_access_state: SourceAccessState | None = None
+    version_content_hash: str | None = None
+    version_access_state: SourceAccessState | None = None
+    evidence_families: tuple[str, ...] = ()
+    routing_priority: int | None = Field(default=None, ge=0)
 
 
 class Phase6CoverageLedger(ContractModel):
@@ -115,7 +123,10 @@ class Phase6CandidateLedgerRecord(ContractModel):
     source_version_id: SourceVersionId | None = None
     source_content_hash: str | None = None
     version_content_hash: str | None = None
+    source_access_state: SourceAccessState | None = None
+    version_access_state: SourceAccessState | None = None
     evidence_families: tuple[str, ...] = ()
+    routing_priority: int | None = Field(default=None, ge=0)
     decision: Literal[
         "ASSESSED",
         "EXCLUDED_SOURCE_BOUND",

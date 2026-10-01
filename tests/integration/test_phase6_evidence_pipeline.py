@@ -1,12 +1,22 @@
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from novelty_harness.evidence.graph.models import GraphNodeKind
+from novelty_harness.evidence.graph.sqlalchemy_models import (
+    Phase6AssessmentCandidateRow,
+    Phase6AssessmentSnapshotRow,
+    Phase6AssessmentTargetRow,
+)
 from novelty_harness.evidence.graph.sqlalchemy_repository import (
     SqlAlchemyEvidenceGraphRepository,
 )
+from novelty_harness.evidence.passages.extraction import passage_id_for
+from novelty_harness.evidence.passages.models import PassageRecord
 from novelty_harness.evidence.phase6_pipeline import verify_evidence_against_mcus
 from novelty_harness.evidence.pipeline import run_evidence_normalization
 from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
@@ -42,6 +52,216 @@ async def run_phase5(writer, client, database):
         )
     finally:
         repository.close()
+
+
+async def run_phase6_for_ledger(tmp_path, *, max_sources=3, evidence_update=None):
+    writer = RunArtifactWriter(tmp_path)
+    database = graph_database(tmp_path)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
+        evidence = await run_phase5(writer, client, database)
+    if evidence_update is not None:
+        evidence = evidence_update(evidence)
+    repository = SqlAlchemyEvidenceGraphRepository(database)
+    result = await verify_evidence_against_mcus(
+        assessment_id="asm_research",
+        evidence=evidence,
+        mcus=make_fixture().graph.mcus,
+        combinations=make_fixture().graph.combinations,
+        as_of=assessment().request.as_of,
+        runner=SemanticRunner(scripted_phase6_llm()),
+        repository=repository,
+        writer=writer,
+        trace_sink=InMemoryTraceSink(),
+        graph_ref="phase5/evidence_graph.sqlite3",
+        max_sources_per_mcu=max_sources,
+        clock=lambda: NOW,
+    )
+    assert result.snapshot_id
+    with Session(repository._engine) as session:
+        snapshot_row = session.get(Phase6AssessmentSnapshotRow, result.snapshot_id)
+        target_rows = tuple(
+            session.scalars(
+                select(Phase6AssessmentTargetRow).where(
+                    Phase6AssessmentTargetRow.snapshot_id == result.snapshot_id
+                )
+            )
+        )
+        candidate_rows = tuple(
+            session.scalars(
+                select(Phase6AssessmentCandidateRow).where(
+                    Phase6AssessmentCandidateRow.snapshot_id == result.snapshot_id
+                )
+            )
+        )
+    assert snapshot_row is not None
+    repository.close()
+    return result, evidence, snapshot_row, target_rows, candidate_rows
+
+
+def _with_unversioned_and_missing_version_passages(evidence):
+    additions = []
+    for passage in evidence.passages:
+        source_id = passage.source_id
+        unversioned_data = passage.model_dump(mode="python")
+        unversioned_data.update(
+            source_version_id=None,
+            passage_id=passage_id_for(source_id, None, passage.locator, passage.content_hash),
+            attestation=None,
+        )
+        additions.append(PassageRecord.model_validate(unversioned_data))
+        missing_data = passage.model_dump(mode="python")
+        missing_data.update(
+            source_version_id="srcv_missing_ledger_record",
+            passage_id=passage_id_for(
+                source_id,
+                "srcv_missing_ledger_record",
+                passage.locator,
+                passage.content_hash,
+            ),
+            attestation=None,
+        )
+        additions.append(PassageRecord.model_validate(missing_data))
+    return replace(evidence, passages=(*evidence.passages, *additions))
+
+
+async def test_ledger_records_combination_profile_and_topology(tmp_path) -> None:
+    result, _, _, target_rows, _ = await run_phase6_for_ledger(tmp_path)
+
+    profiles = [json.loads(row.document_json)["profile"] for row in target_rows]
+    expected_fixture = make_fixture()
+    assert {profile["target_id"] for profile in profiles} == {
+        *(mcu.mcu_id for mcu in expected_fixture.graph.mcus),
+        *(profile["target_id"] for profile in profiles if profile["target_kind"] == "COMBINATION"),
+    }
+    combinations = [profile for profile in profiles if profile["target_kind"] == "COMBINATION"]
+    assert len(combinations) == 1
+    profile = combinations[0]
+    expected = expected_fixture.graph.combinations[0]
+    assert profile["combination_id"] == expected.combination_id
+    assert profile["combination_members"] == list(expected.member_ids)
+    assert profile["combination_relationships"] == [
+        item.model_dump(mode="json") for item in expected.relationships
+    ]
+    assert {item["mcu_id"] for item in profile["member_contributions"]} == set(expected.member_ids)
+    assert result.snapshot_id
+
+
+async def test_ledger_keeps_fourth_source_and_mixed_unversioned_passages(tmp_path) -> None:
+    result, evidence, snapshot_row, _, candidate_rows = await run_phase6_for_ledger(
+        tmp_path, evidence_update=_with_unversioned_and_missing_version_passages
+    )
+
+    snapshot = json.loads(snapshot_row.document_json)
+    candidate_docs = [json.loads(row.document_json) for row in candidate_rows]
+    expected_fourth_source = evidence.sources[3]
+    exclusions = snapshot["coverage"]["excluded_sources"]
+    fourth_source_exclusion = next(
+        item for item in exclusions if item["source_id"] == expected_fourth_source.source_id
+    )
+    target_profile = next(
+        item for item in result.profiles if item.target_id == fourth_source_exclusion["target_id"]
+    )
+    target_members = (
+        set(target_profile.combination_members)
+        if target_profile.target_kind == "COMBINATION"
+        else {target_profile.target_id}
+    )
+    expected_routing_priority = int(
+        not any(
+            path.mcu_id in {target_profile.target_id, *target_members}
+            for path in expected_fourth_source.discovery_paths
+        )
+    )
+    assert any(
+        item["source_id"] == expected_fourth_source.source_id
+        and item["reason"] == "SOURCE_BOUND"
+        and item["source_access_state"] == expected_fourth_source.access_state.value
+        and item["source_content_hash"] == expected_fourth_source.content_hash
+        and item["routing_priority"] == expected_routing_priority
+        for item in exclusions
+    )
+    fourth_version = next(
+        version
+        for version in evidence.versions
+        if version.source_id == expected_fourth_source.source_id
+    )
+    fourth_version_exclusions = [
+        item
+        for item in snapshot["coverage"]["excluded_versions"]
+        if item["source_id"] == expected_fourth_source.source_id
+        and item["source_version_id"] == fourth_version.version_id
+    ]
+    assert fourth_version_exclusions
+    assert all(item["reason"] == "SOURCE_BOUND" for item in fourth_version_exclusions)
+    assert all(
+        item["version_content_hash"] == fourth_version.content_hash
+        for item in fourth_version_exclusions
+    )
+    assert all(
+        item["version_access_state"] == fourth_version.access_state.value
+        for item in fourth_version_exclusions
+    )
+    fourth_candidate_rows = [
+        item
+        for item in candidate_docs
+        if item["source_id"] == expected_fourth_source.source_id
+        and item["source_version_id"] == fourth_version.version_id
+        and item["decision"] == "EXCLUDED_SOURCE_BOUND"
+    ]
+    assert fourth_candidate_rows
+    assert all(
+        item["version_content_hash"] == fourth_version.content_hash
+        for item in fourth_candidate_rows
+    )
+    assert any(
+        item["reason"] == "UNVERSIONED" and item["source_version_id"] is None
+        for item in snapshot["coverage"]["excluded_versions"]
+    )
+    assert any(
+        item["reason"] == "UNVERSIONED"
+        and item["source_version_id"] is None
+        and item["decision"] == "EXCLUDED_VERSION_BOUND"
+        for item in candidate_docs
+    )
+    assert any(
+        item["reason"] == "MISSING_VERSION_RECORD"
+        and item["source_version_id"] == "srcv_missing_ledger_record"
+        for item in snapshot["coverage"]["excluded_versions"]
+    )
+    mixed_source = evidence.sources[0]
+    records_for_source = [
+        item for item in candidate_docs if item["source_id"] == mixed_source.source_id
+    ]
+    assert records_for_source
+    assert all(
+        item["source_content_hash"] == mixed_source.content_hash for item in records_for_source
+    )
+    assert all(
+        item["source_access_state"] == mixed_source.access_state.value
+        for item in records_for_source
+    )
+    assert all(
+        item["evidence_families"] == [family.value for family in mixed_source.evidence_families]
+        for item in records_for_source
+    )
+    assert result.snapshot_id
+
+
+async def test_ledger_records_no_selected_source_as_bounded_local_coverage(tmp_path) -> None:
+    def remove_passages(evidence):
+        return replace(evidence, passages=())
+
+    result, _, snapshot_row, _, candidate_rows = await run_phase6_for_ledger(
+        tmp_path, evidence_update=remove_passages
+    )
+
+    snapshot = json.loads(snapshot_row.document_json)
+    assert not candidate_rows
+    assert snapshot["coverage"]["selected_source_ids"] == []
+    assert any(
+        "no eligible source" in item.casefold() for item in snapshot["coverage"]["limitations"]
+    )
+    assert result.snapshot_id
 
 
 async def test_phase6_pipeline_maps_verifies_classifies_and_persists(tmp_path) -> None:
