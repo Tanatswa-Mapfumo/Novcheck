@@ -3,7 +3,7 @@ import json
 from collections.abc import Sequence
 
 from novelty_harness.domain.adjudication import FrozenAdjudication
-from novelty_harness.domain.enums import SupportVerificationState
+from novelty_harness.domain.enums import PrecedentState, SupportVerificationState, VerdictState
 from novelty_harness.domain.evidence import EvidenceEdge
 from novelty_harness.domain.idea import (
     ArtifactProvenance,
@@ -151,6 +151,12 @@ def compile_minimal_phase6_report(
         raise ValueError("frozen findings belong to a different assessment")
     if adjudication.as_of != authoritative.as_of:
         raise ValueError("frozen findings cutoff does not match the repository snapshot")
+    if adjudication.provenance.kind != "fixture":
+        raise ValueError("Phase 6 fixture reports require fixture-origin frozen findings")
+    if adjudication.overall_state != VerdictState.UNASSESSABLE:
+        raise ValueError("Phase 6 fixture reports require an UNASSESSABLE overall verdict")
+    if any(finding.verdict != VerdictState.UNASSESSABLE for finding in adjudication.mcus):
+        raise ValueError("Phase 6 fixture MCU findings must remain UNASSESSABLE")
 
     relations_by_edge: dict[str, list[AuthorizedGraphRelation]] = {}
     for relation in authoritative.authorized_graph_relations:
@@ -183,6 +189,10 @@ def compile_minimal_phase6_report(
                 or relation.edge.verification.support_state != SupportVerificationState.SUPPORTED
             ):
                 raise ValueError("decisive evidence is not eligible supported direct evidence")
+            if finding.precedent_state != PrecedentState.DIRECT_PRECEDENT:
+                raise ValueError(
+                    "decisive DIRECT_PRECEDENT evidence requires a DIRECT_PRECEDENT finding state"
+                )
             cited_relations[edge_id] = relation
 
     comparisons = {

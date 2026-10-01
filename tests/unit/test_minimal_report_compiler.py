@@ -206,6 +206,108 @@ async def test_phase6_report_uses_repository_authorized_relation_and_exact_passa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overall_state", "provenance_kind", "mcu_verdict"),
+    [
+        (VerdictState.STRONG_EVIDENCE_OF_NOVELTY, "fixture", VerdictState.UNASSESSABLE),
+        (VerdictState.UNASSESSABLE, "implemented", VerdictState.UNASSESSABLE),
+        (VerdictState.UNASSESSABLE, "fixture", VerdictState.POTENTIALLY_NOVEL),
+    ],
+)
+async def test_phase6_fixture_report_rejects_nonfixture_or_positive_verdicts(
+    tmp_path, overall_state, provenance_kind, mcu_verdict
+):
+    from novelty_harness.evidence.graph.sqlalchemy_repository import (
+        SqlAlchemyEvidenceGraphRepository,
+    )
+    from tests.integration.test_phase6_evidence_pipeline import (
+        graph_database,
+        run_phase6_for_ledger,
+    )
+
+    result, _, _, _, _ = await run_phase6_for_ledger(tmp_path)
+    assert result.snapshot_id
+    repository = SqlAlchemyEvidenceGraphRepository(graph_database(tmp_path))
+    try:
+        view = repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
+        fixture = make_fixture()
+        finding = fixture.adjudication.mcus[0].model_copy(
+            update={"decisive_edges": (), "verdict": mcu_verdict}
+        )
+        adjudication = fixture.adjudication.model_copy(
+            update={
+                "assessment_id": view.assessment_id,
+                "as_of": view.as_of,
+                "mcus": (finding,),
+                "overall_state": overall_state,
+                "provenance": fixture.adjudication.provenance.model_copy(
+                    update={"kind": provenance_kind}
+                ),
+            }
+        )
+        with pytest.raises(ValueError, match="fixture|UNASSESSABLE"):
+            compile_minimal_phase6_report(
+                idea=fixture.idea,
+                sufficiency=fixture.sufficiency,
+                mcus=(),
+                view=view,
+                repository=repository,
+                adjudication=adjudication,
+            )
+    finally:
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_phase6_fixture_report_rejects_direct_citation_with_unresolved_finding(tmp_path):
+    from novelty_harness.domain.enums import PrecedentState
+    from novelty_harness.evidence.graph.sqlalchemy_repository import (
+        SqlAlchemyEvidenceGraphRepository,
+    )
+    from tests.integration.test_phase6_evidence_pipeline import (
+        graph_database,
+        run_phase6_for_ledger,
+    )
+
+    result, _, _, _, _ = await run_phase6_for_ledger(tmp_path)
+    assert result.snapshot_id
+    repository = SqlAlchemyEvidenceGraphRepository(graph_database(tmp_path))
+    try:
+        view = repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
+        relation = next(
+            item
+            for item in view.authorized_graph_relations
+            if item.edge.kind.value == "DIRECT_PRECEDENT"
+        )
+        fixture = make_fixture()
+        adjudication = fixture.adjudication.model_copy(
+            update={
+                "assessment_id": view.assessment_id,
+                "as_of": view.as_of,
+                "mcus": (
+                    MCUFinding(
+                        mcu_id=relation.edge.target_node_id,
+                        precedent_state=PrecedentState.UNRESOLVED,
+                        verdict=VerdictState.UNASSESSABLE,
+                        decisive_edges=(relation.verified_edge_id,),
+                    ),
+                ),
+            }
+        )
+        with pytest.raises(ValueError, match="precedent state|DIRECT_PRECEDENT"):
+            compile_minimal_phase6_report(
+                idea=fixture.idea,
+                sufficiency=fixture.sufficiency,
+                mcus=(),
+                view=view,
+                repository=repository,
+                adjudication=adjudication,
+            )
+    finally:
+        repository.close()
+
+
+@pytest.mark.asyncio
 async def test_phase6_report_displays_scoped_partial_support_and_limitations(tmp_path):
     from novelty_harness.evidence.graph.sqlalchemy_repository import (
         SqlAlchemyEvidenceGraphRepository,
