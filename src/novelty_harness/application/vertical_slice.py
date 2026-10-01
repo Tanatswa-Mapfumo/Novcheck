@@ -18,9 +18,9 @@ from novelty_harness.application.evidence_phase5 import (
 from novelty_harness.application.evidence_phase6 import (
     GRAPH_REF,
     Phase6EvidenceComponents,
-    project_verified_edges,
 )
 from novelty_harness.application.models import AssessmentSummary, VerticalSliceComponents
+from novelty_harness.application.phase6_fixture import Phase6FixtureAdjudicator
 from novelty_harness.application.research import (
     DeferredFixtureContinuation,
     Phase3ResearchComponents,
@@ -42,6 +42,7 @@ from novelty_harness.domain.enums import (
     SufficiencyState,
     SupportVerificationState,
     TraceStatus,
+    VerdictState,
 )
 from novelty_harness.domain.evidence import EvidenceEdge, SourcePassage, SourceRecord
 from novelty_harness.domain.idea import (
@@ -54,6 +55,7 @@ from novelty_harness.domain.mcu import MCU, MCUGraph
 from novelty_harness.domain.reporting import CompiledReport
 from novelty_harness.domain.research import SearchPlan, SearchPlanReview
 from novelty_harness.domain.state_machine import advance_stage, change_status, complete_assessment
+from novelty_harness.evidence.graph.assessment_view import Phase6AssessmentView
 from novelty_harness.evidence.graph.sqlalchemy_repository import SqlAlchemyEvidenceGraphRepository
 from novelty_harness.evidence.phase6_pipeline import Phase6EvidenceResult
 from novelty_harness.ports.content import ContentResolver
@@ -64,7 +66,7 @@ from novelty_harness.ports.models import (
     SourceContent,
 )
 from novelty_harness.ports.search import SearchProvider
-from novelty_harness.reporting.minimal import compile_minimal_report
+from novelty_harness.reporting.minimal import compile_minimal_phase6_report, compile_minimal_report
 from novelty_harness.research.screening import write_screening_artifacts
 from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
 from novelty_harness.runtime.tracing.hashing import canonical_hash
@@ -375,7 +377,12 @@ async def run_vertical_slice(
     evidence: Phase5EvidenceComponents | None = None,
     evidence_fixture_continuation: Phase6FixtureContinuation | None = None,
     phase6: Phase6EvidenceComponents | None = None,
+    phase6_fixture_adjudicator: Phase6FixtureAdjudicator | None = None,
 ) -> VerticalSliceResult:
+    if phase6 is not None and phase6_fixture_adjudicator is None:
+        raise ValueError("Real Phase 6 requires an explicit Phase 7 fixture adjudicator")
+    if phase6 is None and phase6_fixture_adjudicator is not None:
+        raise ValueError("Phase 7 fixture adjudicator requires real Phase 6")
     if evidence is not None and (evidence_fixture_continuation is None) == (phase6 is None):
         raise ValueError(
             "Phase 5 evidence normalization requires exactly one Phase 6 continuation: "
@@ -550,6 +557,7 @@ async def run_vertical_slice(
         )
         evidence_origin: ArtifactProvenance | None = None
         phase6_result: Phase6EvidenceResult | None = None
+        phase6_view: Phase6AssessmentView | None = None
         if research and preparation and adaptive_research and adaptive_fixture_continuation:
             adaptive_result = await adaptive_research.execute(
                 assessment=run.record,
@@ -738,29 +746,28 @@ async def run_vertical_slice(
                     "semantic normalization and provenance reasoning deferred.",
                 ),
             )
+        verified: list[EvidenceEdge] = []
         if phase6_result is not None:
             phase6_repository = SqlAlchemyEvidenceGraphRepository(
                 artifact_writer.assessment_dir(record.assessment_id) / GRAPH_REF
             )
             try:
-                verified: list[EvidenceEdge] = list(
-                    project_verified_edges(phase6_result, phase6_repository)
+                phase6_view = phase6_repository.load_phase6_assessment(
+                    record.assessment_id, snapshot_id=phase6_result.snapshot_id
                 )
             finally:
                 phase6_repository.close()
-            _check_edges(
-                verified,
-                graph.mcus,
-                sources,
-                passages,
-                extra_mcu_ids=tuple(
-                    proposition.mcu_id for proposition in phase6_result.propositions
-                ),
-                extra_passage_sources={
-                    expansion.window_passage.passage_id: expansion.window_passage.source_id
-                    for expansion in phase6_result.expansions
-                    if expansion.available and expansion.window_passage is not None
-                },
+            assessment_export: dict[str, JsonValue] = {
+                "export_kind": "derived_repository_assessment_view",
+                "authority": "repository_revalidation_required",
+                "snapshot_id": phase6_view.snapshot_id,
+                "commit_ids": list(phase6_view.commit_ids),
+                "view": phase6_view.model_dump(mode="json"),
+            }
+            artifact_writer.write_json(
+                record.assessment_id,
+                "phase6/assessment_view.json",
+                assessment_export,
             )
             run.stage(
                 AssessmentStage.EVIDENCE_MAPPED,
@@ -787,7 +794,6 @@ async def run_vertical_slice(
                 if mapped
                 else _origin("deferred", "No mapped evidence supplied."),
             )
-            verified = []
             for edge in mapped:
                 checked = _checked(
                     await components.verifier.verify(edge, graph.mcus, sources, passages),
@@ -797,10 +803,12 @@ async def run_vertical_slice(
                     raise ValueError("verification replaced the evidence edge identity")
                 verified.append(checked)
             _check_edges(verified, graph.mcus, sources, passages)
-        artifact_writer.write_jsonl(record.assessment_id, "evidence_edges.jsonl", verified)
+            artifact_writer.write_jsonl(record.assessment_id, "evidence_edges.jsonl", verified)
         run.stage(
             AssessmentStage.EVIDENCE_VERIFIED,
-            verified[0].provenance
+            _origin("implemented", "Repository Phase 6 assessment snapshot loaded and validated.")
+            if phase6_view is not None
+            else verified[0].provenance
             if verified
             else _origin("deferred", "No verified evidence supplied."),
         )
@@ -812,27 +820,51 @@ async def run_vertical_slice(
             AssessmentStage.DEFENCE_REVIEW,
             _origin("deferred", "Defender reasoning is not implemented."),
         )
-        adjudication = _checked(
-            await components.adjudicator.adjudicate(
-                assessment_id=record.assessment_id,
-                as_of=request.as_of,
-                idea=idea,
-                sufficiency=sufficiency,
-                mcus=graph.mcus,
-                edges=verified,
-            ),
-            FrozenAdjudication,
-        )
+        if phase6_view is not None:
+            assert phase6_fixture_adjudicator is not None
+            adjudication = _checked(
+                await phase6_fixture_adjudicator.adjudicate_phase6(
+                    assessment_id=record.assessment_id,
+                    as_of=request.as_of,
+                    idea=idea,
+                    sufficiency=sufficiency,
+                    mcus=graph.mcus,
+                    view=phase6_view,
+                ),
+                FrozenAdjudication,
+            )
+        else:
+            adjudication = _checked(
+                await components.adjudicator.adjudicate(
+                    assessment_id=record.assessment_id,
+                    as_of=request.as_of,
+                    idea=idea,
+                    sufficiency=sufficiency,
+                    mcus=graph.mcus,
+                    edges=verified,
+                ),
+                FrozenAdjudication,
+            )
         if (
             adjudication.assessment_id != record.assessment_id
             or adjudication.as_of != request.as_of
         ):
             raise ValueError("adjudication is not bound to the current assessment/cutoff")
-        supported_ids = {
-            edge.edge_id
-            for edge in verified
-            if edge.support_verification == SupportVerificationState.SUPPORTED
-        }
+        supported_ids = (
+            {relation.verified_edge_id for relation in phase6_view.authorized_graph_relations}
+            if phase6_view is not None
+            else {
+                edge.edge_id
+                for edge in verified
+                if edge.support_verification == SupportVerificationState.SUPPORTED
+            }
+        )
+        if phase6_view is not None and (
+            adjudication.provenance.kind != "fixture"
+            or adjudication.overall_state != VerdictState.UNASSESSABLE
+            or any(finding.verdict != VerdictState.UNASSESSABLE for finding in adjudication.mcus)
+        ):
+            raise ValueError("Real Phase 6 requires UNASSESSABLE fixture findings")
         if any(finding.mcu_id not in mcu_ids for finding in adjudication.mcus):
             raise ValueError("adjudication references unknown MCU")
         if len({finding.mcu_id for finding in adjudication.mcus}) != len(adjudication.mcus):
@@ -849,7 +881,14 @@ async def run_vertical_slice(
             for identity in finding.decisive_edges
         ):
             raise ValueError("adjudication references missing or unsupported decisive evidence")
-        edge_mcus = {edge.edge_id: edge.mcu_id for edge in verified}
+        edge_mcus = (
+            {
+                relation.verified_edge_id: relation.edge.target_node_id
+                for relation in phase6_view.authorized_graph_relations
+            }
+            if phase6_view is not None
+            else {edge.edge_id: edge.mcu_id for edge in verified}
+        )
         if any(
             edge_mcus[identity] != finding.mcu_id
             for finding in adjudication.mcus
@@ -867,13 +906,27 @@ async def run_vertical_slice(
             _origin("implemented", "Persist immutable injected findings; no new verdict."),
             adjudication,
         )
-        report = compile_minimal_report(
-            idea=idea,
-            sufficiency=sufficiency,
-            mcus=graph.mcus,
-            edges=verified,
-            adjudication=adjudication,
-        )
+        if phase6_view is not None:
+            phase6_repository = SqlAlchemyEvidenceGraphRepository(directory / GRAPH_REF)
+            try:
+                report = compile_minimal_phase6_report(
+                    idea=idea,
+                    sufficiency=sufficiency,
+                    mcus=graph.mcus,
+                    view=phase6_view,
+                    repository=phase6_repository,
+                    adjudication=adjudication,
+                )
+            finally:
+                phase6_repository.close()
+        else:
+            report = compile_minimal_report(
+                idea=idea,
+                sufficiency=sufficiency,
+                mcus=graph.mcus,
+                edges=verified,
+                adjudication=adjudication,
+            )
         artifact_writer.write_json(record.assessment_id, "report.json", report)
         artifact_writer.write_text(record.assessment_id, "report.md", report.markdown)
         run.stage(AssessmentStage.REPORTED, report.provenance, report)
@@ -892,6 +945,18 @@ async def run_vertical_slice(
             overall_verdict=adjudication.overall_state,
             mcu_findings=adjudication.mcus,
             closest_precedents=tuple(
+                dict.fromkeys(
+                    relation.edge.source_node_id
+                    for relation in phase6_view.authorized_graph_relations
+                    if relation.verified_edge_id in supported_ids
+                    and any(
+                        relation.verified_edge_id in finding.decisive_edges
+                        for finding in adjudication.mcus
+                    )
+                )
+            )
+            if phase6_view is not None
+            else tuple(
                 dict.fromkeys(
                     edge.source_id
                     for edge in verified

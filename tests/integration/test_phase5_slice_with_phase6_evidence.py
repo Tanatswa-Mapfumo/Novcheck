@@ -1,7 +1,12 @@
 import json
+import sqlite3
+from contextlib import nullcontext
 from dataclasses import replace
+from pathlib import Path
+from typing import cast
 
 import httpx
+import pytest
 
 from novelty_harness.application.evidence_phase5 import Phase5EvidenceComponents
 from novelty_harness.application.evidence_phase6 import Phase6EvidenceComponents
@@ -11,7 +16,6 @@ from novelty_harness.application.vertical_slice import run_vertical_slice
 from novelty_harness.domain.adjudication import FrozenAdjudication, MCUFinding
 from novelty_harness.domain.enums import (
     PrecedentState,
-    SupportVerificationState,
     VerdictState,
 )
 from novelty_harness.domain.evidence import SourceDates
@@ -75,17 +79,31 @@ class CombinationReconciler:
 
 
 class Phase7FixtureAdjudicator:
-    """Fixture-backed Phase 7 adjudication over real Phase 6 verified edges."""
+    """Fixture-backed Phase 7 adjudication over a repository assessment view."""
 
-    async def adjudicate(
-        self, *, assessment_id, as_of, idea, sufficiency, mcus, edges
+    def __init__(self, *, tamper_root: Path | None = None) -> None:
+        self.view = None
+        self.tamper_root = tamper_root
+
+    async def adjudicate_phase6(
+        self, *, assessment_id, as_of, idea, sufficiency, mcus, view
     ) -> FrozenAdjudication:
+        self.view = view
+        if self.tamper_root is not None and view.authorized_graph_relations:
+            path = self.tamper_root / assessment_id / "phase5" / "evidence_graph.sqlite3"
+            relation = view.authorized_graph_relations[0]
+            with sqlite3.connect(path) as connection:
+                connection.execute(
+                    "DELETE FROM phase6_graph_edge_memberships WHERE edge_id = ?",
+                    (relation.edge.edge_id,),
+                )
         decisive_by_mcu: dict[str, str] = {}
         relation_by_mcu: dict[str, PrecedentState] = {}
-        for edge in edges:
-            if edge.support_verification == SupportVerificationState.SUPPORTED:
-                decisive_by_mcu.setdefault(edge.mcu_id, edge.edge_id)
-                relation_by_mcu.setdefault(edge.mcu_id, edge.relation_type)
+        for relation in view.authorized_graph_relations:
+            edge = relation.edge
+            if edge.kind.value == "DIRECT_PRECEDENT" and edge.verification is not None:
+                decisive_by_mcu.setdefault(edge.target_node_id, relation.verified_edge_id)
+                relation_by_mcu.setdefault(edge.target_node_id, PrecedentState.DIRECT_PRECEDENT)
         findings = tuple(
             MCUFinding(
                 mcu_id=mcu.mcu_id,
@@ -275,13 +293,14 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
             }
         )
     )
+    phase7 = Phase7FixtureAdjudicator()
     components = replace(
         f.components,
         normalizer=understanding,
         sufficiency_analyzer=understanding,
         decomposer=understanding,
         reconciler=CombinationReconciler(understanding),
-        adjudicator=Phase7FixtureAdjudicator(),
+        adjudicator=phase7,
     )
     sink = InMemoryTraceSink()
     async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
@@ -318,6 +337,7 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
                     )
                 )
             ),
+            phase6_fixture_adjudicator=phase7,
         )
     assert result.record.stage.value == "REPORTED" and result.record.status.value == "COMPLETED"
     assert result.adjudication.provenance.kind == "fixture"
@@ -345,12 +365,12 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
     summary = json.loads((phase6 / "phase6_result.json").read_text())
     assert summary["mapping_count"] > 0
     assert summary["verified_edge_count"] > 0
-    persisted_edges = [
-        json.loads(line)
-        for line in (run_dir / "evidence_edges.jsonl").read_text().splitlines()
-        if line.strip()
-    ]
-    assert persisted_edges
+    assert not (run_dir / "evidence_edges.jsonl").exists()
+    assert phase7.view is not None
+    exported_view = json.loads((phase6 / "assessment_view.json").read_text())
+    assert exported_view["export_kind"] == "derived_repository_assessment_view"
+    assert exported_view["snapshot_id"] == phase7.view.snapshot_id
+    assert exported_view["commit_ids"] == list(phase7.view.commit_ids)
     verified_edges = [
         json.loads(line)
         for line in (phase6 / "verified_edges.jsonl").read_text().splitlines()
@@ -360,8 +380,7 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
         edge["disclosure"]["source_version_id"] == edge["source_version_id"]
         for edge in verified_edges
     )
-    # F11: a real Phase 6 combination target must pass the bridge.
-    assert any(edge["mcu_id"].startswith("mcu_comb_") for edge in persisted_edges)
+    assert any(target.target_kind == "COMBINATION" for target in phase7.view.targets)
     expansions = [
         json.loads(line)
         for line in (phase6 / "context_expansions.jsonl").read_text().splitlines()
@@ -374,8 +393,9 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
     }
     assert expanded_ids
     assert any(
-        edge["mcu_id"].startswith("mcu_comb_") and expanded_ids.intersection(edge["passage_ids"])
-        for edge in persisted_edges
+        item.comparison.comparison.chain.edge.mcu_id.startswith("mcu_comb_")
+        and expanded_ids.intersection(cited.passage.passage_id for cited in item.cited_passages)
+        for item in phase7.view.committed_comparisons
     )
     classifications = [
         json.loads(line)
@@ -401,7 +421,26 @@ async def test_slice_runs_real_phase_6_and_keeps_phase_7_fixture_backed(tmp_path
     ].keys()
 
 
-async def test_authenticated_mixed_phase6_lifecycle_reaches_completed(tmp_path) -> None:
+async def test_real_phase6_requires_explicit_fixture_adjudicator(tmp_path) -> None:
+    fixture = make_fixture()
+    with pytest.raises(ValueError, match="explicit Phase 7 fixture adjudicator"):
+        await run_vertical_slice(
+            request=fixture.request,
+            components=fixture.components,
+            search_provider=fixture.search_provider,
+            content_resolver=SyntheticContentResolver(),
+            trace_sink=InMemoryTraceSink(),
+            artifact_writer=RunArtifactWriter(tmp_path),
+            clock=fixture.clock,
+            phase6=cast(Phase6EvidenceComponents, object()),
+        )
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("delete_membership", [False, True])
+async def test_authenticated_mixed_phase6_lifecycle_reaches_completed(
+    tmp_path, delete_membership: bool
+) -> None:
     fixture = make_fixture()
     understanding = UnderstandingComponents(
         SemanticRunner(RecordedLLM(understanding_responses())), clock=fixture.clock
@@ -415,51 +454,72 @@ async def test_authenticated_mixed_phase6_lifecycle_reaches_completed(tmp_path) 
             }
         )
     )
+    phase7 = Phase7FixtureAdjudicator(tamper_root=tmp_path if delete_membership else None)
     components = replace(
         fixture.components,
         normalizer=understanding,
         sufficiency_analyzer=understanding,
         decomposer=understanding,
         reconciler=CombinationReconciler(understanding),
-        adjudicator=Phase7FixtureAdjudicator(),
+        adjudicator=phase7,
     )
     sink = InMemoryTraceSink()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
-        providers, _ = registry(client, clock=fixture.clock)
-        policy = CoveragePolicy.standard()
-        result = await run_vertical_slice(
-            request=fixture.request,
-            components=components,
-            search_provider=fixture.search_provider,
-            content_resolver=SyntheticContentResolver(),
-            trace_sink=sink,
-            artifact_writer=RunArtifactWriter(tmp_path),
-            clock=fixture.clock,
-            research=Phase3ResearchComponents(
-                EvidenceFamilyApplicabilityAssessor(research_runner),
-                SearchStrategist(research_runner),
-                SearchPlanCritic(research_runner),
-                SearchPlanReviser(research_runner),
-                ScreeningExecutor(providers, policy),
-            ),
-            adaptive_research=Phase4ResearchComponents(
-                providers, policy, BudgetLimits(max_deep_search_rounds=80), stop_policy()
-            ),
-            evidence=MixedProvenancePhase5EvidenceComponents(),
-            phase6=Phase6EvidenceComponents(
-                SemanticRunner(
-                    StubLLMProvider(
-                        {
-                            "map_evidence": mixed_map_response,
-                            "verify_support": mixed_verify_response,
-                        }
-                    )
+    expected = (
+        pytest.raises(ValueError, match="membership|authorized|projection")
+        if delete_membership
+        else nullcontext()
+    )
+    with expected:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
+            providers, _ = registry(client, clock=fixture.clock)
+            policy = CoveragePolicy.standard()
+            result = await run_vertical_slice(
+                request=fixture.request,
+                components=components,
+                search_provider=fixture.search_provider,
+                content_resolver=SyntheticContentResolver(),
+                trace_sink=sink,
+                artifact_writer=RunArtifactWriter(tmp_path),
+                clock=fixture.clock,
+                research=Phase3ResearchComponents(
+                    EvidenceFamilyApplicabilityAssessor(research_runner),
+                    SearchStrategist(research_runner),
+                    SearchPlanCritic(research_runner),
+                    SearchPlanReviser(research_runner),
+                    ScreeningExecutor(providers, policy),
                 ),
-                max_sources_per_mcu=100,
-            ),
-        )
+                adaptive_research=Phase4ResearchComponents(
+                    providers, policy, BudgetLimits(max_deep_search_rounds=80), stop_policy()
+                ),
+                evidence=MixedProvenancePhase5EvidenceComponents(),
+                phase6=Phase6EvidenceComponents(
+                    SemanticRunner(
+                        StubLLMProvider(
+                            {
+                                "map_evidence": mixed_map_response,
+                                "verify_support": mixed_verify_response,
+                            }
+                        )
+                    ),
+                    max_sources_per_mcu=100,
+                ),
+                phase6_fixture_adjudicator=phase7,
+            )
+    if delete_membership:
+        assert phase7.view is not None
+        failed_run = tmp_path / phase7.view.assessment_id
+        assert json.loads((failed_run / "assessment_record.json").read_text())["status"] == "FAILED"
+        assert not (failed_run / "report.json").exists()
+        assert not (failed_run / "assessment.json").exists()
+        return
     assert result.record.stage.value == "REPORTED"
     assert result.record.status.value == "COMPLETED"
+    assert phase7.view is not None
+    assert any(
+        item.classification.scoped_coverage
+        for item in (committed.comparison for committed in phase7.view.committed_comparisons)
+    )
+    assert any(item.decision == "FAILED_MAPPING" for item in phase7.view.candidate_outcomes)
     phase6 = result.run_dir / "phase6"
     classifications = [
         json.loads(line)
