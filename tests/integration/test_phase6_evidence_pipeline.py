@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,7 +26,12 @@ from novelty_harness.runtime.tracing.sinks import InMemoryTraceSink
 from tests.fixtures.phase1 import make_fixture
 from tests.fixtures.phase4 import assessment, wire
 from tests.fixtures.phase5 import SyntheticContentResolver
-from tests.fixtures.phase6 import scripted_phase6_llm
+from tests.fixtures.phase6 import (
+    StubLLMProvider,
+    map_evidence_response,
+    scripted_phase6_llm,
+    verify_support_response,
+)
 from tests.integration.test_phase4_retrieval_pipeline import run as run_phase4
 
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
@@ -144,6 +150,135 @@ async def test_ledger_records_combination_profile_and_topology(tmp_path) -> None
     ]
     assert {item["mcu_id"] for item in profile["member_contributions"]} == set(expected.member_ids)
     assert result.snapshot_id
+
+
+@pytest.mark.asyncio
+async def test_ledger_retains_all_failed_mapping_candidates_without_success_trace(tmp_path) -> None:
+    writer = RunArtifactWriter(tmp_path)
+    database = graph_database(tmp_path)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
+        evidence = await run_phase5(writer, client, database)
+    repository = SqlAlchemyEvidenceGraphRepository(database)
+    trace = InMemoryTraceSink()
+    invalid_mapper = SemanticRunner(
+        StubLLMProvider(
+            {
+                "map_evidence": {
+                    "prompt_version": "evidence-mapper-v1",
+                    "dimensions": [],
+                    "unresolved": [],
+                },
+                "verify_support": lambda _: {},
+            }
+        )
+    )
+    try:
+        result = await verify_evidence_against_mcus(
+            assessment_id="asm_research",
+            evidence=evidence,
+            mcus=make_fixture().graph.mcus,
+            combinations=make_fixture().graph.combinations,
+            as_of=assessment().request.as_of,
+            runner=invalid_mapper,
+            repository=repository,
+            writer=writer,
+            trace_sink=trace,
+            graph_ref="phase5/evidence_graph.sqlite3",
+            clock=lambda: NOW,
+        )
+        with Session(repository._engine) as session:
+            rows = tuple(
+                session.scalars(
+                    select(Phase6AssessmentCandidateRow).where(
+                        Phase6AssessmentCandidateRow.snapshot_id == result.snapshot_id
+                    )
+                )
+            )
+        outcomes = [json.loads(row.document_json) for row in rows]
+        assert outcomes
+        failed_outcomes = [item for item in outcomes if item["decision"] == "FAILED_MAPPING"]
+        assert failed_outcomes
+        assert all(item["failure_stage"] == "MAPPING" for item in failed_outcomes)
+        assert all(
+            item["source_version_id"]
+            == next(
+                candidate.source_version_id
+                for candidate in result.candidate_assessments
+                if candidate.source_id == item["source_id"]
+                and candidate.target_mcu_id == item["target_id"]
+            )
+            for item in failed_outcomes
+        )
+        assert not result.commit_receipts
+        assert all(item.status == "FAILED_MAPPING" for item in result.candidate_assessments)
+        assert not any(event.reason_code == "SUPPORT_VERIFICATION" for event in trace.events)
+        assert not any(
+            event.reason_code == "PRECEDENT_CLASSIFICATION" and event.status.value == "SUCCESS"
+            for event in trace.events
+        )
+    finally:
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_ledger_keeps_failed_candidate_beside_committed_comparisons(tmp_path) -> None:
+    writer = RunArtifactWriter(tmp_path)
+    database = graph_database(tmp_path)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
+        evidence = await run_phase5(writer, client, database)
+    repository = SqlAlchemyEvidenceGraphRepository(database)
+    trace = InMemoryTraceSink()
+    calls = 0
+
+    def fail_first_mapping(context):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"prompt_version": "evidence-mapper-v1", "dimensions": [], "unresolved": []}
+        return map_evidence_response(context)
+
+    runner = SemanticRunner(
+        StubLLMProvider(
+            {"map_evidence": fail_first_mapping, "verify_support": verify_support_response}
+        )
+    )
+    try:
+        result = await verify_evidence_against_mcus(
+            assessment_id="asm_research",
+            evidence=evidence,
+            mcus=make_fixture().graph.mcus,
+            combinations=make_fixture().graph.combinations,
+            as_of=assessment().request.as_of,
+            runner=runner,
+            repository=repository,
+            writer=writer,
+            trace_sink=trace,
+            graph_ref="phase5/evidence_graph.sqlite3",
+            clock=lambda: NOW,
+        )
+        with Session(repository._engine) as session:
+            rows = tuple(
+                session.scalars(
+                    select(Phase6AssessmentCandidateRow).where(
+                        Phase6AssessmentCandidateRow.snapshot_id == result.snapshot_id
+                    )
+                )
+            )
+        outcomes = [json.loads(row.document_json) for row in rows]
+        failed = [item for item in outcomes if item["decision"] == "FAILED_MAPPING"]
+        assessed = [item for item in outcomes if item["decision"] == "ASSESSED"]
+        assert failed and assessed
+        assert all(item["commit_id"] is None for item in failed)
+        assert all(item["commit_id"] is not None for item in assessed)
+        failed_source_target = {(item["source_id"], item["target_id"]) for item in failed}
+        assert not any(
+            event.reason_code == "PRECEDENT_CLASSIFICATION"
+            and event.status.value == "SUCCESS"
+            and (event.data.get("source_id"), event.data.get("mcu_id")) in failed_source_target
+            for event in trace.events
+        )
+    finally:
+        repository.close()
 
 
 async def test_ledger_keeps_fourth_source_and_mixed_unversioned_passages(tmp_path) -> None:

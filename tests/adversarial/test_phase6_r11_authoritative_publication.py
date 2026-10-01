@@ -192,6 +192,29 @@ async def test_r12_rejected_version_has_no_durable_verifier_conclusion(tmp_path,
             )
             assert not result.commit_receipts
             assert not result.edges
+            rejected = [
+                item for item in result.candidate_assessments if item.source_id == source.source_id
+            ]
+            assert rejected
+            assert all(item.status == "AUTHORITY_REJECTED" for item in rejected)
+            assert all(item.source_version_id == version.version_id for item in rejected)
+            with repository.engine.connect() as connection:
+                candidate_documents = [
+                    json.loads(row[0])
+                    for row in connection.execute(
+                        text(
+                            "SELECT document_json FROM phase6_assessment_candidates "
+                            "WHERE snapshot_id = :snapshot_id AND source_id = :source_id"
+                        ),
+                        {"snapshot_id": result.snapshot_id, "source_id": source.source_id},
+                    )
+                ]
+            assert candidate_documents
+            assert all(item["decision"] == "AUTHORITY_REJECTED" for item in candidate_documents)
+            assert all(
+                item["source_version_id"] == version.version_id for item in candidate_documents
+            )
+            assert all(item["commit_id"] is None for item in candidate_documents)
         with repository.engine.connect() as connection:
             for table in (
                 "verified_edges",
@@ -295,6 +318,41 @@ async def test_r12_every_committed_verifier_state_publishes_once_as_success(
                 control_only=True,
             )
             assert result.commit_receipts
+            with repository.engine.connect() as connection:
+                candidate_documents = [
+                    json.loads(row[0])
+                    for row in connection.execute(
+                        text(
+                            "SELECT document_json FROM phase6_assessment_candidates "
+                            "WHERE snapshot_id = :snapshot_id"
+                        ),
+                        {"snapshot_id": result.snapshot_id},
+                    )
+                ]
+                snapshot_document = json.loads(
+                    connection.execute(
+                        text(
+                            "SELECT document_json FROM phase6_assessment_snapshots "
+                            "WHERE snapshot_id = :snapshot_id"
+                        ),
+                        {"snapshot_id": result.snapshot_id},
+                    ).scalar_one()
+                )
+            assert snapshot_document["audit_refs"]
+            assert set(snapshot_document["audit_refs"]) <= {
+                event["event_id"]
+                for event in _events(trace_path)
+                if event["data"].get("publication_kind") == "POST_COMMIT_AUTHORITY"
+            }
+            if state == "INSUFFICIENT_CONTEXT":
+                expansions = [
+                    item for record in candidate_documents for item in record["expansions"]
+                ]
+                if result.expansions:
+                    assert expansions
+                    assert {item["attempt"] for item in expansions} == {
+                        item.attempt for item in result.expansions
+                    }
             current_events = [
                 event
                 for event in _events(trace_path)

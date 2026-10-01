@@ -20,7 +20,13 @@ from pydantic import ConfigDict, JsonValue, model_validator
 from novelty_harness.domain.base import ContractModel, utc_now
 from novelty_harness.domain.enums import AssessmentStage, PrecedentState, TraceStatus
 from novelty_harness.domain.idea import ArtifactProvenance
-from novelty_harness.domain.ids import AssessmentId, MCUId, SourceId, new_trace_event_id
+from novelty_harness.domain.ids import (
+    AssessmentId,
+    MCUId,
+    SourceId,
+    SourceVersionId,
+    new_trace_event_id,
+)
 from novelty_harness.domain.mcu import MCU, MCUCombination
 from novelty_harness.evidence.context.expansion import DEFAULT_WINDOW_CHARS
 from novelty_harness.evidence.context.selection import (
@@ -124,13 +130,23 @@ class CandidateAssessmentResult(ContractModel):
     model_config = ConfigDict(frozen=True)
     assessment_id: AssessmentId
     source_id: SourceId
+    source_version_id: SourceVersionId | None = None
     target_mcu_id: MCUId
     target_kind: Literal["MCU", "COMBINATION"]
     combination_id: str | None = None
-    status: Literal["ASSESSED", "UNASSESSABLE"]
+    status: Literal[
+        "ASSESSED",
+        "FAILED_MAPPING",
+        "FAILED_PASSAGE_SELECTION",
+        "UNASSESSABLE",
+        "AUTHORITY_REJECTED",
+    ]
     chain: VerifiedComparison | None = None
     classification: PrecedentClassification
     failure: str | None = None
+    failure_stage: str | None = None
+    expansions: tuple[ContextExpansion, ...] = ()
+    limitations: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def aligned(self) -> "CandidateAssessmentResult":
@@ -145,9 +161,10 @@ class CandidateAssessmentResult(ContractModel):
         if (
             self.classification.source_id != self.source_id
             or self.classification.mcu_id != self.target_mcu_id
+            or self.classification.source_version_id != self.source_version_id
         ):
-            raise ValueError("Candidate classification belongs to another source/target")
-        if self.status == "UNASSESSABLE":
+            raise ValueError("Candidate classification belongs to another source/version/target")
+        if self.status != "ASSESSED":
             if (
                 self.chain is not None
                 or self.failure is None
@@ -161,6 +178,8 @@ class CandidateAssessmentResult(ContractModel):
             if (
                 chain.assessment_id != self.assessment_id
                 or chain.source_id != self.source_id
+                or (chain.chain.version.version_id if chain.chain.version is not None else None)
+                != self.source_version_id
                 or chain.mcu_id != self.target_mcu_id
             ):
                 raise ValueError("Candidate chain belongs to another comparison")
@@ -454,12 +473,14 @@ class EvidenceVerificationPipeline:
                 CandidateAssessmentResult(
                     assessment_id=assessment_id,
                     source_id=source.source_id,
+                    source_version_id=version.version_id if version else None,
                     target_mcu_id=proposition.mcu_id,
                     target_kind=target_kind,
                     combination_id=combination_id,
-                    status="UNASSESSABLE",
+                    status="FAILED_MAPPING",
                     classification=unassessable,
                     failure=failure,
+                    failure_stage="MAPPING",
                 )
             )
             return
@@ -501,12 +522,14 @@ class EvidenceVerificationPipeline:
                 CandidateAssessmentResult(
                     assessment_id=assessment_id,
                     source_id=source.source_id,
+                    source_version_id=version.version_id if version else None,
                     target_mcu_id=proposition.mcu_id,
                     target_kind=target_kind,
                     combination_id=combination_id,
-                    status="UNASSESSABLE",
+                    status="FAILED_PASSAGE_SELECTION",
                     classification=unassessable,
                     failure=failure,
+                    failure_stage="PASSAGE_SELECTION",
                 )
             )
             return
@@ -618,12 +641,19 @@ class EvidenceVerificationPipeline:
             CandidateAssessmentResult(
                 assessment_id=assessment_id,
                 source_id=source.source_id,
+                source_version_id=version.version_id if version else None,
                 target_mcu_id=proposition.mcu_id,
                 target_kind=target_kind,
                 combination_id=combination_id,
                 status="ASSESSED",
                 chain=verified_comparison(final_chain),
                 classification=classification,
+                expansions=retry.expansions,
+                limitations=tuple(
+                    "Context expansion was unavailable for passage " + item.origin_passage_id
+                    for item in retry.expansions
+                    if not item.available
+                ),
             )
         )
         emit(
@@ -677,6 +707,7 @@ class EvidenceVerificationPipeline:
         }
 
         pending_success: list[tuple[str, dict[str, JsonValue], AssessmentStage]] = []
+        post_commit_trace_refs: list[str] = []
 
         def publish(
             reason: str,
@@ -685,7 +716,7 @@ class EvidenceVerificationPipeline:
             failure: bool = False,
             stage: AssessmentStage = AssessmentStage.EVIDENCE_MAPPED,
             receipts: Sequence[Phase6CommitReceipt] = (),
-        ) -> None:
+        ) -> str:
             if not failure and not receipts:
                 raise ValueError("Authoritative semantic success requires a commit receipt")
             if any(item.assessment_id != assessment_id for item in receipts):
@@ -709,26 +740,29 @@ class EvidenceVerificationPipeline:
                 "semantics_implemented": True,
                 **data,
                 **committed,
+                "publication_kind": (
+                    "OPERATIONAL_DIAGNOSTIC" if failure else "POST_COMMIT_AUTHORITY"
+                ),
             }
-            trace_sink.emit(
-                TraceEvent(
-                    event_id=(
-                        "trace_"
-                        + canonical_hash(
-                            {"assessment_id": assessment_id, "reason": reason, "data": event_data}
-                        )
-                        if receipts
-                        else new_trace_event_id()
-                    ),
-                    assessment_id=assessment_id,
-                    occurred_at=clock(),
-                    stage=stage,
-                    component="phase6_evidence",
-                    status=TraceStatus.FAILURE if failure else TraceStatus.SUCCESS,
-                    reason_code=reason,
-                    data=event_data,
-                )
+            event = TraceEvent(
+                event_id=(
+                    "trace_"
+                    + canonical_hash(
+                        {"assessment_id": assessment_id, "reason": reason, "data": event_data}
+                    )
+                    if receipts
+                    else new_trace_event_id()
+                ),
+                assessment_id=assessment_id,
+                occurred_at=clock(),
+                stage=stage,
+                component="phase6_evidence",
+                status=TraceStatus.FAILURE if failure else TraceStatus.SUCCESS,
+                reason_code=reason,
+                data=event_data,
             )
+            trace_sink.emit(event)
+            return event.event_id
 
         def emit(
             reason: str,
@@ -748,7 +782,9 @@ class EvidenceVerificationPipeline:
             queued = tuple(pending_success)
             pending_success.clear()
             for reason, data, stage in queued:
-                publish(reason, data, stage=stage, receipts=(receipt,))
+                post_commit_trace_refs.append(
+                    publish(reason, data, stage=stage, receipts=(receipt,))
+                )
 
         targets: list[tuple[MCUComparisonProfile, EvidenceProposition, tuple[MCUId, ...]]] = []
         for mcu in sorted(mcus, key=lambda item: item.mcu_id):
@@ -1073,12 +1109,14 @@ class EvidenceVerificationPipeline:
                             CandidateAssessmentResult(
                                 assessment_id=assessment_id,
                                 source_id=source.source_id,
+                                source_version_id=version.version_id if version else None,
                                 target_mcu_id=profile.target_id,
                                 target_kind=profile.target_kind,
                                 combination_id=profile.combination_id,
-                                status="UNASSESSABLE",
+                                status="AUTHORITY_REJECTED",
                                 classification=unassessable,
                                 failure=failure,
+                                failure_stage="CONTENT_AUTHORITY",
                             )
                         )
                         publish(
@@ -1117,17 +1155,19 @@ class EvidenceVerificationPipeline:
                 combination_id=profile.combination_id,
             )
             multi_source_summaries.append(summary)
-            publish(
-                "MULTI_SOURCE_ASSESSMENT",
-                {
-                    "mcu_id": profile.target_id,
-                    "combination_context": summary.combination_context,
-                    "single_source_direct_eligible": summary.single_source_direct_eligible,
-                },
-                receipts=tuple(
-                    receipt_by_edge[item.comparison.chain.edge.edge_id]
-                    for item in target_comparisons
-                ),
+            post_commit_trace_refs.append(
+                publish(
+                    "MULTI_SOURCE_ASSESSMENT",
+                    {
+                        "mcu_id": profile.target_id,
+                        "combination_context": summary.combination_context,
+                        "single_source_direct_eligible": summary.single_source_direct_eligible,
+                    },
+                    receipts=tuple(
+                        receipt_by_edge[item.comparison.chain.edge.edge_id]
+                        for item in target_comparisons
+                    ),
+                )
             )
 
         patent_screenings: list[PatentScreeningResult] = []
@@ -1168,17 +1208,19 @@ class EvidenceVerificationPipeline:
                 patent_comparisons = tuple(
                     item.comparison for item in entries if item.comparison is not None
                 )
-                publish(
-                    "PATENT_SCREENING",
-                    {
-                        "screening_id": screening.screening_id,
-                        "mcu_id": profile.target_id,
-                        "mode": screening.mode,
-                    },
-                    receipts=tuple(
-                        receipt_by_edge[item.comparison.chain.edge.edge_id]
-                        for item in patent_comparisons
-                    ),
+                post_commit_trace_refs.append(
+                    publish(
+                        "PATENT_SCREENING",
+                        {
+                            "screening_id": screening.screening_id,
+                            "mcu_id": profile.target_id,
+                            "mode": screening.mode,
+                        },
+                        receipts=tuple(
+                            receipt_by_edge[item.comparison.chain.edge.edge_id]
+                            for item in patent_comparisons
+                        ),
+                    )
                 )
         if committed_receipts:
             graph_edge_count = sum(
@@ -1192,17 +1234,29 @@ class EvidenceVerificationPipeline:
                 )
                 for item in committed_comparisons
             )
-            publish(
-                "PHASE6_GRAPH_PERSISTED",
-                {
-                    "graph_ref": graph_ref,
-                    "edge_count": graph_edge_count,
-                    "proposition_count": len(edges),
-                },
-                receipts=tuple(committed_receipts),
+            post_commit_trace_refs.append(
+                publish(
+                    "PHASE6_GRAPH_PERSISTED",
+                    {
+                        "graph_ref": graph_ref,
+                        "edge_count": graph_edge_count,
+                        "proposition_count": len(edges),
+                    },
+                    receipts=tuple(committed_receipts),
+                )
             )
 
         coverage_limitations: list[str] = []
+        unavailable_expansion_count = sum(
+            not expansion.available
+            for candidate in candidate_assessments
+            for expansion in candidate.expansions
+        )
+        if unavailable_expansion_count:
+            coverage_limitations.append(
+                f"{unavailable_expansion_count} requested context expansion(s) were unavailable; "
+                "the affected source passages remain context limited"
+            )
         if unassessed_sources:
             coverage_limitations.append(
                 f"{len(unassessed_sources)} candidate source(s) were outside the "
@@ -1240,9 +1294,7 @@ class EvidenceVerificationPipeline:
             (
                 candidate.target_mcu_id,
                 candidate.source_id,
-                candidate.chain.chain.version.version_id
-                if candidate.chain is not None and candidate.chain.chain.version is not None
-                else None,
+                candidate.source_version_id,
             ): candidate
             for candidate in candidate_assessments
         }
@@ -1267,8 +1319,11 @@ class EvidenceVerificationPipeline:
                             sorted(item.value for item in source.evidence_families)
                         ),
                         routing_priority=routing_priority,
-                        decision="UNASSESSABLE",
+                        decision=outcome.status,
                         reason=outcome.failure,
+                        failure_stage=outcome.failure_stage,
+                        expansions=outcome.expansions,
+                        limitations=outcome.limitations,
                     )
                 )
                 continue
@@ -1382,7 +1437,7 @@ class EvidenceVerificationPipeline:
             lineage_cluster_ids=lineage_cluster_ids,
             commit_ids=commit_ids,
             coverage=coverage,
-            audit_refs=(),
+            audit_refs=tuple(dict.fromkeys(post_commit_trace_refs)),
             completed_at=clock(),
         )
         candidate_record_tuple = tuple(candidate_records)
