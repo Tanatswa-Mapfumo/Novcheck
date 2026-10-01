@@ -105,6 +105,22 @@ def _seed_sources(repository, evidence, *, rejected_source_id, reject_source=Fal
     repository.upsert(nodes=tuple(nodes))
 
 
+def _persist_phase5_lineage(repository, evidence, *, phase5_snapshot):
+    source_overrides = {source.source_id: source for source in evidence.sources}
+    source_nodes = tuple(
+        source_graph_node(
+            source_overrides.get(source.source_id, source),
+            observed_at=NOW,
+            provenance=phase6_graph_provenance(),
+        )
+        for source in phase5_snapshot.sources
+    )
+    repository.upsert(
+        nodes=source_nodes,
+        clusters=phase5_snapshot.lineage_clusters,
+    )
+
+
 def _partial_runner(*, direct_marker: str | None = None) -> SemanticRunner:
     def verify(context):
         payload = context_json(context, "verification_input")
@@ -631,6 +647,7 @@ async def test_mixed_patent_and_summary_exclude_rejected_source(
     tmp_path, rejected_direct: bool
 ) -> None:
     writer, _, evidence = await _phase5(tmp_path)
+    phase5_snapshot = evidence
     chosen = tuple(
         source
         for source in evidence.sources
@@ -664,6 +681,7 @@ async def test_mixed_patent_and_summary_exclude_rejected_source(
     trace_path = tmp_path / "mixed-patent.jsonl"
     try:
         _seed_sources(repository, evidence, rejected_source_id=rejected.source_id)
+        _persist_phase5_lineage(repository, evidence, phase5_snapshot=phase5_snapshot)
         result = await _run(
             writer,
             evidence,
@@ -683,6 +701,25 @@ async def test_mixed_patent_and_summary_exclude_rejected_source(
             "MULTI_REFERENCE_COMBINATION_LIKE",
         }
         events = _events(trace_path)
+        with repository.engine.connect() as connection:
+            derived_documents = [
+                json.loads(row[0])
+                for row in connection.execute(
+                    text(
+                        "SELECT document_json FROM phase6_assessment_derived "
+                        "WHERE snapshot_id = :snapshot_id"
+                    ),
+                    {"snapshot_id": result.snapshot_id},
+                )
+            ]
+        committed_source_by_edge = {item.edge_id: item.source_id for item in result.edges}
+        assert derived_documents
+        for record in derived_documents:
+            assert set(record["input_edge_ids"]) <= set(committed_source_by_edge)
+            assert all(
+                committed_source_by_edge[edge_id] != rejected.source_id
+                for edge_id in record["input_edge_ids"]
+            )
         assert not any(
             item["reason_code"] == "PRECEDENT_CLASSIFICATION"
             and item["status"] == "SUCCESS"
@@ -700,8 +737,12 @@ async def test_mixed_patent_and_summary_exclude_rejected_source(
 
 
 @pytest.mark.asyncio
-async def test_two_committed_partial_patents_keep_combination_context(tmp_path) -> None:
+@pytest.mark.parametrize("persist_lineage", [True, False])
+async def test_two_committed_partial_patents_require_persisted_lineage(
+    tmp_path, persist_lineage: bool
+) -> None:
     writer, _, evidence = await _phase5(tmp_path)
+    phase5_snapshot = evidence
     chosen = tuple(
         source
         for source in evidence.sources
@@ -725,6 +766,8 @@ async def test_two_committed_partial_patents_keep_combination_context(tmp_path) 
     trace_path = tmp_path / "two-patents.jsonl"
     try:
         _seed_sources(repository, evidence, rejected_source_id="src_unused")
+        if persist_lineage:
+            _persist_phase5_lineage(repository, evidence, phase5_snapshot=phase5_snapshot)
         result = await _run(
             writer,
             evidence,
@@ -734,15 +777,21 @@ async def test_two_committed_partial_patents_keep_combination_context(tmp_path) 
             runner=_partial_runner(),
         )
         assert len(result.edges) == 2
-        assert result.multi_source[0].combination_context == "MULTI_SOURCE_COMBINATION_ONLY"
-        assert result.patent_screenings[0].mode == "MULTI_REFERENCE_COMBINATION_LIKE"
         success = [
             item
             for item in _events(trace_path)
             if item["reason_code"] == "PATENT_SCREENING" and item["status"] == "SUCCESS"
         ]
-        assert len(success) == 1
-        assert len(success[0]["data"]["committed_edge_ids"]) == 2
+        if persist_lineage:
+            assert result.multi_source[0].combination_context == "MULTI_SOURCE_COMBINATION_ONLY"
+            assert result.patent_screenings[0].mode == "MULTI_REFERENCE_COMBINATION_LIKE"
+            assert len(success) == 1
+            assert len(success[0]["data"]["committed_edge_ids"]) == 2
+        else:
+            assert not result.multi_source
+            assert not result.patent_screenings
+            assert not success
+            assert any("lineage cluster" in item for item in result.coverage_limitations)
     finally:
         repository.close()
 

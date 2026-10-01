@@ -185,6 +185,7 @@ class Phase6DerivedLedgerRecord(ContractModel):
     as_of: date
     method_version: str
     result: MultiSourceAssessment | PatentScreeningResult
+    lineage_limitations: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def result_matches_kind(self) -> Self:

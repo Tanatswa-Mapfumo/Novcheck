@@ -39,9 +39,11 @@ from novelty_harness.evidence.graph.assessment_ledger import (
     Phase6CandidateLedgerRecord,
     Phase6CoverageExclusion,
     Phase6CoverageLedger,
+    Phase6DerivedLedgerRecord,
     Phase6TargetLedgerRecord,
     phase6_assessment_snapshot_id,
     phase6_candidate_record_id,
+    phase6_derived_record_id,
     phase6_target_record_id,
 )
 from novelty_harness.evidence.graph.models import GraphNode, GraphNodeKind
@@ -682,6 +684,14 @@ class EvidenceVerificationPipeline:
         clock: Callable[[], datetime] = utc_now,
     ) -> Phase6EvidenceResult:
         sources = evidence.sources
+        persisted_lineage_by_id = {
+            cluster.cluster_id: cluster for cluster in repository.lineage_clusters()
+        }
+        phase5_lineage_clusters = tuple(
+            cluster
+            for cluster in evidence.lineage_clusters
+            if persisted_lineage_by_id.get(cluster.cluster_id) == cluster
+        )
         passages_by_source: dict[SourceId, tuple[PassageRecord, ...]] = {}
         for passage in evidence.passages:
             passages_by_source.setdefault(passage.source_id, ())
@@ -701,13 +711,42 @@ class EvidenceVerificationPipeline:
         }
         independent_root_of = {
             source_id: cluster.root_source_ids[0]
-            for cluster in evidence.lineage_clusters
+            for cluster in phase5_lineage_clusters
             for source_id in cluster.source_ids
             if cluster.root_source_ids
         }
 
+        def lineage_facts(
+            source_ids: Sequence[SourceId],
+        ) -> tuple[tuple[SourceId, ...], tuple[str, ...]]:
+            missing_sources = tuple(sorted(set(source_ids) - independent_root_of.keys()))
+            roots = tuple(
+                sorted(
+                    {
+                        independent_root_of[source_id]
+                        for source_id in source_ids
+                        if source_id in independent_root_of
+                    }
+                )
+            )
+            limitations = (
+                (
+                    f"No persisted Phase 5 lineage cluster was available for "
+                    f"{len(missing_sources)} derived input source(s); "
+                    "independent-root coverage is incomplete",
+                )
+                if missing_sources
+                else ()
+            )
+            return roots, limitations
+
         pending_success: list[tuple[str, dict[str, JsonValue], AssessmentStage]] = []
         post_commit_trace_refs: list[str] = []
+        pending_derived_publications: list[
+            tuple[str, dict[str, JsonValue], tuple[Phase6CommitReceipt, ...]]
+        ] = []
+        derived_records: list[Phase6DerivedLedgerRecord] = []
+        coverage_limitations: list[str] = []
 
         def publish(
             reason: str,
@@ -1146,6 +1185,13 @@ class EvidenceVerificationPipeline:
             )
             if not target_comparisons:
                 continue
+            summary_source_ids = tuple(
+                item.comparison.chain.source.source_id for item in target_comparisons
+            )
+            summary_roots, summary_lineage_limitations = lineage_facts(summary_source_ids)
+            if summary_lineage_limitations:
+                coverage_limitations.extend(summary_lineage_limitations)
+                continue
             summary = summarize_multi_source(
                 target_comparisons,
                 mcu_id=profile.target_id,
@@ -1155,18 +1201,44 @@ class EvidenceVerificationPipeline:
                 combination_id=profile.combination_id,
             )
             multi_source_summaries.append(summary)
-            post_commit_trace_refs.append(
-                publish(
+            summary_receipts = tuple(
+                receipt_by_edge[item.comparison.chain.edge.edge_id] for item in target_comparisons
+            )
+            summary_inputs = tuple(
+                (item, receipt_by_edge[item.comparison.chain.edge.edge_id])
+                for item in target_comparisons
+            )
+            derived_records.append(
+                Phase6DerivedLedgerRecord(
+                    snapshot_id="pending",
+                    assessment_id=assessment_id,
+                    target_id=profile.target_id,
+                    kind="MULTI_SOURCE",
+                    input_commit_ids=tuple(
+                        receipt.commit_id for _, receipt in summary_inputs if receipt.commit_id
+                    ),
+                    input_edge_ids=tuple(
+                        item.comparison.chain.edge.edge_id for item, _ in summary_inputs
+                    ),
+                    input_classification_ids=tuple(
+                        item.classification.classification_id for item, _ in summary_inputs
+                    ),
+                    lineage_root_ids=summary_roots,
+                    as_of=as_of,
+                    method_version="phase6-v1",
+                    result=summary,
+                    lineage_limitations=summary_lineage_limitations,
+                )
+            )
+            pending_derived_publications.append(
+                (
                     "MULTI_SOURCE_ASSESSMENT",
                     {
                         "mcu_id": profile.target_id,
                         "combination_context": summary.combination_context,
                         "single_source_direct_eligible": summary.single_source_direct_eligible,
                     },
-                    receipts=tuple(
-                        receipt_by_edge[item.comparison.chain.edge.edge_id]
-                        for item in target_comparisons
-                    ),
+                    summary_receipts,
                 )
             )
 
@@ -1204,22 +1276,58 @@ class EvidenceVerificationPipeline:
                     observed_at=clock(),
                     independent_root_of=independent_root_of,
                 )
-                patent_screenings.append(screening)
                 patent_comparisons = tuple(
                     item.comparison for item in entries if item.comparison is not None
                 )
-                post_commit_trace_refs.append(
-                    publish(
+                patent_receipts = tuple(
+                    receipt_by_edge[item.comparison.chain.edge.edge_id]
+                    for item in patent_comparisons
+                )
+                patent_inputs = tuple(
+                    (item, receipt_by_edge[item.comparison.chain.edge.edge_id])
+                    for item in patent_comparisons
+                )
+                patent_roots, patent_lineage_limitations = lineage_facts(
+                    tuple(item.comparison.chain.source.source_id for item, _ in patent_inputs)
+                )
+                if (
+                    patent_lineage_limitations
+                    and screening.mode == "MULTI_REFERENCE_COMBINATION_LIKE"
+                ):
+                    coverage_limitations.extend(patent_lineage_limitations)
+                    continue
+                patent_screenings.append(screening)
+                derived_records.append(
+                    Phase6DerivedLedgerRecord(
+                        snapshot_id="pending",
+                        assessment_id=assessment_id,
+                        target_id=profile.target_id,
+                        kind="PATENT",
+                        input_commit_ids=tuple(
+                            receipt.commit_id for _, receipt in patent_inputs if receipt.commit_id
+                        ),
+                        input_edge_ids=tuple(
+                            item.comparison.chain.edge.edge_id for item, _ in patent_inputs
+                        ),
+                        input_classification_ids=tuple(
+                            item.classification.classification_id for item, _ in patent_inputs
+                        ),
+                        lineage_root_ids=patent_roots,
+                        as_of=as_of,
+                        method_version="phase6-v1",
+                        result=screening,
+                        lineage_limitations=patent_lineage_limitations,
+                    )
+                )
+                pending_derived_publications.append(
+                    (
                         "PATENT_SCREENING",
                         {
                             "screening_id": screening.screening_id,
                             "mcu_id": profile.target_id,
                             "mode": screening.mode,
                         },
-                        receipts=tuple(
-                            receipt_by_edge[item.comparison.chain.edge.edge_id]
-                            for item in patent_comparisons
-                        ),
+                        patent_receipts,
                     )
                 )
         if committed_receipts:
@@ -1246,7 +1354,6 @@ class EvidenceVerificationPipeline:
                 )
             )
 
-        coverage_limitations: list[str] = []
         unavailable_expansion_count = sum(
             not expansion.available
             for candidate in candidate_assessments
@@ -1408,12 +1515,7 @@ class EvidenceVerificationPipeline:
         )
         if descriptive_nodes:
             repository.upsert(nodes=tuple(descriptive_nodes))
-        persisted_lineage_ids = {cluster.cluster_id for cluster in repository.lineage_clusters()}
-        lineage_cluster_ids = tuple(
-            cluster.cluster_id
-            for cluster in evidence.lineage_clusters
-            if cluster.cluster_id in persisted_lineage_ids
-        )
+        lineage_cluster_ids = tuple(cluster.cluster_id for cluster in phase5_lineage_clusters)
         missing_lineage_count = len(evidence.lineage_clusters) - len(lineage_cluster_ids)
         if missing_lineage_count:
             coverage_limitations.append(
@@ -1443,17 +1545,21 @@ class EvidenceVerificationPipeline:
             completed_at=clock(),
         )
         candidate_record_tuple = tuple(candidate_records)
+        derived_record_tuple = tuple(derived_records)
         snapshot_id = phase6_assessment_snapshot_id(
             snapshot,
             targets=target_records,
             candidates=candidate_record_tuple,
-            derived=(),
+            derived=derived_record_tuple,
         )
         target_records = tuple(
             item.model_copy(update={"snapshot_id": snapshot_id}) for item in target_records
         )
         candidate_record_tuple = tuple(
             item.model_copy(update={"snapshot_id": snapshot_id}) for item in candidate_record_tuple
+        )
+        derived_record_tuple = tuple(
+            item.model_copy(update={"snapshot_id": snapshot_id}) for item in derived_record_tuple
         )
         snapshot = snapshot.model_copy(
             update={
@@ -1464,14 +1570,19 @@ class EvidenceVerificationPipeline:
                 "candidate_record_ids": tuple(
                     phase6_candidate_record_id(item) for item in candidate_record_tuple
                 ),
+                "derived_record_ids": tuple(
+                    phase6_derived_record_id(item) for item in derived_record_tuple
+                ),
             }
         )
         stored_snapshot_id = repository.record_phase6_assessment(
             snapshot,
             targets=target_records,
             candidates=candidate_record_tuple,
-            derived=(),
+            derived=derived_record_tuple,
         )
+        for reason, data, receipts in pending_derived_publications:
+            post_commit_trace_refs.append(publish(reason, data, receipts=receipts))
         result = Phase6EvidenceResult(
             profiles=tuple(profiles),
             propositions=tuple(propositions),

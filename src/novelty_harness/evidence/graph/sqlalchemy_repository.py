@@ -382,9 +382,23 @@ class SqlAlchemyEvidenceGraphRepository:
                     ):
                         raise ValueError("Derived input is absent from its commit manifest")
 
+            snapshot_lineage_roots: set[str] = set()
             for cluster_id in snapshot.lineage_cluster_ids:
-                if session.get(LineageClusterRow, cluster_id) is None:
+                lineage_row = session.get(LineageClusterRow, cluster_id)
+                if lineage_row is None:
                     raise ValueError("Snapshot references a missing lineage cluster")
+                snapshot_lineage_roots.update(
+                    EvidenceLineageCluster.model_validate_json(
+                        lineage_row.document_json
+                    ).root_source_ids
+                )
+            if any(
+                not set(record.lineage_root_ids) <= snapshot_lineage_roots
+                for record in derived_records
+            ):
+                raise ValueError(
+                    "Derived record lineage roots are absent from its Phase 5 snapshot"
+                )
 
             snapshot_row = session.get(Phase6AssessmentSnapshotRow, snapshot.snapshot_id)
             if snapshot_row is None:

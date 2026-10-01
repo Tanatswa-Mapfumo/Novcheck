@@ -4,12 +4,13 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from novelty_harness.evidence.graph.models import GraphNodeKind
 from novelty_harness.evidence.graph.sqlalchemy_models import (
     Phase6AssessmentCandidateRow,
+    Phase6AssessmentDerivedRow,
     Phase6AssessmentSnapshotRow,
     Phase6AssessmentTargetRow,
 )
@@ -166,6 +167,132 @@ async def test_ledger_records_combination_profile_and_topology(tmp_path) -> None
     ]
     assert {item["mcu_id"] for item in profile["member_contributions"]} == set(expected.member_ids)
     assert result.snapshot_id
+
+
+@pytest.mark.asyncio
+async def test_derived_ledger_records_bind_to_committed_comparisons_and_lineage(tmp_path) -> None:
+    result, evidence, _, _, _ = await run_phase6_for_ledger(tmp_path)
+    database = graph_database(tmp_path)
+    repository = SqlAlchemyEvidenceGraphRepository(database)
+    try:
+        with Session(repository._engine) as session:
+            rows = tuple(
+                session.scalars(
+                    select(Phase6AssessmentDerivedRow).where(
+                        Phase6AssessmentDerivedRow.snapshot_id == result.snapshot_id
+                    )
+                )
+            )
+            lineage_roots = {
+                root_id
+                for cluster in repository.lineage_clusters()
+                for root_id in cluster.root_source_ids
+            }
+        documents = [json.loads(row.document_json) for row in rows]
+        assert {item["kind"] for item in documents} == {"MULTI_SOURCE", "PATENT"}
+        committed_ids = {item.commit_id for item in result.commit_receipts}
+        edge_ids = {item.edge_id for item in result.edges}
+        class_ids = {item.classification_id for item in result.classifications}
+        receipts_by_edge = {
+            edge_id: receipt.commit_id
+            for receipt in result.commit_receipts
+            for edge_id in receipt.committed_edge_ids
+        }
+        classification_by_edge = {
+            edge_id: classification_id
+            for receipt in result.commit_receipts
+            for edge_id, classification_id in zip(
+                receipt.committed_edge_ids,
+                receipt.committed_classification_ids,
+                strict=True,
+            )
+        }
+        roots_by_source = {
+            source_id: cluster.root_source_ids[0]
+            for cluster in evidence.lineage_clusters
+            for source_id in cluster.source_ids
+        }
+        for record in documents:
+            target_edges = [item for item in result.edges if item.mcu_id == record["target_id"]]
+            assert record["input_edge_ids"] == [item.edge_id for item in target_edges]
+            assert record["input_commit_ids"] == [
+                receipts_by_edge[item.edge_id] for item in target_edges
+            ]
+            assert record["input_classification_ids"] == [
+                classification_by_edge[item.edge_id] for item in target_edges
+            ]
+            assert set(record["lineage_root_ids"]) == {
+                roots_by_source[item.source_id] for item in target_edges
+            }
+            assert record["input_commit_ids"]
+            assert set(record["input_commit_ids"]) <= committed_ids
+            assert len(record["input_edge_ids"]) == len(record["input_commit_ids"])
+            assert len(record["input_classification_ids"]) == len(record["input_commit_ids"])
+            assert set(record["input_edge_ids"]) <= edge_ids
+            assert set(record["input_classification_ids"]) <= class_ids
+            assert record["as_of"] == assessment().request.as_of.isoformat()
+            assert record["method_version"] == "phase6-v1"
+            assert set(record["lineage_root_ids"]) <= lineage_roots
+        patent_record = next(item for item in documents if item["kind"] == "PATENT")
+        screening = next(
+            item for item in result.patent_screenings if item.mcu_id == patent_record["target_id"]
+        )
+        assert patent_record["result"]["screening_id"] == screening.screening_id
+        assert patent_record["result"]["dates"] == [
+            item.model_dump(mode="json") for item in screening.dates
+        ]
+        assert patent_record["result"]["locators"] == [
+            item.model_dump(mode="json") for item in screening.locators
+        ]
+        assert evidence.lineage_clusters
+    finally:
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_derived_success_is_not_published_when_snapshot_finalization_fails(
+    tmp_path, monkeypatch
+) -> None:
+    writer = RunArtifactWriter(tmp_path)
+    database = graph_database(tmp_path)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
+        evidence = await run_phase5(writer, client, database)
+    repository = SqlAlchemyEvidenceGraphRepository(database)
+    trace = InMemoryTraceSink()
+
+    def fail_ledger(*args, **kwargs):
+        raise OSError("simulated assessment snapshot write failure")
+
+    monkeypatch.setattr(repository, "record_phase6_assessment", fail_ledger)
+    try:
+        with pytest.raises(OSError, match="snapshot write failure"):
+            await verify_evidence_against_mcus(
+                assessment_id="asm_research",
+                evidence=evidence,
+                mcus=make_fixture().graph.mcus,
+                combinations=make_fixture().graph.combinations,
+                as_of=assessment().request.as_of,
+                runner=SemanticRunner(scripted_phase6_llm()),
+                repository=repository,
+                writer=writer,
+                trace_sink=trace,
+                graph_ref="phase5/evidence_graph.sqlite3",
+                clock=lambda: NOW,
+            )
+        assert not any(
+            event.reason_code in {"MULTI_SOURCE_ASSESSMENT", "PATENT_SCREENING"}
+            and event.status.value == "SUCCESS"
+            for event in trace.events
+        )
+        with repository.engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT count(*) FROM phase6_assessment_snapshots")
+                ).scalar_one()
+                == 0
+            )
+    finally:
+        repository.close()
 
 
 @pytest.mark.asyncio
