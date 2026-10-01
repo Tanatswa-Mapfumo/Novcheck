@@ -278,7 +278,6 @@ def phase6_assessment_snapshot_id(
                 "derived": derived_facts,
                 "lineage_cluster_ids": sorted(snapshot.lineage_cluster_ids),
                 "commit_ids": sorted(snapshot.commit_ids),
-                "audit_refs": sorted(snapshot.audit_refs),
                 "coverage": snapshot.coverage,
             },
         )

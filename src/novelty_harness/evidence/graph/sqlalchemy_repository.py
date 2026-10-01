@@ -86,6 +86,17 @@ def _semantic_document(value: JsonValue | BaseModel) -> str:
     return canonical_json(without_clock(document))
 
 
+def _snapshot_identity_document(value: str | Phase6AssessmentSnapshotRecord) -> str:
+    """Exclude audit references and completion time from replay equality."""
+
+    document = json.loads(value) if isinstance(value, str) else value.model_dump(mode="json")
+    if isinstance(document, dict):
+        typed_document = cast(dict[str, JsonValue], document)
+        typed_document.pop("audit_refs", None)
+        typed_document.pop("completed_at", None)
+    return canonical_json(cast(JsonValue, document))
+
+
 def _phase6_commit_id(
     assessment_id: str,
     edge_ids: tuple[str, ...],
@@ -368,17 +379,21 @@ class SqlAlchemyEvidenceGraphRepository:
                 if session.get(LineageClusterRow, cluster_id) is None:
                     raise ValueError("Snapshot references a missing lineage cluster")
 
-            self._insert_or_verify_ledger_row(
-                session,
-                Phase6AssessmentSnapshotRow,
-                snapshot.snapshot_id,
-                {
-                    "snapshot_id": snapshot.snapshot_id,
-                    "assessment_id": snapshot.assessment_id,
-                    "document_json": canonical_json(snapshot),
-                },
-                "Phase 6 snapshot",
-            )
+            snapshot_row = session.get(Phase6AssessmentSnapshotRow, snapshot.snapshot_id)
+            if snapshot_row is None:
+                session.add(
+                    Phase6AssessmentSnapshotRow(
+                        snapshot_id=snapshot.snapshot_id,
+                        assessment_id=snapshot.assessment_id,
+                        document_json=canonical_json(snapshot),
+                    )
+                )
+            elif (
+                snapshot_row.assessment_id != snapshot.assessment_id
+                or _snapshot_identity_document(snapshot_row.document_json)
+                != _snapshot_identity_document(snapshot)
+            ):
+                raise ValueError("Phase 6 snapshot identity already exists with different content")
             for record, record_id in zip(target_records, target_ids, strict=True):
                 self._insert_or_verify_ledger_row(
                     session,

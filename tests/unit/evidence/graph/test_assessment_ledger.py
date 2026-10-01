@@ -2,6 +2,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import text
 
 from novelty_harness.evidence.graph.assessment_ledger import (
     Phase6AssessmentSnapshotRecord,
@@ -21,9 +22,11 @@ from tests.fixtures.phase5 import phase5_provenance
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 
 
-def _snapshot(snapshot_id: str = "p6snap_empty") -> Phase6AssessmentSnapshotRecord:
+def _snapshot(
+    *, audit_refs: tuple[str, ...] = (), completed_at: datetime = NOW
+) -> Phase6AssessmentSnapshotRecord:
     snapshot = Phase6AssessmentSnapshotRecord(
-        snapshot_id=snapshot_id,
+        snapshot_id="p6snap_pending",
         assessment_id="asm_ledger",
         as_of=date(2026, 10, 1),
         method_version="phase6-v1",
@@ -37,8 +40,8 @@ def _snapshot(snapshot_id: str = "p6snap_empty") -> Phase6AssessmentSnapshotReco
         lineage_cluster_ids=(),
         commit_ids=(),
         coverage=Phase6CoverageLedger(),
-        audit_refs=(),
-        completed_at=NOW,
+        audit_refs=audit_refs,
+        completed_at=completed_at,
     )
     computed = phase6_assessment_snapshot_id(snapshot, targets=(), candidates=(), derived=())
     return snapshot.model_copy(update={"snapshot_id": computed})
@@ -143,11 +146,61 @@ def test_zero_comparison_snapshot_is_persisted_and_exact_replay_is_idempotent() 
 def test_same_snapshot_id_cannot_be_reused_for_changed_facts() -> None:
     repository = SqlAlchemyEvidenceGraphRepository()
     original = _snapshot()
-    changed = original.model_copy(update={"completed_at": datetime(2026, 10, 1, 13, 0, tzinfo=UTC)})
+    changed = original.model_copy(update={"method_version": "phase6-v2"})
     repository.record_phase6_assessment(original, targets=(), candidates=(), derived=())
 
-    with pytest.raises(ValueError, match="different content"):
+    with pytest.raises(ValueError, match="snapshot ID does not match"):
         repository.record_phase6_assessment(changed, targets=(), candidates=(), derived=())
+    repository.close()
+
+
+def test_snapshot_identity_ignores_audit_references_and_completion_time() -> None:
+    original = _snapshot(audit_refs=("trace_first",))
+    replay = original.model_copy(
+        update={
+            "audit_refs": ("trace_retry",),
+            "completed_at": datetime(2026, 10, 1, 13, 0, tzinfo=UTC),
+        }
+    )
+
+    assert (
+        phase6_assessment_snapshot_id(replay, targets=(), candidates=(), derived=())
+        == original.snapshot_id
+    )
+
+
+def test_snapshot_replay_keeps_first_audit_metadata_and_completion_time() -> None:
+    repository = SqlAlchemyEvidenceGraphRepository()
+    original = _snapshot(audit_refs=("trace_first",))
+    replay = original.model_copy(
+        update={
+            "audit_refs": ("trace_retry",),
+            "completed_at": datetime(2026, 10, 1, 13, 0, tzinfo=UTC),
+        }
+    )
+    replay = replay.model_copy(
+        update={
+            "snapshot_id": phase6_assessment_snapshot_id(
+                replay, targets=(), candidates=(), derived=()
+            )
+        }
+    )
+    repository.record_phase6_assessment(original, targets=(), candidates=(), derived=())
+
+    assert repository.record_phase6_assessment(replay, targets=(), candidates=(), derived=()) == (
+        original.snapshot_id
+    )
+    with repository.engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT document_json FROM phase6_assessment_snapshots "
+                "WHERE snapshot_id = :snapshot_id"
+            ),
+            {"snapshot_id": original.snapshot_id},
+        ).scalar_one()
+    stored = Phase6AssessmentSnapshotRecord.model_validate_json(row)
+    assert stored.audit_refs == original.audit_refs
+    assert stored.completed_at == original.completed_at
     repository.close()
 
 
