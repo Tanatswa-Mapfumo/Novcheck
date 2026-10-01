@@ -130,6 +130,22 @@ def _with_unversioned_and_missing_version_passages(evidence):
     return replace(evidence, passages=(*evidence.passages, *additions))
 
 
+def _without_attested_unit_bounds(evidence):
+    passages = []
+    for passage in evidence.passages:
+        proof = passage.attestation
+        if proof is None or proof.unit_start is None:
+            passages.append(passage)
+            continue
+        attestation = proof.model_copy(
+            update={"unit_type": None, "unit_start": None, "unit_end": None}
+        )
+        passages.append(
+            passage.model_copy(update={"attestation": attestation, "unit_boundary": None})
+        )
+    return replace(evidence, passages=tuple(passages))
+
+
 async def test_ledger_records_combination_profile_and_topology(tmp_path) -> None:
     result, _, _, target_rows, _ = await run_phase6_for_ledger(tmp_path)
 
@@ -150,6 +166,21 @@ async def test_ledger_records_combination_profile_and_topology(tmp_path) -> None
     ]
     assert {item["mcu_id"] for item in profile["member_contributions"]} == set(expected.member_ids)
     assert result.snapshot_id
+
+
+@pytest.mark.asyncio
+async def test_assessed_ledger_rows_retain_blocked_context_expansions(tmp_path):
+    result, _, _, _, candidate_rows = await run_phase6_for_ledger(
+        tmp_path, evidence_update=_without_attested_unit_bounds
+    )
+    ledger_records = [json.loads(row.document_json) for row in candidate_rows]
+    assessed_records = [record for record in ledger_records if record["decision"] == "ASSESSED"]
+    expansions = [item for record in assessed_records for item in record["expansions"]]
+    assert result.expansions
+    assert expansions
+    assert {item["attempt"] for item in expansions} == {item.attempt for item in result.expansions}
+    assert any(not item["available"] for item in expansions)
+    assert any(record["limitations"] for record in assessed_records)
 
 
 @pytest.mark.asyncio

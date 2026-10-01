@@ -1351,6 +1351,8 @@ class EvidenceVerificationPipeline:
                     commit_id=receipt.commit_id,
                     verified_edge_id=verified_edge.edge_id,
                     classification_id=outcome.classification.classification_id,
+                    expansions=outcome.expansions,
+                    limitations=outcome.limitations,
                 )
             )
         for target_id, source, version, priority, decision, reason in excluded_candidate_facts:
