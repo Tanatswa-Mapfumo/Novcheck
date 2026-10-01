@@ -16,7 +16,11 @@ from novelty_harness.evidence.graph.phase6_mapping import (
     phase6_graph_provenance,
     verified_edge_graph_fragment,
 )
-from novelty_harness.evidence.graph.retrieval_mapping import passage_graph_node, version_graph_node
+from novelty_harness.evidence.graph.retrieval_mapping import (
+    passage_graph_node,
+    source_graph_node,
+    version_graph_node,
+)
 from novelty_harness.evidence.graph.sqlalchemy_repository import (
     SqlAlchemyEvidenceGraphRepository,
 )
@@ -527,7 +531,6 @@ def _f04_evidence(sources_count: int, versions_per_source: int):
 
 
 async def _run_f04_pipeline(tmp_path, evidence, *, max_sources=3, max_versions=3):
-    from novelty_harness.evidence.graph.models import GraphNode, GraphNodeKind
     from novelty_harness.evidence.graph.sqlalchemy_repository import (
         SqlAlchemyEvidenceGraphRepository as _Repo,
     )
@@ -539,15 +542,15 @@ async def _run_f04_pipeline(tmp_path, evidence, *, max_sources=3, max_versions=3
 
     repository = _Repo()
     repository.upsert(
-        nodes=tuple(
-            GraphNode(
-                node_id=item.source_id,
-                kind=GraphNodeKind.SOURCE,
-                label=item.canonical_title,
-                observed_at=NOW,
-                provenance=ORIGIN,
-            )
-            for item in evidence.sources
+        nodes=(
+            *(
+                source_graph_node(item, observed_at=NOW, provenance=ORIGIN)
+                for item in evidence.sources
+            ),
+            *(
+                version_graph_node(item, observed_at=NOW, provenance=ORIGIN)
+                for item in evidence.versions
+            ),
         )
     )
     result = await _verify(
@@ -1304,7 +1307,6 @@ async def test_f11_pipeline_projection_passes_the_bridge_with_combination_and_wi
     from novelty_harness.domain.mcu import (
         MCURelationship as _Relationship,
     )
-    from novelty_harness.evidence.graph.models import GraphNode, GraphNodeKind
     from novelty_harness.evidence.passages.extraction import (
         extract_resolved_content,
         extract_span,
@@ -1410,15 +1412,15 @@ async def test_f11_pipeline_projection_passes_the_bridge_with_combination_and_wi
     )
     repository = SqlAlchemyEvidenceGraphRepository()
     repository.upsert(
-        nodes=tuple(
-            GraphNode(
-                node_id=item.source_id,
-                kind=GraphNodeKind.SOURCE,
-                label=item.canonical_title,
-                observed_at=NOW,
-                provenance=ORIGIN,
-            )
-            for item in evidence.sources
+        nodes=(
+            *(
+                source_graph_node(item, observed_at=NOW, provenance=ORIGIN)
+                for item in evidence.sources
+            ),
+            *(
+                version_graph_node(item, observed_at=NOW, provenance=ORIGIN)
+                for item in evidence.versions
+            ),
         )
     )
     runner = _Runner2(_Stub({"map_evidence": _map_response, "verify_support": verify_citing_last}))

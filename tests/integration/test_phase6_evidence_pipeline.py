@@ -61,7 +61,7 @@ async def run_phase5(writer, client, database):
         repository.close()
 
 
-async def run_phase6_for_ledger(tmp_path, *, max_sources=3, evidence_update=None):
+async def run_phase6_for_ledger(tmp_path, *, max_sources=3, evidence_update=None, runner=None):
     writer = RunArtifactWriter(tmp_path)
     database = graph_database(tmp_path)
     async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
@@ -75,7 +75,7 @@ async def run_phase6_for_ledger(tmp_path, *, max_sources=3, evidence_update=None
         mcus=make_fixture().graph.mcus,
         combinations=make_fixture().graph.combinations,
         as_of=assessment().request.as_of,
-        runner=SemanticRunner(scripted_phase6_llm()),
+        runner=runner or SemanticRunner(scripted_phase6_llm()),
         repository=repository,
         writer=writer,
         trace_sink=InMemoryTraceSink(),
