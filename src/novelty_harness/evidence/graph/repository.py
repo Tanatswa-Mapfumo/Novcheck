@@ -13,6 +13,12 @@ from pydantic import ConfigDict, model_validator
 
 from novelty_harness.domain.base import ContractModel
 from novelty_harness.domain.ids import AssessmentId, ClassificationId, EvidenceEdgeId, SourceId
+from novelty_harness.evidence.graph.assessment_ledger import (
+    Phase6AssessmentSnapshotRecord,
+    Phase6CandidateLedgerRecord,
+    Phase6DerivedLedgerRecord,
+    Phase6TargetLedgerRecord,
+)
 from novelty_harness.evidence.graph.models import (
     GraphEdge,
     GraphEdgeKind,
@@ -79,6 +85,17 @@ class ResolvedPhase6Commit:
 
 @runtime_checkable
 class EvidenceGraphRepository(Protocol):
+    def record_phase6_assessment(
+        self,
+        snapshot: Phase6AssessmentSnapshotRecord,
+        *,
+        targets: Sequence[Phase6TargetLedgerRecord],
+        candidates: Sequence[Phase6CandidateLedgerRecord],
+        derived: Sequence[Phase6DerivedLedgerRecord],
+    ) -> str:
+        """Atomically insert or verify one immutable completed assessment ledger."""
+        ...
+
     def upsert(
         self,
         *,

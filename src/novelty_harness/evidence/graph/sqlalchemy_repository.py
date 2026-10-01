@@ -18,6 +18,16 @@ from sqlalchemy.pool import StaticPool
 
 from novelty_harness.domain.enums import PrecedentState
 from novelty_harness.domain.ids import SourceId
+from novelty_harness.evidence.graph.assessment_ledger import (
+    Phase6AssessmentSnapshotRecord,
+    Phase6CandidateLedgerRecord,
+    Phase6DerivedLedgerRecord,
+    Phase6TargetLedgerRecord,
+    phase6_assessment_snapshot_id,
+    phase6_candidate_record_id,
+    phase6_derived_record_id,
+    phase6_target_record_id,
+)
 from novelty_harness.evidence.graph.migrations import ensure_schema
 from novelty_harness.evidence.graph.models import (
     PHASE6_EDGE_KINDS,
@@ -39,6 +49,10 @@ from novelty_harness.evidence.graph.sqlalchemy_models import (
     GraphNodeRow,
     LineageClusterMemberRow,
     LineageClusterRow,
+    Phase6AssessmentCandidateRow,
+    Phase6AssessmentDerivedRow,
+    Phase6AssessmentSnapshotRow,
+    Phase6AssessmentTargetRow,
     Phase6CommitRow,
     Phase6GraphEdgeMembershipRow,
     Phase6GraphNodeMembershipRow,
@@ -201,6 +215,231 @@ class SqlAlchemyEvidenceGraphRepository:
                     if node.kind == GraphNodeKind.EVIDENCE_PROPOSITION:
                         self._persist_phase6_node_membership(session, node, commit_record)
         return receipt
+
+    def record_phase6_assessment(
+        self,
+        snapshot: Phase6AssessmentSnapshotRecord,
+        *,
+        targets: Sequence[Phase6TargetLedgerRecord],
+        candidates: Sequence[Phase6CandidateLedgerRecord],
+        derived: Sequence[Phase6DerivedLedgerRecord],
+    ) -> str:
+        """Persist one complete append-only Phase 6 assessment transaction."""
+
+        snapshot = Phase6AssessmentSnapshotRecord.model_validate(snapshot.model_dump(mode="json"))
+        target_records = tuple(
+            Phase6TargetLedgerRecord.model_validate(item.model_dump(mode="json"))
+            for item in targets
+        )
+        candidate_records = tuple(
+            Phase6CandidateLedgerRecord.model_validate(item.model_dump(mode="json"))
+            for item in candidates
+        )
+        derived_records = tuple(
+            Phase6DerivedLedgerRecord.model_validate(item.model_dump(mode="json"))
+            for item in derived
+        )
+
+        expected_snapshot_id = phase6_assessment_snapshot_id(
+            snapshot,
+            targets=target_records,
+            candidates=candidate_records,
+            derived=derived_records,
+        )
+        if snapshot.snapshot_id != expected_snapshot_id:
+            raise ValueError("Phase 6 snapshot ID does not match its immutable facts")
+        target_ids = tuple(phase6_target_record_id(item) for item in target_records)
+        candidate_ids = tuple(phase6_candidate_record_id(item) for item in candidate_records)
+        derived_ids = tuple(phase6_derived_record_id(item) for item in derived_records)
+        if (
+            snapshot.target_record_ids != target_ids
+            or snapshot.candidate_record_ids != candidate_ids
+            or snapshot.derived_record_ids != derived_ids
+        ):
+            raise ValueError("Phase 6 snapshot record IDs do not match its ledger records")
+
+        for item in (*target_records, *candidate_records, *derived_records):
+            if item.snapshot_id != snapshot.snapshot_id:
+                raise ValueError("Ledger record belongs to a different snapshot")
+            if item.assessment_id != snapshot.assessment_id:
+                raise ValueError("Ledger record assessment does not match its snapshot")
+        target_by_id = {item.profile.target_id: item for item in target_records}
+        if len(target_by_id) != len(target_records):
+            raise ValueError("Assessment ledger contains duplicate target IDs")
+        if len(
+            {(item.target_id, item.source_id, item.source_version_id) for item in candidate_records}
+        ) != len(candidate_records):
+            raise ValueError("Assessment ledger contains duplicate candidate identities")
+        if any(item.target_id not in target_by_id for item in candidate_records):
+            raise ValueError("Candidate references a target absent from its snapshot")
+        if any(item.target_id not in target_by_id for item in derived_records):
+            raise ValueError("Derived record references a target absent from its snapshot")
+
+        assessed_commit_ids = {
+            item.commit_id for item in candidate_records if item.decision == "ASSESSED"
+        }
+        if None in assessed_commit_ids or assessed_commit_ids != set(snapshot.commit_ids):
+            raise ValueError("Snapshot commit IDs must exactly match assessed candidate commits")
+
+        with Session(self._engine) as session, session.begin():
+            for candidate in candidate_records:
+                source_row = session.get(GraphNodeRow, candidate.source_id)
+                source_node = (
+                    GraphNode.model_validate_json(source_row.document_json)
+                    if source_row is not None
+                    else None
+                )
+                if source_node is None or source_node.kind != GraphNodeKind.SOURCE:
+                    raise ValueError("Candidate source does not resolve to a source record")
+                if candidate.source_version_id is not None:
+                    version_row = session.get(GraphNodeRow, candidate.source_version_id)
+                    version_node = (
+                        GraphNode.model_validate_json(version_row.document_json)
+                        if version_row is not None
+                        else None
+                    )
+                    if (
+                        version_node is None
+                        or version_node.kind != GraphNodeKind.SOURCE_VERSION
+                        or version_node.attributes.get("source_id") != candidate.source_id
+                    ):
+                        raise ValueError("Candidate source version does not belong to its source")
+                if candidate.decision == "ASSESSED":
+                    assert candidate.commit_id is not None
+                    commit_row = session.get(Phase6CommitRow, candidate.commit_id)
+                    if commit_row is None:
+                        raise ValueError("Assessed candidate references a missing commit")
+                    commit = Phase6CommitRecord.model_validate_json(commit_row.document_json)
+                    receipt = Phase6CommitReceipt(
+                        commit_id=commit.commit_id,
+                        assessment_id=commit.assessment_id,
+                        committed_edge_ids=commit.committed_edge_ids,
+                        committed_classification_ids=commit.committed_classification_ids,
+                    )
+                    resolved = self._resolve_phase6_commit_in_session(session, receipt)
+                    matches = [
+                        comparison
+                        for comparison in resolved.comparisons
+                        if comparison.comparison.chain.edge.edge_id == candidate.verified_edge_id
+                        and comparison.classification.classification_id
+                        == candidate.classification_id
+                    ]
+                    if commit.assessment_id != snapshot.assessment_id or len(matches) != 1:
+                        raise ValueError("Assessed candidate does not join to its commit manifest")
+                    chain = matches[0].comparison.chain
+                    if (
+                        chain.source.source_id != candidate.source_id
+                        or chain.edge.mcu_id != candidate.target_id
+                        or (chain.version.version_id if chain.version is not None else None)
+                        != candidate.source_version_id
+                    ):
+                        raise ValueError("Assessed candidate source/version/target join is invalid")
+            for commit_id in snapshot.commit_ids:
+                row = session.get(Phase6CommitRow, commit_id)
+                if (
+                    row is None
+                    or Phase6CommitRecord.model_validate_json(row.document_json).assessment_id
+                    != snapshot.assessment_id
+                ):
+                    raise ValueError("Snapshot references a missing or foreign assessment commit")
+            for record in derived_records:
+                if not set(record.input_commit_ids) <= set(snapshot.commit_ids):
+                    raise ValueError("Derived record references a commit outside its snapshot")
+                for commit_id, edge_id, classification_id in zip(
+                    record.input_commit_ids,
+                    record.input_edge_ids,
+                    record.input_classification_ids,
+                    strict=True,
+                ):
+                    commit_row = session.get(Phase6CommitRow, commit_id)
+                    if commit_row is None:
+                        raise ValueError("Derived record references a missing commit")
+                    commit = Phase6CommitRecord.model_validate_json(commit_row.document_json)
+                    if (edge_id, classification_id) not in set(
+                        zip(
+                            commit.committed_edge_ids,
+                            commit.committed_classification_ids,
+                            strict=True,
+                        )
+                    ):
+                        raise ValueError("Derived input is absent from its commit manifest")
+
+            for cluster_id in snapshot.lineage_cluster_ids:
+                if session.get(LineageClusterRow, cluster_id) is None:
+                    raise ValueError("Snapshot references a missing lineage cluster")
+
+            self._insert_or_verify_ledger_row(
+                session,
+                Phase6AssessmentSnapshotRow,
+                snapshot.snapshot_id,
+                {
+                    "snapshot_id": snapshot.snapshot_id,
+                    "assessment_id": snapshot.assessment_id,
+                    "document_json": canonical_json(snapshot),
+                },
+                "Phase 6 snapshot",
+            )
+            for record, record_id in zip(target_records, target_ids, strict=True):
+                self._insert_or_verify_ledger_row(
+                    session,
+                    Phase6AssessmentTargetRow,
+                    record_id,
+                    {
+                        "record_id": record_id,
+                        "snapshot_id": record.snapshot_id,
+                        "assessment_id": record.assessment_id,
+                        "target_id": record.profile.target_id,
+                        "document_json": canonical_json(record),
+                    },
+                    "Phase 6 target",
+                )
+            for record, record_id in zip(candidate_records, candidate_ids, strict=True):
+                self._insert_or_verify_ledger_row(
+                    session,
+                    Phase6AssessmentCandidateRow,
+                    record_id,
+                    {
+                        "record_id": record_id,
+                        "snapshot_id": record.snapshot_id,
+                        "assessment_id": record.assessment_id,
+                        "target_id": record.target_id,
+                        "source_id": record.source_id,
+                        "source_version_id": record.source_version_id,
+                        "commit_id": record.commit_id,
+                        "document_json": canonical_json(record),
+                    },
+                    "Phase 6 candidate",
+                )
+            for record, record_id in zip(derived_records, derived_ids, strict=True):
+                self._insert_or_verify_ledger_row(
+                    session,
+                    Phase6AssessmentDerivedRow,
+                    record_id,
+                    {
+                        "record_id": record_id,
+                        "snapshot_id": record.snapshot_id,
+                        "assessment_id": record.assessment_id,
+                        "target_id": record.target_id,
+                        "kind": record.kind,
+                        "document_json": canonical_json(record),
+                    },
+                    "Phase 6 derived record",
+                )
+        return snapshot.snapshot_id
+
+    @staticmethod
+    def _insert_or_verify_ledger_row(
+        session: Session,
+        row_type: type[Any],
+        row_id: str,
+        values: dict[str, Any],
+        label: str,
+    ) -> None:
+        row = session.get(row_type, row_id)
+        if row is None:
+            session.add(row_type(**values))
+        elif any(getattr(row, key) != value for key, value in values.items()):
+            raise ValueError(f"{label} identity already exists with different content")
 
     def _persist_phase6_graph_membership(
         self, session: Session, edge: GraphEdge, commit: Phase6CommitRecord

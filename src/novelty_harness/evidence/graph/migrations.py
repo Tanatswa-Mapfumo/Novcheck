@@ -12,7 +12,7 @@ from novelty_harness.evidence.graph.sqlalchemy_models import (
     VerifiedEdgeRow,
 )
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def schema_version(engine: Engine) -> int | None:
@@ -65,9 +65,10 @@ def ensure_schema(engine: Engine) -> int:
             f"{SCHEMA_VERSION}; refusing to reinterpret"
         )
     if current < SCHEMA_VERSION:
-        if current in {1, 2, 3, 4, 5}:
+        if current in {1, 2, 3, 4, 5, 6}:
             # Existing Phase 6 graph rows gain no commit membership; validated
             # replay is required before authoritative graph reads can expose them.
+            # The v7 assessment ledger is created empty; history is never inferred.
             with engine.begin() as connection:
                 connection.execute(
                     update(SchemaVersionRow)

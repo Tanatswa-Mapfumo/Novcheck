@@ -363,19 +363,22 @@ def test_matching_semantic_rows_without_commit_manifest_do_not_authorize_project
         repository.close()
 
 
-def test_v4_semantic_rows_need_replay_to_gain_a_v5_commit_manifest(tmp_path) -> None:
-    database = tmp_path / "v4-to-v5.sqlite"
+def test_v4_semantic_rows_need_replay_to_gain_a_v7_commit_manifest(tmp_path) -> None:
+    database = tmp_path / "v4-to-v7.sqlite"
     repository = SqlAlchemyEvidenceGraphRepository(database)
     try:
         result = _commit(repository)
         with repository.engine.begin() as connection:
             connection.execute(text("DELETE FROM phase6_commits"))
-            connection.execute(text("UPDATE schema_version SET version = 4 WHERE version = 6"))
+            connection.execute(
+                text("UPDATE schema_version SET version = 4 WHERE version = :current"),
+                {"current": SCHEMA_VERSION},
+            )
     finally:
         repository.close()
     reopened = SqlAlchemyEvidenceGraphRepository(database)
     try:
-        assert schema_version(reopened.engine) == SCHEMA_VERSION == 6
+        assert schema_version(reopened.engine) == SCHEMA_VERSION == 7
         with pytest.raises(ValueError, match="commit|authorit|persist"):
             project_verified_edges(result, reopened)
         replay = _commit(reopened)

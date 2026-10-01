@@ -1,9 +1,9 @@
 """Immutable, typed records for completed Phase 6 assessment snapshots."""
 
 from datetime import date
-from typing import Literal, Self
+from typing import Literal, Self, cast
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, JsonValue, model_validator
 
 from novelty_harness.domain.base import ContractModel, UTCDateTime
 from novelty_harness.domain.ids import (
@@ -18,6 +18,7 @@ from novelty_harness.evidence.mapping.dimensions import MCUComparisonProfile
 from novelty_harness.evidence.precedent.gates import MultiSourceAssessment
 from novelty_harness.evidence.precedent.models import PatentScreeningResult
 from novelty_harness.evidence.verification.models import ContextExpansion
+from novelty_harness.runtime.tracing.hashing import canonical_hash
 
 
 class Phase6CoverageExclusion(ContractModel):
@@ -185,3 +186,100 @@ class Phase6DerivedLedgerRecord(ContractModel):
         ) != len(self.input_classification_ids):
             raise ValueError("Derived input identities must be paired")
         return self
+
+
+def phase6_target_record_id(record: Phase6TargetLedgerRecord) -> str:
+    """Return the stable row identity for a target profile within a snapshot."""
+
+    payload = record.model_dump(mode="json", exclude={"snapshot_id"})
+    return "p6target_" + canonical_hash(
+        cast(
+            JsonValue,
+            {
+                "snapshot_id": record.snapshot_id,
+                "kind": "TARGET",
+                "identity": record.profile.target_id,
+                "payload": payload,
+            },
+        )
+    )
+
+
+def phase6_candidate_record_id(record: Phase6CandidateLedgerRecord) -> str:
+    """Return the stable row identity for a candidate outcome within a snapshot."""
+
+    payload = record.model_dump(mode="json", exclude={"snapshot_id"})
+    return "p6candidate_" + canonical_hash(
+        cast(
+            JsonValue,
+            {
+                "snapshot_id": record.snapshot_id,
+                "kind": "CANDIDATE",
+                "identity": (record.target_id, record.source_id, record.source_version_id),
+                "payload": payload,
+            },
+        )
+    )
+
+
+def phase6_derived_record_id(record: Phase6DerivedLedgerRecord) -> str:
+    """Return the stable row identity for a derived result within a snapshot."""
+
+    payload = record.model_dump(mode="json", exclude={"snapshot_id"})
+    return "p6derived_" + canonical_hash(
+        cast(
+            JsonValue,
+            {
+                "snapshot_id": record.snapshot_id,
+                "kind": "DERIVED",
+                "identity": (record.target_id, record.kind),
+                "payload": payload,
+            },
+        )
+    )
+
+
+def phase6_assessment_snapshot_id(
+    snapshot: Phase6AssessmentSnapshotRecord,
+    *,
+    targets: tuple[Phase6TargetLedgerRecord, ...],
+    candidates: tuple[Phase6CandidateLedgerRecord, ...],
+    derived: tuple[Phase6DerivedLedgerRecord, ...],
+) -> str:
+    """Compute deterministic snapshot identity, excluding clocks and row IDs."""
+
+    target_facts = sorted(
+        (target.model_dump(mode="json", exclude={"snapshot_id"}) for target in targets),
+        key=lambda value: str(value["profile"]["target_id"]),
+    )
+    candidate_facts = sorted(
+        (record.model_dump(mode="json", exclude={"snapshot_id"}) for record in candidates),
+        key=lambda value: canonical_hash(cast(JsonValue, value)),
+    )
+    derived_facts = sorted(
+        (record.model_dump(mode="json", exclude={"snapshot_id"}) for record in derived),
+        key=lambda value: canonical_hash(cast(JsonValue, value)),
+    )
+    return "p6snap_" + canonical_hash(
+        cast(
+            JsonValue,
+            {
+                "assessment_id": snapshot.assessment_id,
+                "as_of": snapshot.as_of,
+                "method_version": snapshot.method_version,
+                "limits": {
+                    "max_sources_per_mcu": snapshot.max_sources_per_mcu,
+                    "max_versions_per_source": snapshot.max_versions_per_source,
+                    "max_expansions": snapshot.max_expansions,
+                    "window_chars": snapshot.window_chars,
+                },
+                "targets": target_facts,
+                "candidates": candidate_facts,
+                "derived": derived_facts,
+                "lineage_cluster_ids": sorted(snapshot.lineage_cluster_ids),
+                "commit_ids": sorted(snapshot.commit_ids),
+                "audit_refs": sorted(snapshot.audit_refs),
+                "coverage": snapshot.coverage,
+            },
+        )
+    )

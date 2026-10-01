@@ -1,6 +1,6 @@
 """SQLAlchemy 2.x ORM rows for the evidence graph. Infrastructure only."""
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import ForeignKey, ForeignKeyConstraint, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -138,3 +138,96 @@ class LineageClusterMemberRow(Base):
     cluster_id: Mapped[str] = mapped_column(
         String(512), ForeignKey("lineage_clusters.cluster_id"), nullable=False, index=True
     )
+
+
+class Phase6AssessmentSnapshotRow(Base):
+    """Immutable completed Phase 6 run envelope."""
+
+    __tablename__ = "phase6_assessment_snapshots"
+    __table_args__ = (UniqueConstraint("snapshot_id", "assessment_id"),)
+
+    snapshot_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    assessment_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    document_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Phase6AssessmentTargetRow(Base):
+    """Typed target profile retained by a completed assessment snapshot."""
+
+    __tablename__ = "phase6_assessment_targets"
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", "target_id"),
+        ForeignKeyConstraint(
+            ["snapshot_id", "assessment_id"],
+            [
+                "phase6_assessment_snapshots.snapshot_id",
+                "phase6_assessment_snapshots.assessment_id",
+            ],
+        ),
+    )
+
+    record_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    assessment_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    document_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Phase6AssessmentCandidateRow(Base):
+    """Typed candidate outcome with relational source/commit identities."""
+
+    __tablename__ = "phase6_assessment_candidates"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["snapshot_id", "assessment_id"],
+            [
+                "phase6_assessment_snapshots.snapshot_id",
+                "phase6_assessment_snapshots.assessment_id",
+            ],
+        ),
+        ForeignKeyConstraint(
+            ["snapshot_id", "target_id"],
+            ["phase6_assessment_targets.snapshot_id", "phase6_assessment_targets.target_id"],
+        ),
+    )
+
+    record_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    assessment_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("graph_nodes.node_id"), nullable=False, index=True
+    )
+    source_version_id: Mapped[str | None] = mapped_column(
+        String(512), ForeignKey("graph_nodes.node_id"), nullable=True, index=True
+    )
+    commit_id: Mapped[str | None] = mapped_column(
+        String(512), ForeignKey("phase6_commits.commit_id"), nullable=True, index=True
+    )
+    document_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Phase6AssessmentDerivedRow(Base):
+    """Typed derived snapshot retained with its target identity."""
+
+    __tablename__ = "phase6_assessment_derived"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["snapshot_id", "assessment_id"],
+            [
+                "phase6_assessment_snapshots.snapshot_id",
+                "phase6_assessment_snapshots.assessment_id",
+            ],
+        ),
+        ForeignKeyConstraint(
+            ["snapshot_id", "target_id"],
+            ["phase6_assessment_targets.snapshot_id", "phase6_assessment_targets.target_id"],
+        ),
+    )
+
+    record_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    assessment_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    document_json: Mapped[str] = mapped_column(Text, nullable=False)

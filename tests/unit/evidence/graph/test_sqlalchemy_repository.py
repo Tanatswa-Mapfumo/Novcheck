@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import insert, text
+from sqlalchemy import insert, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from novelty_harness.evidence.graph.migrations import SCHEMA_VERSION, ensure_schema, schema_version
@@ -208,6 +208,29 @@ def test_schema_version_metadata_is_verified(tmp_path) -> None:
         connection.execute(text("INSERT INTO schema_version VALUES (99, 'future')"))
     with pytest.raises(ValueError, match="newer than supported"):
         ensure_schema(repository.engine)
+    repository.close()
+
+
+@pytest.mark.parametrize("old_version", [4, 5, 6])
+def test_v4_v5_v6_migration_creates_empty_phase6_ledger(tmp_path, old_version: int) -> None:
+    repository = SqlAlchemyEvidenceGraphRepository(tmp_path / f"v{old_version}.sqlite3")
+    with repository.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE schema_version SET version = :version"), {"version": old_version}
+        )
+
+    assert ensure_schema(repository.engine) == 7
+    assert schema_version(repository.engine) == 7
+    expected_tables = {
+        "phase6_assessment_snapshots",
+        "phase6_assessment_targets",
+        "phase6_assessment_candidates",
+        "phase6_assessment_derived",
+    }
+    assert expected_tables <= set(inspect(repository.engine).get_table_names())
+    with repository.engine.connect() as connection:
+        for table in sorted(expected_tables):
+            assert connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one() == 0
     repository.close()
 
 
