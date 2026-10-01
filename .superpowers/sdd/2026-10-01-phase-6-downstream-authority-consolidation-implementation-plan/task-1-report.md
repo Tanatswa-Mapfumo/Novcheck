@@ -56,3 +56,24 @@ The focused tests cover version rejection and freezing, semantic-only status wit
 - Ledger persistence, canonical snapshot hashing/record IDs, and broader schema joins remain for Task 2.
 - Full repository verification was not run because Task 1 requires focused tests and Pyright; no claim is made about later task or phase exit criteria.
 - No ADR or user decision was needed.
+
+## Review follow-up: verifier citation completeness
+
+The Task 1 review identified that exactness was checked for supplied cited passages, but an empty or incomplete `cited_passages` collection could omit passages present in verifier commitment citations. Added a regression and changed the local validator to require the supplied passage ID set to equal the verifier-cited passage ID set, while retaining exact `PassageRecord` equality and scoped commitment ID checks.
+
+RED command and result:
+
+```text
+UV_CACHE_DIR=/private/tmp/novcheck-uv-cache uv run pytest tests/unit/evidence/graph/test_assessment_view.py -q -k omitted_verifier
+1 failed: Failed: DID NOT RAISE ValidationError
+```
+
+GREEN verification after the fix:
+
+```text
+UV_CACHE_DIR=/private/tmp/novcheck-uv-cache uv run pytest tests/unit/evidence/graph/test_assessment_view.py tests/unit/evidence/graph/test_assessment_ledger.py -q
+6 passed in 0.20s
+
+UV_CACHE_DIR=/private/tmp/novcheck-uv-cache uv run pyright
+0 errors, 0 warnings, 0 informations
+```

@@ -77,6 +77,9 @@ class CommittedComparisonView(ContractModel):
         for state in chain.verification.commitment_states:
             for passage_id in state.passage_ids:
                 cited_commitments.setdefault(passage_id, set()).add(state.commitment_id)
+        actual_passage_ids = {item.passage.passage_id for item in self.cited_passages}
+        if actual_passage_ids != set(cited_commitments):
+            raise ValueError("Committed comparison must retain all verifier-cited passages")
         for cited in self.cited_passages:
             if exact_passages.get(cited.passage.passage_id) != cited.passage:
                 raise ValueError("Cited passage must exactly match the committed chain passage")

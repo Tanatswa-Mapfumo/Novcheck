@@ -50,6 +50,22 @@ def _classified() -> ClassifiedComparison:
     return ClassifiedComparison(comparison=comparison, classification=classified)
 
 
+def _cited_passages(classified: ClassifiedComparison) -> tuple[CitedPassageView, ...]:
+    chain = classified.comparison.chain
+    commitment_ids_by_passage: dict[str, list[str]] = {}
+    for state in chain.verification.commitment_states:
+        for passage_id in state.passage_ids:
+            commitment_ids_by_passage.setdefault(passage_id, []).append(state.commitment_id)
+    return tuple(
+        CitedPassageView(
+            passage=passage,
+            commitment_ids=tuple(commitment_ids_by_passage[passage.passage_id]),
+        )
+        for passage in (*chain.bundle.passages, *chain.context_passages)
+        if passage.passage_id in commitment_ids_by_passage
+    )
+
+
 def test_assessment_view_is_frozen_and_versioned() -> None:
     with pytest.raises(ValidationError):
         Phase6AssessmentView.model_validate(
@@ -74,22 +90,17 @@ def test_assessment_view_is_frozen_and_versioned() -> None:
 
 def test_committed_comparison_retains_exact_classified_chain_and_passages() -> None:
     classified = _classified()
-    passage = classified.comparison.chain.bundle.passages[0]
-    commitment_ids = tuple(
-        state.commitment_id
-        for state in classified.comparison.chain.verification.commitment_states
-        if passage.passage_id in state.passage_ids
-    )
+    cited_passages = _cited_passages(classified)
     item = CommittedComparisonView(
         comparison=classified,
         commit_id="p6commit_1",
         projection_status="SEMANTIC_ONLY",
         proposition_node_id=None,
         graph_edge_ids=(),
-        cited_passages=(CitedPassageView(passage=passage, commitment_ids=commitment_ids),),
+        cited_passages=cited_passages,
     )
     assert item.comparison is classified
-    assert item.cited_passages[0].passage is passage
+    assert item.cited_passages == cited_passages
     view = Phase6AssessmentView(
         assessment_id="asm_test",
         snapshot_id="p6snap_1",
@@ -113,6 +124,19 @@ def test_committed_comparison_retains_exact_classified_chain_and_passages() -> N
         item.commit_id = "changed"  # type: ignore[misc]
 
 
+def test_committed_comparison_rejects_omitted_verifier_cited_passages() -> None:
+    classified = _classified()
+    with pytest.raises(ValidationError, match="all verifier-cited passages"):
+        CommittedComparisonView(
+            comparison=classified,
+            commit_id="p6commit_1",
+            projection_status="SEMANTIC_ONLY",
+            proposition_node_id=None,
+            graph_edge_ids=(),
+            cited_passages=(),
+        )
+
+
 def test_graph_relation_ids_must_match_a_committed_comparison() -> None:
     classified = _classified()
     view_item = CommittedComparisonView(
@@ -121,7 +145,7 @@ def test_graph_relation_ids_must_match_a_committed_comparison() -> None:
         projection_status="GRAPH_AUTHORIZED",
         proposition_node_id="prop_expected",
         graph_edge_ids=("gedge_expected",),
-        cited_passages=(),
+        cited_passages=_cited_passages(classified),
     )
     edge, node = _graph_relation_fixture(classified)
     relation = AuthorizedGraphRelation(
