@@ -2,22 +2,31 @@ from datetime import UTC, date, datetime
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from novelty_harness.evidence.graph.assessment_ledger import (
     Phase6AssessmentSnapshotRecord,
     Phase6CandidateLedgerRecord,
     Phase6CoverageLedger,
+    Phase6DerivedLedgerRecord,
     Phase6TargetLedgerRecord,
     phase6_assessment_snapshot_id,
+    phase6_candidate_record_id,
+    phase6_derived_record_id,
     phase6_target_record_id,
 )
 from novelty_harness.evidence.graph.models import GraphNode, GraphNodeKind
+from novelty_harness.evidence.graph.sqlalchemy_models import Phase6AssessmentCandidateRow
 from novelty_harness.evidence.graph.sqlalchemy_repository import (
     SqlAlchemyEvidenceGraphRepository,
 )
 from novelty_harness.evidence.mapping.dimensions import MCUComparisonProfile
-from tests.fixtures.phase5 import phase5_provenance
+from novelty_harness.evidence.precedent.models import (
+    PatentScreeningDateRecord,
+    PatentScreeningResult,
+)
+from novelty_harness.evidence.verification.models import ContextExpansion
+from tests.fixtures.phase5 import make_passage, phase5_provenance
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 
@@ -62,6 +71,7 @@ def _candidate(
     source_version_id: str | None = None,
     decision: str = "FAILED_MAPPING",
     commit_id: str | None = None,
+    expansions: tuple[ContextExpansion, ...] = (),
 ) -> Phase6CandidateLedgerRecord:
     values: dict[str, object] = {
         "snapshot_id": snapshot_id,
@@ -72,6 +82,7 @@ def _candidate(
         "decision": decision,
         "reason": "candidate retained for ledger validation",
         "failure_stage": "MAPPING" if decision != "ASSESSED" else None,
+        "expansions": expansions,
     }
     if decision == "ASSESSED":
         values.update(
@@ -103,8 +114,6 @@ def _ledger(
         item.model_copy(update={"snapshot_id": snapshot_id}) for item in candidates
     )
     target_record_ids = tuple(phase6_target_record_id(item) for item in final_targets)
-    from novelty_harness.evidence.graph.assessment_ledger import phase6_candidate_record_id
-
     snapshot = template.model_copy(
         update={
             "snapshot_id": snapshot_id,
@@ -125,6 +134,25 @@ def _graph_node(node_id: str, kind: GraphNodeKind, **attributes: object) -> Grap
         observed_at=NOW,
         provenance=phase5_provenance("assessment-ledger-test"),
         attributes=attributes,
+    )
+
+
+def _context_expansion(observed_at: datetime) -> ContextExpansion:
+    passage = make_passage(
+        "src_ledger",
+        text="A same-source context passage.",
+        source_version_id="srcv_ledger",
+        observed_at=observed_at,
+    )
+    return ContextExpansion(
+        origin_passage_id="pass_origin",
+        source_id="src_ledger",
+        source_version_id="srcv_ledger",
+        attempt=1,
+        available=True,
+        window_passage=passage,
+        observed_at=observed_at,
+        provenance=phase5_provenance("assessment-ledger-context-expansion-test"),
     )
 
 
@@ -202,6 +230,128 @@ def test_snapshot_replay_keeps_first_audit_metadata_and_completion_time() -> Non
     assert stored.audit_refs == original.audit_refs
     assert stored.completed_at == original.completed_at
     repository.close()
+
+
+def test_candidate_expansion_replay_ignores_observation_clocks_and_keeps_first_payload() -> None:
+    repository = SqlAlchemyEvidenceGraphRepository()
+    repository.upsert(
+        nodes=(
+            _graph_node("src_ledger", GraphNodeKind.SOURCE),
+            _graph_node("srcv_ledger", GraphNodeKind.SOURCE_VERSION, source_id="src_ledger"),
+        )
+    )
+    pending_target = Phase6TargetLedgerRecord(
+        snapshot_id="pending", assessment_id="asm_ledger", profile=_profile()
+    )
+    original_expansion = _context_expansion(NOW)
+    original_candidate = _candidate(
+        snapshot_id="pending",
+        source_version_id="srcv_ledger",
+        expansions=(original_expansion,),
+    )
+    original_snapshot, targets, candidates = _ledger(
+        targets=(pending_target,), candidates=(original_candidate,)
+    )
+    later = datetime(2026, 10, 1, 13, 0, tzinfo=UTC)
+    replay_expansion = original_expansion.model_copy(
+        update={
+            "observed_at": later,
+            "window_passage": original_expansion.window_passage.model_copy(
+                update={"observed_at": later}
+            ),
+        }
+    )
+    replay_candidate = _candidate(
+        snapshot_id="pending",
+        source_version_id="srcv_ledger",
+        expansions=(replay_expansion,),
+    )
+    replay_snapshot, replay_targets, replay_candidates = _ledger(
+        targets=(pending_target,), candidates=(replay_candidate,)
+    )
+
+    assert replay_snapshot.snapshot_id == original_snapshot.snapshot_id
+    assert phase6_candidate_record_id(replay_candidates[0]) == phase6_candidate_record_id(
+        candidates[0]
+    )
+    repository.record_phase6_assessment(
+        original_snapshot, targets=targets, candidates=candidates, derived=()
+    )
+    repository.record_phase6_assessment(
+        replay_snapshot, targets=replay_targets, candidates=replay_candidates, derived=()
+    )
+    record_id = phase6_candidate_record_id(candidates[0])
+    with repository.engine.connect() as connection:
+        document = connection.execute(
+            select(Phase6AssessmentCandidateRow.document_json).where(
+                Phase6AssessmentCandidateRow.record_id == record_id
+            )
+        ).scalar_one()
+    stored = Phase6CandidateLedgerRecord.model_validate_json(document)
+    assert stored.expansions[0].observed_at == NOW
+    assert stored.expansions[0].window_passage is not None
+    assert stored.expansions[0].window_passage.observed_at == NOW
+    changed_provenance = replay_expansion.model_copy(
+        update={"provenance": phase5_provenance("changed-context-provenance")}
+    )
+    semantic_change = _candidate(
+        snapshot_id="pending",
+        source_version_id="srcv_ledger",
+        expansions=(changed_provenance,),
+    )
+    changed_snapshot, _, _ = _ledger(targets=(pending_target,), candidates=(semantic_change,))
+    assert changed_snapshot.snapshot_id != original_snapshot.snapshot_id
+    repository.close()
+
+
+def test_derived_patent_observation_clock_is_ignored_but_disclosure_date_is_not() -> None:
+    result = PatentScreeningResult(
+        screening_id="psr_ledger",
+        mcu_id="mcu_ledger",
+        mode="LIMITED",
+        reference_source_ids=("src_ledger",),
+        dates=(
+            PatentScreeningDateRecord(source_id="src_ledger", publication_date=date(2020, 1, 1)),
+        ),
+        observed_at=NOW,
+        provenance=phase5_provenance("patent-screening-test"),
+    )
+    derived = Phase6DerivedLedgerRecord(
+        snapshot_id="p6snap_derived",
+        assessment_id="asm_ledger",
+        target_id="mcu_ledger",
+        kind="PATENT",
+        input_commit_ids=(),
+        input_edge_ids=(),
+        input_classification_ids=(),
+        lineage_root_ids=(),
+        as_of=date(2026, 10, 1),
+        method_version="patent-v1",
+        result=result,
+    )
+    replay = derived.model_copy(
+        update={
+            "result": result.model_copy(
+                update={"observed_at": datetime(2026, 10, 1, 13, 0, tzinfo=UTC)}
+            )
+        }
+    )
+    changed_date = derived.model_copy(
+        update={
+            "result": result.model_copy(
+                update={
+                    "dates": (
+                        PatentScreeningDateRecord(
+                            source_id="src_ledger", publication_date=date(2021, 1, 1)
+                        ),
+                    )
+                }
+            )
+        }
+    )
+
+    assert phase6_derived_record_id(replay) == phase6_derived_record_id(derived)
+    assert phase6_derived_record_id(changed_date) != phase6_derived_record_id(derived)
 
 
 def test_new_snapshot_can_persist_changed_assessment_facts() -> None:

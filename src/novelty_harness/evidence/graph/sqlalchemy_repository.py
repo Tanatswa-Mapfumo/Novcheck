@@ -26,6 +26,7 @@ from novelty_harness.evidence.graph.assessment_ledger import (
     phase6_assessment_snapshot_id,
     phase6_candidate_record_id,
     phase6_derived_record_id,
+    phase6_ledger_identity_value,
     phase6_target_record_id,
 )
 from novelty_harness.evidence.graph.migrations import ensure_schema
@@ -94,7 +95,13 @@ def _snapshot_identity_document(value: str | Phase6AssessmentSnapshotRecord) -> 
         typed_document = cast(dict[str, JsonValue], document)
         typed_document.pop("audit_refs", None)
         typed_document.pop("completed_at", None)
-    return canonical_json(cast(JsonValue, document))
+    return canonical_json(phase6_ledger_identity_value(cast(JsonValue, document)))
+
+
+def _ledger_row_identity_document(value: str) -> str:
+    """Compare persisted ledger facts without nested observation clocks."""
+
+    return canonical_json(phase6_ledger_identity_value(cast(JsonValue, json.loads(value))))
 
 
 def _phase6_commit_id(
@@ -453,7 +460,15 @@ class SqlAlchemyEvidenceGraphRepository:
         row = session.get(row_type, row_id)
         if row is None:
             session.add(row_type(**values))
-        elif any(getattr(row, key) != value for key, value in values.items()):
+        elif any(
+            (
+                _ledger_row_identity_document(getattr(row, key))
+                != _ledger_row_identity_document(value)
+                if key == "document_json"
+                else getattr(row, key) != value
+            )
+            for key, value in values.items()
+        ):
             raise ValueError(f"{label} identity already exists with different content")
 
     def _persist_phase6_graph_membership(

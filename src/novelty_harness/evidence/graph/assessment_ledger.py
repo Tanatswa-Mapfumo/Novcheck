@@ -188,10 +188,26 @@ class Phase6DerivedLedgerRecord(ContractModel):
         return self
 
 
+def phase6_ledger_identity_value(value: JsonValue) -> JsonValue:
+    """Remove nested observation clocks while retaining evidence provenance."""
+
+    if isinstance(value, dict):
+        return {
+            key: phase6_ledger_identity_value(part)
+            for key, part in value.items()
+            if key not in {"observed_at", "retrieved_at"}
+        }
+    if isinstance(value, list):
+        return [phase6_ledger_identity_value(part) for part in value]
+    return value
+
+
 def phase6_target_record_id(record: Phase6TargetLedgerRecord) -> str:
     """Return the stable row identity for a target profile within a snapshot."""
 
-    payload = record.model_dump(mode="json", exclude={"snapshot_id"})
+    payload = phase6_ledger_identity_value(
+        cast(JsonValue, record.model_dump(mode="json", exclude={"snapshot_id"}))
+    )
     return "p6target_" + canonical_hash(
         cast(
             JsonValue,
@@ -208,7 +224,9 @@ def phase6_target_record_id(record: Phase6TargetLedgerRecord) -> str:
 def phase6_candidate_record_id(record: Phase6CandidateLedgerRecord) -> str:
     """Return the stable row identity for a candidate outcome within a snapshot."""
 
-    payload = record.model_dump(mode="json", exclude={"snapshot_id"})
+    payload = phase6_ledger_identity_value(
+        cast(JsonValue, record.model_dump(mode="json", exclude={"snapshot_id"}))
+    )
     return "p6candidate_" + canonical_hash(
         cast(
             JsonValue,
@@ -225,7 +243,9 @@ def phase6_candidate_record_id(record: Phase6CandidateLedgerRecord) -> str:
 def phase6_derived_record_id(record: Phase6DerivedLedgerRecord) -> str:
     """Return the stable row identity for a derived result within a snapshot."""
 
-    payload = record.model_dump(mode="json", exclude={"snapshot_id"})
+    payload = phase6_ledger_identity_value(
+        cast(JsonValue, record.model_dump(mode="json", exclude={"snapshot_id"}))
+    )
     return "p6derived_" + canonical_hash(
         cast(
             JsonValue,
@@ -248,17 +268,31 @@ def phase6_assessment_snapshot_id(
 ) -> str:
     """Compute deterministic snapshot identity, excluding clocks and row IDs."""
 
-    target_facts = sorted(
-        (target.model_dump(mode="json", exclude={"snapshot_id"}) for target in targets),
-        key=lambda value: str(value["profile"]["target_id"]),
-    )
+    target_facts = [
+        (
+            phase6_ledger_identity_value(
+                cast(JsonValue, target.model_dump(mode="json", exclude={"snapshot_id"}))
+            )
+        )
+        for target in sorted(targets, key=lambda item: str(item.profile.target_id))
+    ]
     candidate_facts = sorted(
-        (record.model_dump(mode="json", exclude={"snapshot_id"}) for record in candidates),
-        key=lambda value: canonical_hash(cast(JsonValue, value)),
+        (
+            phase6_ledger_identity_value(
+                cast(JsonValue, record.model_dump(mode="json", exclude={"snapshot_id"}))
+            )
+            for record in candidates
+        ),
+        key=canonical_hash,
     )
     derived_facts = sorted(
-        (record.model_dump(mode="json", exclude={"snapshot_id"}) for record in derived),
-        key=lambda value: canonical_hash(cast(JsonValue, value)),
+        (
+            phase6_ledger_identity_value(
+                cast(JsonValue, record.model_dump(mode="json", exclude={"snapshot_id"}))
+            )
+            for record in derived
+        ),
+        key=canonical_hash,
     )
     return "p6snap_" + canonical_hash(
         cast(
@@ -278,7 +312,9 @@ def phase6_assessment_snapshot_id(
                 "derived": derived_facts,
                 "lineage_cluster_ids": sorted(snapshot.lineage_cluster_ids),
                 "commit_ids": sorted(snapshot.commit_ids),
-                "coverage": snapshot.coverage,
+                "coverage": phase6_ledger_identity_value(
+                    cast(JsonValue, snapshot.coverage.model_dump(mode="json"))
+                ),
             },
         )
     )
