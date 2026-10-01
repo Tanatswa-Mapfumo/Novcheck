@@ -27,6 +27,13 @@ NETWORK_IMPORTS = (
 
 
 def test_reporting_has_only_domain_and_standard_library_dependencies():
+    # The approved Phase 6 report compiler consumes only typed evidence-graph
+    # contracts and its repository port; the Phase 1 compiler stays domain-only.
+    phase6_read_contracts = {
+        "novelty_harness.evidence.graph.assessment_view",
+        "novelty_harness.evidence.graph.models",
+        "novelty_harness.evidence.graph.repository",
+    }
     for path in (ROOT / "src/novelty_harness/reporting").rglob("*.py"):
         source = path.read_text()
         assert not forbidden_imports(source, "novelty_harness.reporting")
@@ -36,7 +43,9 @@ def test_reporting_has_only_domain_and_standard_library_dependencies():
                 and node.module
                 and node.module.startswith("novelty_harness")
             ):
-                assert node.module.startswith("novelty_harness.domain.")
+                assert node.module.startswith("novelty_harness.domain.") or (
+                    path.name == "minimal.py" and node.module in phase6_read_contracts
+                )
 
 
 def test_production_has_no_test_imports_or_concrete_network_provider_dependencies():

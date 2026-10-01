@@ -229,6 +229,9 @@ def test_graph_models_and_protocol_are_storage_independent() -> None:
         def record_phase6_assessment(self, snapshot, *, targets=(), candidates=(), derived=()):  # type: ignore[no-untyped-def]
             return snapshot.snapshot_id
 
+        def load_phase6_assessment(self, assessment_id, *, snapshot_id):  # type: ignore[no-untyped-def]
+            raise ValueError("No persisted Phase 6 assessment")
+
         def get_node(self, node_id: str) -> GraphNode | None:
             return None
 
