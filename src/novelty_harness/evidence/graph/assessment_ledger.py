@@ -21,6 +21,11 @@ from novelty_harness.evidence.precedent.models import PatentScreeningResult
 from novelty_harness.evidence.verification.models import ContextExpansion
 from novelty_harness.runtime.tracing.hashing import canonical_hash
 
+AUTHORITY_REJECTED_DESCRIPTOR_LIMITATION = (
+    "Source/version descriptors were rejected by content authority and are retained only as "
+    "untrusted audit claims."
+)
+
 
 class Phase6CoverageExclusion(ContractModel):
     """A source or source version omitted by a documented local bound."""
@@ -165,6 +170,12 @@ class Phase6CandidateLedgerRecord(ContractModel):
             raise ValueError("Unassessed candidates cannot claim committed comparison identities")
         if self.decision != "ASSESSED" and self.projection_intent is not None:
             raise ValueError("Only assessed candidates have a projection intent")
+        if (
+            self.decision == "AUTHORITY_REJECTED"
+            and self.failure_stage == "CONTENT_AUTHORITY"
+            and AUTHORITY_REJECTED_DESCRIPTOR_LIMITATION not in self.limitations
+        ):
+            raise ValueError("Content authority rejection must label descriptors as untrusted")
         return self
 
 

@@ -35,6 +35,7 @@ from novelty_harness.evidence.context.selection import (
     select_support_passages,
 )
 from novelty_harness.evidence.graph.assessment_ledger import (
+    AUTHORITY_REJECTED_DESCRIPTOR_LIMITATION,
     Phase6AssessmentSnapshotRecord,
     Phase6CandidateLedgerRecord,
     Phase6CoverageExclusion,
@@ -1395,6 +1396,15 @@ class EvidenceVerificationPipeline:
             if outcome is None:
                 continue
             if outcome.chain is None:
+                audit_limitations = outcome.limitations
+                if (
+                    outcome.status == "AUTHORITY_REJECTED"
+                    and outcome.failure_stage == "CONTENT_AUTHORITY"
+                ):
+                    audit_limitations = (
+                        *audit_limitations,
+                        AUTHORITY_REJECTED_DESCRIPTOR_LIMITATION,
+                    )
                 candidate_records.append(
                     Phase6CandidateLedgerRecord(
                         snapshot_id="pending",
@@ -1414,7 +1424,7 @@ class EvidenceVerificationPipeline:
                         reason=outcome.failure,
                         failure_stage=outcome.failure_stage,
                         expansions=outcome.expansions,
-                        limitations=outcome.limitations,
+                        limitations=audit_limitations,
                     )
                 )
                 continue

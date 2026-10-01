@@ -9,7 +9,7 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, JsonValue
 from sqlalchemy import Engine, create_engine, event, select
@@ -19,6 +19,7 @@ from sqlalchemy.pool import StaticPool
 from novelty_harness.domain.enums import PrecedentState
 from novelty_harness.domain.ids import AssessmentId, SourceId
 from novelty_harness.evidence.graph.assessment_ledger import (
+    AUTHORITY_REJECTED_DESCRIPTOR_LIMITATION,
     Phase6AssessmentSnapshotRecord,
     Phase6CandidateLedgerRecord,
     Phase6DerivedLedgerRecord,
@@ -30,6 +31,7 @@ from novelty_harness.evidence.graph.assessment_ledger import (
     phase6_target_record_id,
 )
 from novelty_harness.evidence.graph.assessment_view import (
+    AuthorizedGraphRelation,
     CitedPassageView,
     CommittedComparisonView,
     Phase6AssessmentAuthorityError,
@@ -345,7 +347,15 @@ class SqlAlchemyEvidenceGraphRepository:
         with Session(self._engine) as session, session.begin():
             resolved_by_commit: dict[str, ResolvedPhase6Commit] = {}
             for candidate in candidate_records:
-                self._validate_candidate_source_descriptors(session, candidate)
+                self._validate_candidate_source_descriptors(
+                    session,
+                    candidate,
+                    allow_rejected_content_mismatch=(
+                        candidate.decision == "AUTHORITY_REJECTED"
+                        and candidate.failure_stage == "CONTENT_AUTHORITY"
+                        and AUTHORITY_REJECTED_DESCRIPTOR_LIMITATION in candidate.limitations
+                    ),
+                )
                 if candidate.decision == "ASSESSED":
                     assert candidate.commit_id is not None
                     commit_row = session.get(Phase6CommitRow, candidate.commit_id)
@@ -509,11 +519,7 @@ class SqlAlchemyEvidenceGraphRepository:
     def load_phase6_assessment(
         self, assessment_id: AssessmentId, *, snapshot_id: str
     ) -> Phase6AssessmentView:
-        """Load one validated semantic snapshot in a single SQLite read transaction.
-
-        Graph-backed comparisons intentionally remain unavailable until the graph
-        membership authority gate is implemented in the following plan task.
-        """
+        """Load one validated semantic and graph snapshot in one SQLite transaction."""
         with Session(self._engine) as session:
             # pysqlite otherwise delays the database-level BEGIN until a write;
             # issue it before the first SELECT so every table read shares one snapshot.
@@ -613,7 +619,15 @@ class SqlAlchemyEvidenceGraphRepository:
                     raise Phase6AssessmentAuthorityError(
                         "Candidate row metadata differs from its payload"
                     )
-                self._validate_candidate_source_descriptors(session, record)
+                self._validate_candidate_source_descriptors(
+                    session,
+                    record,
+                    allow_rejected_content_mismatch=(
+                        record.decision == "AUTHORITY_REJECTED"
+                        and record.failure_stage == "CONTENT_AUTHORITY"
+                        and AUTHORITY_REJECTED_DESCRIPTOR_LIMITATION in record.limitations
+                    ),
+                )
             for record_id, record in zip(snapshot.derived_record_ids, derived, strict=True):
                 row = derived_row_by_id[record_id]
                 if (
@@ -673,6 +687,15 @@ class SqlAlchemyEvidenceGraphRepository:
                     "Snapshot commits do not exactly match assessed candidate outcomes"
                 )
             comparisons_by_key: dict[tuple[str, str, str], ClassifiedComparison] = {}
+            projection_by_key: dict[
+                tuple[str, str, str],
+                tuple[
+                    Literal["GRAPH_AUTHORIZED", "SEMANTIC_ONLY", "NONRELATIONAL_STATUS"],
+                    str | None,
+                    tuple[str, ...],
+                ],
+            ] = {}
+            authorized_relations: list[tuple[GraphEdge, GraphNode, str, Any, Any]] = []
             for candidate in assessed_candidates:
                 assert candidate.commit_id is not None
                 resolved = resolved_by_commit.get(candidate.commit_id)
@@ -699,31 +722,158 @@ class SqlAlchemyEvidenceGraphRepository:
                     raise Phase6AssessmentAuthorityError(
                         "Candidate source/version/target differs from committed semantics"
                     )
-                _, expected_edges = verified_edge_graph_fragment(
+                expected_nodes, expected_edges = verified_edge_graph_fragment(
                     (chain.edge,),
                     (classified.classification,),
                     observed_at=chain.edge.observed_at,
                     provenance=chain.edge.provenance,
                 )
-                if expected_edges:
+                key = (
+                    candidate.commit_id,
+                    str(candidate.verified_edge_id),
+                    str(candidate.classification_id),
+                )
+                expected_node = next(
+                    (
+                        node
+                        for node in expected_nodes
+                        if node.kind == GraphNodeKind.EVIDENCE_PROPOSITION
+                    ),
+                    None,
+                )
+                if expected_node is None:
                     raise Phase6AssessmentAuthorityError(
-                        "Graph-dependent comparison requires the Task 7 graph authority gate"
+                        "Committed comparison has no expected proposition node"
+                    )
+                exact_memberships = tuple(
+                    session.scalars(
+                        select(Phase6GraphEdgeMembershipRow).where(
+                            Phase6GraphEdgeMembershipRow.commit_id == candidate.commit_id,
+                            Phase6GraphEdgeMembershipRow.verified_edge_id
+                            == candidate.verified_edge_id,
+                            Phase6GraphEdgeMembershipRow.classification_id
+                            == candidate.classification_id,
+                        )
+                    ).all()
+                )
+                expected_edge_ids = {edge.edge_id for edge in expected_edges}
+                actual_edge_ids = {item.edge_id for item in exact_memberships}
+                exact_node_memberships = tuple(
+                    session.scalars(
+                        select(Phase6GraphNodeMembershipRow).where(
+                            Phase6GraphNodeMembershipRow.commit_id == candidate.commit_id,
+                            Phase6GraphNodeMembershipRow.verified_edge_id
+                            == candidate.verified_edge_id,
+                            Phase6GraphNodeMembershipRow.classification_id
+                            == candidate.classification_id,
+                        )
+                    ).all()
+                )
+                if candidate.projection_intent == "GRAPH_BACKED":
+                    if actual_edge_ids != expected_edge_ids:
+                        raise Phase6AssessmentAuthorityError(
+                            "Relation memberships do not exactly match the derived projection"
+                        )
+                    if tuple(item.node_id for item in exact_node_memberships) != (
+                        expected_node.node_id,
+                    ):
+                        raise Phase6AssessmentAuthorityError(
+                            "Proposition memberships do not exactly match the derived projection"
+                        )
+                elif actual_edge_ids or exact_node_memberships:
+                    raise Phase6AssessmentAuthorityError(
+                        "Semantic-only commit has claimed proposition membership"
                     )
                 if candidate.projection_intent == "GRAPH_BACKED":
-                    raise Phase6AssessmentAuthorityError(
-                        "Graph-backed intent has no repository-authorized graph relation"
+                    node_row = session.get(GraphNodeRow, expected_node.node_id)
+                    if node_row is None:
+                        raise Phase6AssessmentAuthorityError(
+                            "Graph-backed snapshot is missing its proposition row"
+                        )
+                    try:
+                        proposition = self._authoritative_graph_node(session, node_row)
+                    except (TypeError, ValueError) as exc:
+                        raise Phase6AssessmentAuthorityError(
+                            "Graph-backed proposition row cannot be validated"
+                        ) from exc
+                    if proposition is None:
+                        raise Phase6AssessmentAuthorityError(
+                            "Graph-backed proposition is corrupt or unauthorized"
+                        )
+                    expected_persisted_nodes, _ = verified_edge_graph_fragment(
+                        (chain.edge,),
+                        (classified.classification,),
+                        observed_at=proposition.observed_at,
+                        provenance=proposition.provenance,
                     )
-                if candidate.projection_intent != "SEMANTIC_ONLY":
+                    if proposition not in expected_persisted_nodes:
+                        raise Phase6AssessmentAuthorityError(
+                            "Graph-backed proposition differs from the derived projection"
+                        )
+                    authorized_edges: list[GraphEdge] = []
+                    for expected_edge in expected_edges:
+                        edge_row = session.get(GraphEdgeRow, expected_edge.edge_id)
+                        if edge_row is None:
+                            raise Phase6AssessmentAuthorityError(
+                                "Graph-backed snapshot is missing a required relation row"
+                            )
+                        try:
+                            graph_edge = self._authoritative_graph_edge(session, edge_row)
+                        except (TypeError, ValueError) as exc:
+                            raise Phase6AssessmentAuthorityError(
+                                "Graph-backed relation row cannot be validated"
+                            ) from exc
+                        if graph_edge is None:
+                            raise Phase6AssessmentAuthorityError(
+                                "Graph-backed relation is corrupt or unauthorized"
+                            )
+                        _, expected_persisted_edges = verified_edge_graph_fragment(
+                            (chain.edge,),
+                            (classified.classification,),
+                            observed_at=graph_edge.observed_at,
+                            provenance=graph_edge.provenance,
+                        )
+                        if graph_edge not in expected_persisted_edges:
+                            raise Phase6AssessmentAuthorityError(
+                                "Graph-backed relation differs from the derived projection"
+                            )
+                        authorized_edges.append(graph_edge)
+                        authorized_relations.append(
+                            (
+                                graph_edge,
+                                proposition,
+                                candidate.commit_id,
+                                candidate.verified_edge_id,
+                                candidate.classification_id,
+                            )
+                        )
+                    projection_by_key[key] = (
+                        "GRAPH_AUTHORIZED" if expected_edges else "NONRELATIONAL_STATUS",
+                        proposition.node_id if expected_edges else None,
+                        tuple(edge.edge_id for edge in authorized_edges),
+                    )
+                elif candidate.projection_intent == "SEMANTIC_ONLY":
+                    node_row = session.get(GraphNodeRow, expected_node.node_id)
+                    if node_row is not None or any(
+                        session.get(GraphEdgeRow, edge.edge_id) is not None
+                        for edge in expected_edges
+                    ):
+                        raise Phase6AssessmentAuthorityError(
+                            "Semantic-only commit has a claimed graph projection"
+                        )
+                    if session.get(Phase6GraphNodeMembershipRow, expected_node.node_id) or any(
+                        session.get(Phase6GraphEdgeMembershipRow, edge.edge_id) is not None
+                        for edge in expected_edges
+                    ):
+                        raise Phase6AssessmentAuthorityError(
+                            "Semantic-only commit has graph membership without projection"
+                        )
+                    projection_by_key[key] = ("SEMANTIC_ONLY", None, ())
+                else:
                     raise Phase6AssessmentAuthorityError(
                         "Assessed candidate has invalid projection intent"
                     )
-                comparisons_by_key[
-                    (
-                        candidate.commit_id,
-                        str(candidate.verified_edge_id),
-                        str(candidate.classification_id),
-                    )
-                ] = classified
+                comparisons_by_key[key] = classified
 
             lineage: list[EvidenceLineageCluster] = []
             for cluster_id in snapshot.lineage_cluster_ids:
@@ -773,9 +923,27 @@ class SqlAlchemyEvidenceGraphRepository:
                     CommittedComparisonView(
                         comparison=classified,
                         commit_id=candidate.commit_id,
-                        projection_status="SEMANTIC_ONLY",
-                        proposition_node_id=None,
-                        graph_edge_ids=(),
+                        projection_status=projection_by_key[
+                            (
+                                candidate.commit_id,
+                                str(candidate.verified_edge_id),
+                                str(candidate.classification_id),
+                            )
+                        ][0],
+                        proposition_node_id=projection_by_key[
+                            (
+                                candidate.commit_id,
+                                str(candidate.verified_edge_id),
+                                str(candidate.classification_id),
+                            )
+                        ][1],
+                        graph_edge_ids=projection_by_key[
+                            (
+                                candidate.commit_id,
+                                str(candidate.verified_edge_id),
+                                str(candidate.classification_id),
+                            )
+                        ][2],
                         cited_passages=cited,
                     )
                 )
@@ -840,7 +1008,16 @@ class SqlAlchemyEvidenceGraphRepository:
                 view_version=1,
                 commit_ids=snapshot.commit_ids,
                 committed_comparisons=tuple(committed),
-                authorized_graph_relations=(),
+                authorized_graph_relations=tuple(
+                    AuthorizedGraphRelation(
+                        edge=edge,
+                        proposition_node=node,
+                        commit_id=commit_id,
+                        verified_edge_id=edge_id,
+                        classification_id=classification_id,
+                    )
+                    for edge, node, commit_id, edge_id, classification_id in authorized_relations
+                ),
                 targets=tuple(item.profile for item in targets),
                 candidate_outcomes=candidates,
                 coverage=snapshot.coverage,
@@ -1021,7 +1198,10 @@ class SqlAlchemyEvidenceGraphRepository:
 
     @staticmethod
     def _validate_candidate_source_descriptors(
-        session: Session, candidate: Phase6CandidateLedgerRecord
+        session: Session,
+        candidate: Phase6CandidateLedgerRecord,
+        *,
+        allow_rejected_content_mismatch: bool = False,
     ) -> None:
         source_row = session.get(GraphNodeRow, candidate.source_id)
         source = (
@@ -1033,12 +1213,14 @@ class SqlAlchemyEvidenceGraphRepository:
             raise Phase6AssessmentAuthorityError(
                 "Candidate source does not resolve to a source node"
             )
-        if source.attributes.get(
-            "content_hash"
-        ) != candidate.source_content_hash or source.attributes.get("access_state") != (
-            candidate.source_access_state.value
-            if candidate.source_access_state is not None
-            else None
+        if not allow_rejected_content_mismatch and (
+            source.attributes.get("content_hash") != candidate.source_content_hash
+            or source.attributes.get("access_state")
+            != (
+                candidate.source_access_state.value
+                if candidate.source_access_state is not None
+                else None
+            )
         ):
             raise Phase6AssessmentAuthorityError(
                 "Candidate source content descriptor differs from stored source authority"
@@ -1067,12 +1249,14 @@ class SqlAlchemyEvidenceGraphRepository:
             raise Phase6AssessmentAuthorityError(
                 "Candidate source version does not resolve to a version of its source"
             )
-        if version.attributes.get(
-            "content_hash"
-        ) != candidate.version_content_hash or version.attributes.get("access_state") != (
-            candidate.version_access_state.value
-            if candidate.version_access_state is not None
-            else None
+        if not allow_rejected_content_mismatch and (
+            version.attributes.get("content_hash") != candidate.version_content_hash
+            or version.attributes.get("access_state")
+            != (
+                candidate.version_access_state.value
+                if candidate.version_access_state is not None
+                else None
+            )
         ):
             raise Phase6AssessmentAuthorityError(
                 "Candidate version content descriptor differs from stored version authority"

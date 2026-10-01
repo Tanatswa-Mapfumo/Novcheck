@@ -4,7 +4,6 @@ from dataclasses import replace
 
 import pytest
 
-from novelty_harness.evidence.graph.assessment_view import Phase6AssessmentAuthorityError
 from novelty_harness.evidence.graph.sqlalchemy_repository import SqlAlchemyEvidenceGraphRepository
 from tests.fixtures.phase4 import assessment
 from tests.integration.test_phase6_evidence_pipeline import graph_database, run_phase6_for_ledger
@@ -34,13 +33,32 @@ async def test_loader_reads_complete_bounded_snapshot_with_unassessed_candidates
 
 
 @pytest.mark.asyncio
-async def test_loader_fails_closed_for_graph_dependent_completed_snapshot(tmp_path) -> None:
+async def test_loader_authorizes_graph_dependent_completed_snapshot(tmp_path) -> None:
     result, _, _, _, candidate_rows = await run_phase6_for_ledger(tmp_path)
     assert result.snapshot_id is not None
     assert any('"decision":"ASSESSED"' in row.document_json for row in candidate_rows)
     repository = SqlAlchemyEvidenceGraphRepository(graph_database(tmp_path))
     try:
-        with pytest.raises(Phase6AssessmentAuthorityError, match="Task 7 graph authority"):
-            repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
+        view = repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
+        assert view.authorized_graph_relations
+    finally:
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_loader_exposes_only_currently_authorized_graph_projection(tmp_path) -> None:
+    result, _, _, _, _ = await run_phase6_for_ledger(tmp_path)
+    assert result.snapshot_id is not None
+    repository = SqlAlchemyEvidenceGraphRepository(graph_database(tmp_path))
+    try:
+        view = repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
+        graph_backed = [
+            item
+            for item in view.committed_comparisons
+            if item.projection_status == "GRAPH_AUTHORIZED"
+        ]
+        assert graph_backed
+        assert view.authorized_graph_relations
+        assert all(item.graph_edge_ids and item.proposition_node_id for item in graph_backed)
     finally:
         repository.close()
