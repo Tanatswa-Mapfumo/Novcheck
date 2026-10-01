@@ -77,6 +77,31 @@ def _matrix_chain(case: str) -> VerifiedEvidenceChain:
     if case in relation_by_case:
         state, relation = relation_by_case[case]
         judged = verification(state)
+    elif case == "SCOPED_PARTIAL":
+        relation = PrecedentState.ANALOGOUS_PRECEDENT
+        scoped = next(
+            item for item in baseline.verification.commitment_states if item.commitment_id == "mech"
+        ).model_copy(
+            update={
+                "state": "PARTIALLY_SUPPORTED",
+                "supported_subset": "The controller opens the valve above the threshold.",
+                "unsupported_remainder": "The controller also logs that threshold event.",
+            }
+        )
+        states = tuple(
+            scoped if item.commitment_id == scoped.commitment_id else item
+            for item in baseline.verification.commitment_states
+        )
+        judged = SupportVerification.model_validate(
+            baseline.verification.model_copy(
+                update={
+                    "state": SupportVerificationState.PARTIALLY_SUPPORTED,
+                    "commitment_states": states,
+                    "supported_portions": ("The controller opens the valve above the threshold.",),
+                    "unsupported_portions": ("The controller also logs that threshold event.",),
+                }
+            ).model_dump(mode="json")
+        )
     elif case in {"STRONG_PARTIAL_PRECEDENT", "ANALOGOUS"}:
         commitment_states = baseline.verification.commitment_states
         if case == "STRONG_PARTIAL_PRECEDENT":
