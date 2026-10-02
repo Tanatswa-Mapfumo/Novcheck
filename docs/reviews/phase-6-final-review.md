@@ -1403,7 +1403,7 @@ The preceding independent Stage-1 **FAIL** at
 `7cd20fa80dd73da2d14bc70bd74c6469bbb19678` and all earlier review
 decisions remain unchanged. This is implementation evidence for the bounded
 R14/R15 authority invariant, not a Stage-1 PASS or Gate-30 acceptance.
-The code and regression commit is
+The core code and initial regression commit is
 `37f29cb43e200c423672bbba7a9b755de66f65e2`.
 
 The exact independent proposition-membership reproduction was added before

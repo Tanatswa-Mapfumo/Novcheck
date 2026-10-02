@@ -199,6 +199,12 @@ async def test_r15_foreign_or_split_manifest_hides_relation_from_all_readers(
                 )
         assert repository.get_edge(relation.edge.edge_id) is None
         assert relation.edge not in repository.edges(kinds=frozenset({relation.edge.kind}))
+        assert relation.edge.target_node_id not in {
+            node.node_id
+            for node in repository.neighbors(
+                relation.edge.source_node_id, kinds=frozenset({relation.edge.kind})
+            )
+        }
         with pytest.raises(Phase6AssessmentAuthorityError):
             repository.load_phase6_assessment(view.assessment_id, snapshot_id=view.snapshot_id)
     finally:
