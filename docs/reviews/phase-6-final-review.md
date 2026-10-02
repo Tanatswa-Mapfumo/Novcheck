@@ -1329,3 +1329,120 @@ Implementation verification and the exact commit are recorded in the Task 12
 handoff. An independent Stage-1 provenance/publication/commit/graph/downstream
 authority attack on that commit is still required. A separate full Gate-30
 review follows any Stage-1 PASS. R15 and Gate 30 remain OPEN.
+
+---
+
+## Final independent Stage-1 authority review of `7cd20fa80dd73da2d14bc70bd74c6469bbb19678`
+
+**Scope and independence:** This review used the clean
+`phase-6-evidence-verification` worktree pinned to the exact commit above.
+The reviewer did not implement the downstream consolidation or R10–R15
+repairs. The probe changed only a temporary SQLite database. Historical FAIL
+and implementation sections above remain unchanged. This is a bounded Stage-1
+authority decision, not Gate-30 Stage 2.
+
+**Stage 1: FAIL — R14/R15 graph authority (Important).** A public graph reader
+still returns a Phase 6 `DIRECT_PRECEDENT` relation after the matching
+evidence-proposition node loses its schema-v6 commit membership. ADR-036's
+R15 amendment and the approved consolidation design §7 require both the
+relation and proposition membership for graph projection authority. The
+governing Stage-1 attack D specifically requires authoritative graph readers
+to hide invalid Phase 6 graph state when proposition-node membership is
+missing. `load_phase6_assessment` correctly rejects the same database state,
+so the repository currently gives conflicting graph-authority answers.
+
+**Reproduction:** In a temporary database, use
+`tests.adversarial.test_phase6_r15_assessment_authority._load_committed_matrix_case`
+with `DIRECT_PRECEDENT` to create a valid graph-backed semantic commit and v7
+snapshot. Select the direct authorized relation. Confirm `get_edge` and
+`get_node` both return their respective projection. Delete only the row in
+`phase6_graph_node_memberships` for that relation's proposition node, then
+read through the public repository APIs and assessment loader:
+
+```text
+baseline: get_edge=True, get_node=True, authorized_graph_relations=2
+after node-membership deletion:
+  get_edge(direct_edge_id)=GraphEdge(kind=DIRECT_PRECEDENT)
+  get_node(proposition_node_id)=None
+  edges(kinds={DIRECT_PRECEDENT})=[GraphEdge(kind=DIRECT_PRECEDENT)]
+  load_phase6_assessment(...)=Phase6AssessmentAuthorityError(
+      "Proposition memberships do not exactly match the derived projection")
+```
+
+The edge still has its own valid membership, manifest and semantic chain;
+only the required companion proposition membership is absent. In
+`sqlalchemy_repository.py`, `_authoritative_graph_edge` validates the edge's
+membership and derived fields but does not validate the corresponding
+proposition-node membership. `get_edge` and `edges` expose that result.
+The trusted loader separately checks the exact proposition membership and
+fails closed. The R14 regression suite deletes relation membership when
+checking `get_edge`; it does not exercise this cross-projection condition.
+
+**Impact and disposition:** A graph specialist consuming public authoritative
+graph reads can treat this direct precedent as established while the trusted
+assessment view denies graph authority. This violates the approved single
+repository authority model. Public Phase 6 graph relation reads must honor
+the required proposition membership and current projection validation, or
+explicitly signal unavailable authority. This finding does not assert that
+the real vertical slice uses the retired legacy adapter; the reproduction is
+at the public graph reader boundary.
+
+The reproduced Important defect triggers the requested stop rule. The
+remaining A–K attack matrix, including the other four fresh variants, focused
+and full verification, clean detached-checkout verification, and Gate-30
+Stage 2 were not run. No production code or tests were changed, and no Phase 7
+work was started. Gate 30 remains open.
+
+Stage 1 provenance/publication/commit/graph/downstream-authority review: FAIL — Phase 6 remains blocked by a reproduced existing-invariant violation.
+
+---
+
+## R15 public graph-reader consistency implementation record (not an independent review)
+
+The preceding independent Stage-1 **FAIL** at
+`7cd20fa80dd73da2d14bc70bd74c6469bbb19678` and all earlier review
+decisions remain unchanged. This is implementation evidence for the bounded
+R14/R15 authority invariant, not a Stage-1 PASS or Gate-30 acceptance.
+The code and regression commit is
+`37f29cb43e200c423672bbba7a9b755de66f65e2`.
+
+The exact independent proposition-membership reproduction was added before
+the repository change. It failed because `get_edge` returned a
+`DIRECT_PRECEDENT` relation after only the required proposition membership
+was deleted; `get_node` and `load_phase6_assessment` already rejected that
+state. The root cause was that `_authoritative_graph_edge` checked its own
+membership and semantic chain but not the complete companion projection.
+
+The repository now uses `_authoritative_phase6_projection` to validate the
+exact edge and proposition memberships, their shared commit identity, every
+required projection row, derived fields, and committed semantic chain.
+`get_edge`, `edges`, `get_node`, `nodes`, and `neighbors` reach this rule;
+the assessment loader also calls it within its single read transaction.
+Ordinary Phase 5 graph edges retain their existing read behavior. The
+semantic receipt still resolves after graph membership revocation, while
+the graph readers hide the relation and the assessment loader fails closed.
+No schema change or legacy downstream adapter was introduced.
+
+The new table-driven public-reader matrix covers valid state, both membership
+deletions, missing graph rows, foreign and split manifests, corrupted edge
+source/target/kind/identity/citations, corrupted proposition identity, and
+missing sibling relation membership. It exercises direct, contradictory,
+strong partial, component, analogous and no-match graph-backed relations,
+including their support/contradiction edges. Thirteen further mutation
+variants probed membership identity columns, row metadata, proposition
+mapping/citations, verification reference and sibling citation, plus a
+semantic-receipt-after-revocation probe. No additional authority bypass was
+reproduced after the shared resolver was installed. An older F07 positive
+fixture was corrected to persist the complete graph projection it claimed
+to represent; its negative forged-reference assertions remain.
+
+Progressive verification after the final code path: exact regression and
+matrix **36 passed**; R14/R15 plus graph repository **149 passed**;
+R10–R15/provenance/publication **166 passed**; Phase 6 integration, parity,
+pipeline and full slice **32 passed**. `uv sync --dev` passed. The full
+`uv run python scripts/verify.py` passed Ruff check, Ruff format (306 files),
+Pyright (0 errors, 0 warnings), and **1745 passed, 5 opt-in network tests
+deselected**. `git diff --check` and staged whitespace checks passed. The
+final documentation commit and clean detached-checkout verification are
+reported in the implementation handoff. This record does not close R15 or
+Gate 30. Phase 7 remains unstarted.
