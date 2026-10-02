@@ -10,7 +10,6 @@ from novelty_harness.domain.enums import PrecedentState, SupportVerificationStat
 from novelty_harness.evidence.graph.migrations import SCHEMA_VERSION, schema_version
 from novelty_harness.evidence.graph.repository import Phase6CommitReceipt
 from novelty_harness.evidence.graph.sqlalchemy_repository import SqlAlchemyEvidenceGraphRepository
-from novelty_harness.evidence.mapping.models import ComparisonDimension, PropositionCommitment
 from novelty_harness.evidence.passages.hashing import text_hash
 from novelty_harness.evidence.phase6_pipeline import Phase6EvidenceResult
 from novelty_harness.evidence.precedent.gates import (
@@ -18,12 +17,10 @@ from novelty_harness.evidence.precedent.gates import (
     classify_verified_comparison,
 )
 from novelty_harness.evidence.precedent.models import PrecedentClassification
-from novelty_harness.evidence.verification.gates import build_verified_evidence_edge
 from novelty_harness.evidence.verification.integrity import (
     VerifiedEvidenceChain,
     verified_comparison,
 )
-from novelty_harness.evidence.verification.models import CommitmentStateRecord, SupportVerification
 from novelty_harness.runtime.tracing.hashing import canonical_json
 from tests.adversarial.test_phase6_r10_content_authority import (
     _authority_nodes,
@@ -34,16 +31,15 @@ from tests.adversarial.test_phase6_r11_authoritative_publication import (
     _run,
     _verifier_state_runner,
 )
+from tests.adversarial.test_phase6_r15_assessment_authority import _load_committed_matrix_case
 from tests.adversarial.test_phase6_sol_review_regressions import _valid_chain
 from tests.diagnostics.legacy_phase6_projection import (
     diagnostic_legacy_projection_ignores_graph_authority,
 )
 from tests.unit.evidence.verification.test_eligibility import (
-    AS_OF,
     NOW,
     PASSAGE_TEXT,
     build,
-    verification,
 )
 
 
@@ -120,21 +116,39 @@ def test_fabricated_matching_receipt_with_empty_repository_cannot_project(tmp_pa
         repository.close()
 
 
-def test_exact_persisted_commit_projects_direct_and_replays(tmp_path) -> None:
-    repository = SqlAlchemyEvidenceGraphRepository(tmp_path / "committed.sqlite")
+def test_exact_persisted_commit_loads_direct_and_replays(tmp_path) -> None:
+    repository, loaded, classification, graph_edges = _load_committed_matrix_case(
+        tmp_path, "DIRECT_PRECEDENT"
+    )
     try:
-        result = _commit(repository)
-        assert (
-            diagnostic_legacy_projection_ignores_graph_authority(result, repository)[
-                0
-            ].relation_type.value
-            == "DIRECT_PRECEDENT"
+        assert classification.relation == PrecedentState.DIRECT_PRECEDENT
+        assert loaded.committed_comparisons[0].projection_status == "GRAPH_AUTHORIZED"
+        assert {relation.edge.edge_id for relation in loaded.authorized_graph_relations} == {
+            edge.edge_id for edge in graph_edges
+        }
+        comparison = loaded.committed_comparisons[0]
+        receipt = Phase6CommitReceipt(
+            commit_id=comparison.commit_id,
+            assessment_id=loaded.assessment_id,
+            committed_edge_ids=(comparison.comparison.comparison.chain.edge.edge_id,),
+            committed_classification_ids=(classification.classification_id,),
         )
-        replay = _commit(repository)
-        assert replay.commit_receipts == result.commit_receipts
-        assert diagnostic_legacy_projection_ignores_graph_authority(
-            replay, repository
-        ) == diagnostic_legacy_projection_ignores_graph_authority(result, repository)
+        assert repository.resolve_phase6_commit(receipt).comparisons
+        replay_repository, replay, replay_classification, replay_edges = (
+            _load_committed_matrix_case(tmp_path, "DIRECT_PRECEDENT")
+        )
+        try:
+            assert replay == loaded
+            assert replay_classification == classification
+            assert replay_edges == graph_edges
+            assert (
+                replay_repository.load_phase6_assessment(
+                    loaded.assessment_id, snapshot_id=loaded.snapshot_id
+                )
+                == loaded
+            )
+        finally:
+            replay_repository.close()
     finally:
         repository.close()
 
@@ -210,22 +224,25 @@ def test_mutated_and_deserialized_receipts_cannot_invent_authority(tmp_path) -> 
 
 
 def test_serialized_genuine_receipt_still_resolves_after_reopen(tmp_path) -> None:
-    database = tmp_path / "receipt-roundtrip.sqlite"
-    repository = SqlAlchemyEvidenceGraphRepository(database)
+    repository, view, classification, _ = _load_committed_matrix_case(tmp_path, "DIRECT_PRECEDENT")
+    database = tmp_path / "DIRECT_PRECEDENT.sqlite"
     try:
-        result = _commit(repository)
-        serialized = result.commit_receipts[0].model_dump_json()
+        comparison = view.committed_comparisons[0]
+        receipt = Phase6CommitReceipt(
+            commit_id=comparison.commit_id,
+            assessment_id=view.assessment_id,
+            committed_edge_ids=(comparison.comparison.comparison.chain.edge.edge_id,),
+            committed_classification_ids=(classification.classification_id,),
+        )
+        serialized = receipt.model_dump_json()
     finally:
         repository.close()
     reopened = SqlAlchemyEvidenceGraphRepository(database)
     try:
         restored = Phase6CommitReceipt.model_validate_json(serialized)
-        assert (
-            diagnostic_legacy_projection_ignores_graph_authority(
-                replace(result, commit_receipts=(restored,)), reopened
-            )[0].relation_type.value
-            == "DIRECT_PRECEDENT"
-        )
+        assert reopened.resolve_phase6_commit(restored).comparisons
+        loaded = reopened.load_phase6_assessment(view.assessment_id, snapshot_id=view.snapshot_id)
+        assert loaded == view
     finally:
         reopened.close()
 
@@ -398,7 +415,7 @@ def test_v4_semantic_rows_need_replay_to_gain_a_v7_commit_manifest(tmp_path) -> 
         with pytest.raises(ValueError, match="commit|authorit|persist"):
             diagnostic_legacy_projection_ignores_graph_authority(result, reopened)
         replay = _commit(reopened)
-        assert diagnostic_legacy_projection_ignores_graph_authority(replay, reopened)
+        assert reopened.resolve_phase6_commit(replay.commit_receipts[0]).comparisons
     finally:
         reopened.close()
 
@@ -440,7 +457,7 @@ def test_receipt_resolution_rechecks_persisted_content_authority(tmp_path) -> No
         ("INSUFFICIENT_CONTEXT", PrecedentState.UNRESOLVED),
     ],
 )
-async def test_repository_backed_projection_preserves_negative_semantic_states(
+async def test_repository_loaded_assessment_preserves_negative_semantic_states(
     tmp_path, state, expected_relation
 ) -> None:
     writer, database, evidence = await _phase5(tmp_path)
@@ -454,9 +471,12 @@ async def test_repository_backed_projection_preserves_negative_semantic_states(
             runner=_verifier_state_runner(state),
             control_only=True,
         )
-        projected = diagnostic_legacy_projection_ignores_graph_authority(result, repository)
-        assert projected
-        assert {edge.relation_type for edge in projected} == {expected_relation}
+        assert result.snapshot_id is not None
+        view = repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
+        assert view.committed_comparisons
+        assert {item.comparison.classification.relation for item in view.committed_comparisons} == {
+            expected_relation
+        }
     finally:
         repository.close()
 
@@ -477,104 +497,45 @@ async def test_repository_backed_projection_preserves_negative_semantic_states(
         (SupportVerificationState.INSUFFICIENT_CONTEXT, PrecedentState.UNRESOLVED),
     ],
 )
-def test_commit_manifest_projects_all_basic_semantic_polarities(
+def test_assessment_loader_preserves_all_basic_semantic_polarities(
     tmp_path, state, expected_relation
 ) -> None:
-    baseline = _valid_chain(build(SupportVerificationState.SUPPORTED))
-    chain = VerifiedEvidenceChain.model_validate(
-        baseline.model_copy(
-            update={"verification": verification(state), "edge": build(state)}
-        ).model_dump(mode="json")
-    )
-    comparison = verified_comparison(chain)
-    classification = classify_verified_comparison(comparison, clock=lambda: NOW)
-    assert classification.relation == expected_relation
-    repository = SqlAlchemyEvidenceGraphRepository(tmp_path / f"{state.value}.sqlite")
+    case = {
+        SupportVerificationState.SUPPORTED: "DIRECT_PRECEDENT",
+        SupportVerificationState.PARTIALLY_SUPPORTED: "COMPONENT_PRECEDENT",
+        SupportVerificationState.CONTRADICTED: "CONTRADICTS",
+        SupportVerificationState.NOT_SUPPORTED: "NO_MATCH",
+        SupportVerificationState.INSUFFICIENT_CONTEXT: "UNRESOLVED",
+    }[state]
+    repository, view, classification, graph_edges = _load_committed_matrix_case(tmp_path, case)
     try:
-        receipt = repository.upsert(
-            nodes=_authority_nodes(chain),
-            verified_edges=(chain.edge,),
-            verified_chains=(chain,),
-            classified_comparisons=(
-                ClassifiedComparison(comparison=comparison, classification=classification),
-            ),
+        loaded = repository.load_phase6_assessment(view.assessment_id, snapshot_id=view.snapshot_id)
+        assert loaded == view
+        assert len(loaded.committed_comparisons) == 1
+        assert classification.relation == expected_relation
+        assert loaded.committed_comparisons[0].comparison.classification.relation == (
+            expected_relation
         )
-        assert receipt is not None
-        projected = diagnostic_legacy_projection_ignores_graph_authority(
-            _result(chain, classification, receipt), repository
-        )
-        assert len(projected) == 1
-        assert projected[0].relation_type == expected_relation
+        assert {relation.edge.edge_id for relation in loaded.authorized_graph_relations} == {
+            edge.edge_id for edge in graph_edges
+        }
     finally:
         repository.close()
 
 
-def test_commit_manifest_projects_strong_partial_without_upgrading_to_direct(tmp_path) -> None:
-    baseline = _valid_chain(build(SupportVerificationState.SUPPORTED))
-    extra = PropositionCommitment(
-        commitment_id="feature_extra",
-        dimension=ComparisonDimension.FEATURES,
-        text="the load is remotely logged",
+def test_assessment_loader_preserves_strong_partial_without_upgrading_to_direct(tmp_path) -> None:
+    repository, view, classification, graph_edges = _load_committed_matrix_case(
+        tmp_path, "STRONG_PARTIAL_PRECEDENT"
     )
-    commitments = (*baseline.proposition.commitments, extra)
-    proposition = baseline.proposition.model_copy(update={"commitments": commitments})
-    claim = baseline.bundle.claim.model_copy(update={"commitments": commitments})
-    bundle = baseline.bundle.model_copy(update={"claim": claim})
-    verification_record = baseline.verification.model_copy(
-        update={
-            "state": SupportVerificationState.PARTIALLY_SUPPORTED,
-            "commitment_states": (
-                *baseline.verification.commitment_states,
-                CommitmentStateRecord(
-                    commitment_id=extra.commitment_id,
-                    dimension=extra.dimension,
-                    state="NOT_SUPPORTED",
-                    rationale="No passage supports remote logging",
-                ),
-            ),
-            "material_commitment_ids": tuple(item.commitment_id for item in commitments),
-            "unsupported_portions": (extra.text,),
-        }
-    )
-    verified = SupportVerification.model_validate(verification_record.model_dump(mode="json"))
-    edge = build_verified_evidence_edge(
-        mapping=baseline.mapping,
-        verification=verified,
-        proposition=proposition,
-        source=baseline.source,
-        bundle=bundle,
-        version=baseline.version,
-        as_of=AS_OF,
-        observed_at=NOW,
-        assessment_id=baseline.assessment_id,
-    )
-    chain = VerifiedEvidenceChain.model_validate(
-        baseline.model_copy(
-            update={
-                "proposition": proposition,
-                "bundle": bundle,
-                "verification": verified,
-                "edge": edge,
-            }
-        ).model_dump(mode="json")
-    )
-    comparison = verified_comparison(chain)
-    classification = classify_verified_comparison(comparison, clock=lambda: NOW)
-    assert classification.relation == PrecedentState.STRONG_PARTIAL_PRECEDENT
-    repository = SqlAlchemyEvidenceGraphRepository(tmp_path / "strong-partial.sqlite")
     try:
-        receipt = repository.upsert(
-            nodes=_authority_nodes(chain),
-            verified_edges=(edge,),
-            verified_chains=(chain,),
-            classified_comparisons=(
-                ClassifiedComparison(comparison=comparison, classification=classification),
-            ),
+        loaded = repository.load_phase6_assessment(view.assessment_id, snapshot_id=view.snapshot_id)
+        assert loaded == view
+        assert classification.relation == PrecedentState.STRONG_PARTIAL_PRECEDENT
+        assert loaded.committed_comparisons[0].comparison.classification.relation == (
+            PrecedentState.STRONG_PARTIAL_PRECEDENT
         )
-        assert receipt is not None
-        projected = diagnostic_legacy_projection_ignores_graph_authority(
-            _result(chain, classification, receipt), repository
-        )
-        assert projected[0].relation_type == PrecedentState.STRONG_PARTIAL_PRECEDENT
+        assert {relation.edge.edge_id for relation in loaded.authorized_graph_relations} == {
+            edge.edge_id for edge in graph_edges
+        }
     finally:
         repository.close()
