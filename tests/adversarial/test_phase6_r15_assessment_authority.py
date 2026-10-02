@@ -341,6 +341,29 @@ async def test_direct_relation_is_available_after_exact_replay(tmp_path) -> None
 
 
 @pytest.mark.asyncio
+async def test_caller_created_view_and_receipt_do_not_change_repository_read(tmp_path) -> None:
+    result, _, _, _, _ = await run_phase6_for_ledger(tmp_path)
+    assert result.snapshot_id is not None
+    repository = SqlAlchemyEvidenceGraphRepository(graph_database(tmp_path))
+    try:
+        loaded = repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
+        assert loaded.authorized_graph_relations
+        caller_view = loaded.model_copy(update={"authorized_graph_relations": ()})
+        caller_receipt = result.commit_receipts[0].model_copy(
+            update={"commit_id": "p6commit_forged"}
+        )
+        assert not caller_view.authorized_graph_relations
+        with pytest.raises(ValueError):
+            repository.resolve_phase6_commit(caller_receipt)
+        assert (
+            repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
+            == loaded
+        )
+    finally:
+        repository.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "corruption",
     [

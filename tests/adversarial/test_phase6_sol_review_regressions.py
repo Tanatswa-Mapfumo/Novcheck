@@ -1294,9 +1294,6 @@ async def test_f11_pipeline_projection_passes_the_bridge_with_combination_and_wi
     from novelty_harness.application.evidence_phase5 import (
         project_source as _project_source,
     )
-    from novelty_harness.application.evidence_phase6 import (
-        project_verified_edges as _project_edges,
-    )
     from novelty_harness.application.vertical_slice import _check_edges
     from novelty_harness.domain.mcu import (
         MCU as _BridgeMCU,
@@ -1319,6 +1316,9 @@ async def test_f11_pipeline_projection_passes_the_bridge_with_combination_and_wi
     from novelty_harness.runtime.artifacts.writer import RunArtifactWriter as _Writer
     from novelty_harness.runtime.semantic.structured import SemanticRunner as _Runner2
     from novelty_harness.runtime.tracing.sinks import InMemoryTraceSink as _Sink2
+    from tests.diagnostics.legacy_phase6_projection import (
+        diagnostic_legacy_projection_ignores_graph_authority as _project_edges,
+    )
     from tests.fixtures.phase6 import (
         StubLLMProvider as _Stub,
     )

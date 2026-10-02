@@ -6,7 +6,6 @@ from dataclasses import replace
 import pytest
 from sqlalchemy import text
 
-from novelty_harness.application.evidence_phase6 import project_verified_edges
 from novelty_harness.domain.enums import PrecedentState, SupportVerificationState
 from novelty_harness.evidence.graph.migrations import SCHEMA_VERSION, schema_version
 from novelty_harness.evidence.graph.repository import Phase6CommitReceipt
@@ -36,6 +35,9 @@ from tests.adversarial.test_phase6_r11_authoritative_publication import (
     _verifier_state_runner,
 )
 from tests.adversarial.test_phase6_sol_review_regressions import _valid_chain
+from tests.diagnostics.legacy_phase6_projection import (
+    diagnostic_legacy_projection_ignores_graph_authority,
+)
 from tests.unit.evidence.verification.test_eligibility import (
     AS_OF,
     NOW,
@@ -105,7 +107,7 @@ def test_fabricated_matching_receipt_without_repository_cannot_project() -> None
     result = _unpersisted_result()
 
     with pytest.raises(ValueError, match="repository|commit|authorit"):
-        project_verified_edges(result)
+        diagnostic_legacy_projection_ignores_graph_authority(result)
 
 
 def test_fabricated_matching_receipt_with_empty_repository_cannot_project(tmp_path) -> None:
@@ -113,7 +115,7 @@ def test_fabricated_matching_receipt_with_empty_repository_cannot_project(tmp_pa
     repository = SqlAlchemyEvidenceGraphRepository(tmp_path / "empty.sqlite")
     try:
         with pytest.raises(ValueError, match="commit|authorit|persist"):
-            project_verified_edges(result, repository)
+            diagnostic_legacy_projection_ignores_graph_authority(result, repository)
     finally:
         repository.close()
 
@@ -123,13 +125,16 @@ def test_exact_persisted_commit_projects_direct_and_replays(tmp_path) -> None:
     try:
         result = _commit(repository)
         assert (
-            project_verified_edges(result, repository)[0].relation_type.value == "DIRECT_PRECEDENT"
+            diagnostic_legacy_projection_ignores_graph_authority(result, repository)[
+                0
+            ].relation_type.value
+            == "DIRECT_PRECEDENT"
         )
         replay = _commit(repository)
         assert replay.commit_receipts == result.commit_receipts
-        assert project_verified_edges(replay, repository) == project_verified_edges(
-            result, repository
-        )
+        assert diagnostic_legacy_projection_ignores_graph_authority(
+            replay, repository
+        ) == diagnostic_legacy_projection_ignores_graph_authority(result, repository)
     finally:
         repository.close()
 
@@ -140,7 +145,7 @@ def test_genuine_receipt_does_not_authorize_another_repository(tmp_path) -> None
     try:
         result = _commit(first)
         with pytest.raises(ValueError, match="commit|authorit|persist"):
-            project_verified_edges(result, second)
+            diagnostic_legacy_projection_ignores_graph_authority(result, second)
     finally:
         first.close()
         second.close()
@@ -152,7 +157,9 @@ def test_mutated_caller_edge_does_not_project_under_genuine_receipt(tmp_path) ->
         result = _commit(repository)
         changed = result.edges[0].model_copy(update={"passage_ids": ("pass_foreign",)})
         with pytest.raises(ValueError, match="commit|authorit|differ"):
-            project_verified_edges(replace(result, edges=(changed,)), repository)
+            diagnostic_legacy_projection_ignores_graph_authority(
+                replace(result, edges=(changed,)), repository
+            )
     finally:
         repository.close()
 
@@ -163,7 +170,9 @@ def test_mutated_caller_classification_does_not_project_under_genuine_receipt(tm
         result = _commit(repository)
         changed = result.classifications[0].model_copy(update={"basis": ("invented basis",)})
         with pytest.raises(ValueError, match="commit|authorit|differ"):
-            project_verified_edges(replace(result, classifications=(changed,)), repository)
+            diagnostic_legacy_projection_ignores_graph_authority(
+                replace(result, classifications=(changed,)), repository
+            )
     finally:
         repository.close()
 
@@ -193,7 +202,9 @@ def test_mutated_and_deserialized_receipts_cannot_invent_authority(tmp_path) -> 
         )
         for receipt in variants:
             with pytest.raises(ValueError, match="commit|authorit|differ"):
-                project_verified_edges(replace(result, commit_receipts=(receipt,)), repository)
+                diagnostic_legacy_projection_ignores_graph_authority(
+                    replace(result, commit_receipts=(receipt,)), repository
+                )
     finally:
         repository.close()
 
@@ -210,9 +221,9 @@ def test_serialized_genuine_receipt_still_resolves_after_reopen(tmp_path) -> Non
     try:
         restored = Phase6CommitReceipt.model_validate_json(serialized)
         assert (
-            project_verified_edges(replace(result, commit_receipts=(restored,)), reopened)[
-                0
-            ].relation_type.value
+            diagnostic_legacy_projection_ignores_graph_authority(
+                replace(result, commit_receipts=(restored,)), reopened
+            )[0].relation_type.value
             == "DIRECT_PRECEDENT"
         )
     finally:
@@ -240,7 +251,7 @@ def test_old_receipt_cannot_project_later_authority_rejected_comparison(tmp_path
             )
         rejected = _result(altered, altered_classification, original.commit_receipts[0])
         with pytest.raises(ValueError, match="commit|authorit|differ"):
-            project_verified_edges(rejected, repository)
+            diagnostic_legacy_projection_ignores_graph_authority(rejected, repository)
         with repository.engine.connect() as connection:
             assert connection.execute(text("SELECT count(*) FROM phase6_commits")).scalar_one() == 1
     finally:
@@ -294,7 +305,7 @@ def test_genuine_receipt_cannot_cross_wire_assessment_or_target(tmp_path) -> Non
         )
         for variant in variants:
             with pytest.raises(ValueError, match="commit|authorit|differ"):
-                project_verified_edges(variant, repository)
+                diagnostic_legacy_projection_ignores_graph_authority(variant, repository)
     finally:
         repository.close()
 
@@ -307,7 +318,7 @@ def test_extra_foreign_assessed_classification_is_not_hidden_by_valid_receipt(tm
             update={"classification_id": "cls_foreign", "verification_id": "ver_foreign"}
         )
         with pytest.raises(ValueError, match="commit|authorit|differ"):
-            project_verified_edges(
+            diagnostic_legacy_projection_ignores_graph_authority(
                 replace(result, classifications=(*result.classifications, foreign)), repository
             )
     finally:
@@ -334,7 +345,9 @@ def test_genuine_receipt_rejects_changed_semantic_identity_and_provenance(tmp_pa
         )
         for altered in edge_variants:
             with pytest.raises(ValueError, match="commit|authorit|differ"):
-                project_verified_edges(replace(result, edges=(altered,)), repository)
+                diagnostic_legacy_projection_ignores_graph_authority(
+                    replace(result, edges=(altered,)), repository
+                )
         for altered in (
             classification.model_copy(update={"mapping_id": "map_foreign"}),
             classification.model_copy(update={"relation": PrecedentState.COMPONENT_PRECEDENT_ONLY}),
@@ -345,7 +358,9 @@ def test_genuine_receipt_rejects_changed_semantic_identity_and_provenance(tmp_pa
             ),
         ):
             with pytest.raises(ValueError, match="commit|authorit|differ"):
-                project_verified_edges(replace(result, classifications=(altered,)), repository)
+                diagnostic_legacy_projection_ignores_graph_authority(
+                    replace(result, classifications=(altered,)), repository
+                )
     finally:
         repository.close()
 
@@ -359,7 +374,7 @@ def test_matching_semantic_rows_without_commit_manifest_do_not_authorize_project
         with repository.engine.begin() as connection:
             connection.execute(text("DELETE FROM phase6_commits"))
         with pytest.raises(ValueError, match="commit|authorit|persist"):
-            project_verified_edges(result, repository)
+            diagnostic_legacy_projection_ignores_graph_authority(result, repository)
     finally:
         repository.close()
 
@@ -381,9 +396,9 @@ def test_v4_semantic_rows_need_replay_to_gain_a_v7_commit_manifest(tmp_path) -> 
     try:
         assert schema_version(reopened.engine) == SCHEMA_VERSION == 7
         with pytest.raises(ValueError, match="commit|authorit|persist"):
-            project_verified_edges(result, reopened)
+            diagnostic_legacy_projection_ignores_graph_authority(result, reopened)
         replay = _commit(reopened)
-        assert project_verified_edges(replay, reopened)
+        assert diagnostic_legacy_projection_ignores_graph_authority(replay, reopened)
     finally:
         reopened.close()
 
@@ -410,7 +425,7 @@ def test_receipt_resolution_rechecks_persisted_content_authority(tmp_path) -> No
                 {"document": canonical_json(altered), "identity": version.version_id},
             )
         with pytest.raises(ValueError, match="content|authority|provenance"):
-            project_verified_edges(result, repository)
+            diagnostic_legacy_projection_ignores_graph_authority(result, repository)
     finally:
         repository.close()
 
@@ -439,7 +454,7 @@ async def test_repository_backed_projection_preserves_negative_semantic_states(
             runner=_verifier_state_runner(state),
             control_only=True,
         )
-        projected = project_verified_edges(result, repository)
+        projected = diagnostic_legacy_projection_ignores_graph_authority(result, repository)
         assert projected
         assert {edge.relation_type for edge in projected} == {expected_relation}
     finally:
@@ -485,7 +500,9 @@ def test_commit_manifest_projects_all_basic_semantic_polarities(
             ),
         )
         assert receipt is not None
-        projected = project_verified_edges(_result(chain, classification, receipt), repository)
+        projected = diagnostic_legacy_projection_ignores_graph_authority(
+            _result(chain, classification, receipt), repository
+        )
         assert len(projected) == 1
         assert projected[0].relation_type == expected_relation
     finally:
@@ -555,7 +572,9 @@ def test_commit_manifest_projects_strong_partial_without_upgrading_to_direct(tmp
             ),
         )
         assert receipt is not None
-        projected = project_verified_edges(_result(chain, classification, receipt), repository)
+        projected = diagnostic_legacy_projection_ignores_graph_authority(
+            _result(chain, classification, receipt), repository
+        )
         assert projected[0].relation_type == PrecedentState.STRONG_PARTIAL_PRECEDENT
     finally:
         repository.close()

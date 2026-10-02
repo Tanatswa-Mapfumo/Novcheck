@@ -229,3 +229,19 @@ def test_phase6_production_has_no_fixture_imports_and_default_suite_blocks_netwo
         assert not forbidden_imports(path.read_text(), "novelty_harness", banned=("tests",)), path
     assert pytestconfig.getoption("disable_socket") is True
     assert not pytestconfig.getoption("allow_hosts")
+
+
+def test_production_has_no_legacy_phase6_projection_surface() -> None:
+    for path in ROOT.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                assert node.name != "project_verified_edges", path
+            if isinstance(node, ast.ImportFrom):
+                assert all(alias.name != "project_verified_edges" for alias in node.names), path
+            if isinstance(node, ast.Call):
+                function = node.func
+                if isinstance(function, ast.Name):
+                    assert function.id != "project_verified_edges", path
+                if isinstance(function, ast.Attribute):
+                    assert function.attr != "project_verified_edges", path

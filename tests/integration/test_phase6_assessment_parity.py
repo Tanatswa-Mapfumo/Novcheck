@@ -5,7 +5,6 @@ from typing import cast
 
 import pytest
 
-from novelty_harness.application.evidence_phase6 import project_verified_edges
 from novelty_harness.domain.enums import PrecedentState, SupportVerificationState
 from novelty_harness.evidence.graph.assessment_ledger import (
     Phase6AssessmentSnapshotRecord,
@@ -25,6 +24,9 @@ from novelty_harness.runtime.semantic.structured import SemanticRunner
 from tests.adversarial.test_phase6_r15_assessment_authority import (
     _load_committed_matrix_case,
     _matrix_chain,
+)
+from tests.diagnostics.legacy_phase6_projection import (
+    diagnostic_legacy_projection_ignores_graph_authority,
 )
 from tests.fixtures.phase5 import make_source, phase5_provenance
 from tests.fixtures.phase6 import (
@@ -49,7 +51,7 @@ async def test_repository_view_preserves_legacy_capabilities_and_richer_phase6_f
     assert result.snapshot_id
     repository = SqlAlchemyEvidenceGraphRepository(graph_database(tmp_path))
     try:
-        legacy = project_verified_edges(result, repository)
+        legacy = diagnostic_legacy_projection_ignores_graph_authority(result, repository)
         view = repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
         assert isinstance(view, Phase6AssessmentView)
         by_edge = {
@@ -330,7 +332,7 @@ async def test_multi_passage_legacy_parity_retains_every_repository_citation(tmp
     assert result.snapshot_id
     repository = SqlAlchemyEvidenceGraphRepository(graph_database(tmp_path))
     try:
-        legacy = project_verified_edges(result, repository)
+        legacy = diagnostic_legacy_projection_ignores_graph_authority(result, repository)
         view = repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
         comparisons = {
             item.comparison.comparison.chain.edge.edge_id: item
@@ -392,7 +394,7 @@ def test_relation_matrix_legacy_parity_matches_repository_authority(
         )
         from types import SimpleNamespace
 
-        legacy = project_verified_edges(
+        legacy = diagnostic_legacy_projection_ignores_graph_authority(
             SimpleNamespace(
                 edges=(edge,),
                 chains=(chain,),

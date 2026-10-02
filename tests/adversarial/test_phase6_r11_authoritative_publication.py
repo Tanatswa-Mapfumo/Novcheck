@@ -7,7 +7,6 @@ import httpx
 import pytest
 from sqlalchemy import text
 
-from novelty_harness.application.evidence_phase6 import project_verified_edges
 from novelty_harness.evidence.graph.phase6_mapping import (
     phase6_graph_provenance,
     verified_edge_graph_fragment,
@@ -35,6 +34,9 @@ from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
 from novelty_harness.runtime.semantic.structured import SemanticRunner
 from novelty_harness.runtime.tracing.sinks import JsonlTraceSink, TraceSink
 from tests.adversarial.test_phase6_r10_content_authority import _authority_nodes, _chain_for_content
+from tests.diagnostics.legacy_phase6_projection import (
+    diagnostic_legacy_projection_ignores_graph_authority,
+)
 from tests.fixtures.phase1 import make_fixture
 from tests.fixtures.phase4 import assessment, wire
 from tests.fixtures.phase6 import (
@@ -533,15 +535,23 @@ async def test_exact_match_publishes_success_after_semantic_commit(tmp_path) -> 
 
 
 @pytest.mark.asyncio
-async def test_legacy_projection_requires_receipt_for_every_verified_edge(tmp_path) -> None:
+async def test_loaded_assessment_survives_caller_receipt_removal(tmp_path) -> None:
     writer, database, evidence = await _phase5(tmp_path)
     repository = SqlAlchemyEvidenceGraphRepository(database)
     try:
         result = await _run(writer, evidence, repository, tmp_path / "projection.jsonl")
         assert result.edges
-        assert project_verified_edges(result, repository)
+        assert result.snapshot_id is not None
+        view = repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
+        assert view.committed_comparisons
         with pytest.raises(ValueError, match="receipt|committed"):
-            project_verified_edges(replace(result, commit_receipts=()), repository)
+            diagnostic_legacy_projection_ignores_graph_authority(
+                replace(result, commit_receipts=()), repository
+            )
+        assert (
+            repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
+            == view
+        )
     finally:
         repository.close()
 
