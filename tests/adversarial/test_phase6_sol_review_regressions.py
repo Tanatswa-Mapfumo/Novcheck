@@ -276,12 +276,13 @@ def test_f07_graph_persistence_rejects_unresolved_or_mismatched_verification() -
     comparison = verified_comparison(chain)
     classified = classify_verified_comparison(comparison, clock=lambda: NOW)
 
-    # Legitimate projected edge persists when its verified artifact is present.
+    # A complete projection remains readable when its verified artifact is present.
     repository = SqlAlchemyEvidenceGraphRepository()
-    _, graph_edges = _persist_phase6_fragment(repository, edge, classified)
+    graph_nodes, graph_edges = _persist_phase6_fragment(repository, edge, classified)
     direct = next(item for item in graph_edges if item.kind == GraphEdgeKind.DIRECT_PRECEDENT)
     repository.upsert(
-        edges=(direct,),
+        nodes=graph_nodes,
+        edges=graph_edges,
         verified_edges=(edge,),
         verified_chains=(chain,),
         classified_comparisons=(

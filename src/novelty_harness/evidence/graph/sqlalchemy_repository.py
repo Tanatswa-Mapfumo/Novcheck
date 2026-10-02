@@ -745,99 +745,21 @@ class SqlAlchemyEvidenceGraphRepository:
                     raise Phase6AssessmentAuthorityError(
                         "Committed comparison has no expected proposition node"
                     )
-                exact_memberships = tuple(
-                    session.scalars(
-                        select(Phase6GraphEdgeMembershipRow).where(
-                            Phase6GraphEdgeMembershipRow.commit_id == candidate.commit_id,
-                            Phase6GraphEdgeMembershipRow.verified_edge_id
-                            == candidate.verified_edge_id,
-                            Phase6GraphEdgeMembershipRow.classification_id
-                            == candidate.classification_id,
-                        )
-                    ).all()
-                )
-                expected_edge_ids = {edge.edge_id for edge in expected_edges}
-                actual_edge_ids = {item.edge_id for item in exact_memberships}
-                exact_node_memberships = tuple(
-                    session.scalars(
-                        select(Phase6GraphNodeMembershipRow).where(
-                            Phase6GraphNodeMembershipRow.commit_id == candidate.commit_id,
-                            Phase6GraphNodeMembershipRow.verified_edge_id
-                            == candidate.verified_edge_id,
-                            Phase6GraphNodeMembershipRow.classification_id
-                            == candidate.classification_id,
-                        )
-                    ).all()
-                )
                 if candidate.projection_intent == "GRAPH_BACKED":
-                    if actual_edge_ids != expected_edge_ids:
-                        raise Phase6AssessmentAuthorityError(
-                            "Relation memberships do not exactly match the derived projection"
-                        )
-                    if tuple(item.node_id for item in exact_node_memberships) != (
-                        expected_node.node_id,
-                    ):
-                        raise Phase6AssessmentAuthorityError(
-                            "Proposition memberships do not exactly match the derived projection"
-                        )
-                elif actual_edge_ids or exact_node_memberships:
-                    raise Phase6AssessmentAuthorityError(
-                        "Semantic-only commit has claimed proposition membership"
-                    )
-                if candidate.projection_intent == "GRAPH_BACKED":
-                    node_row = session.get(GraphNodeRow, expected_node.node_id)
-                    if node_row is None:
-                        raise Phase6AssessmentAuthorityError(
-                            "Graph-backed snapshot is missing its proposition row"
-                        )
                     try:
-                        proposition = self._authoritative_graph_node(session, node_row)
+                        projection = self._authoritative_phase6_projection(
+                            session, classified=classified, commit_id=candidate.commit_id
+                        )
                     except (TypeError, ValueError) as exc:
                         raise Phase6AssessmentAuthorityError(
-                            "Graph-backed proposition row cannot be validated"
+                            "Graph-backed projection cannot be validated"
                         ) from exc
-                    if proposition is None:
+                    if projection is None:
                         raise Phase6AssessmentAuthorityError(
-                            "Graph-backed proposition is corrupt or unauthorized"
+                            "Graph-backed projection is incomplete or unauthorized"
                         )
-                    expected_persisted_nodes, _ = verified_edge_graph_fragment(
-                        (chain.edge,),
-                        (classified.classification,),
-                        observed_at=proposition.observed_at,
-                        provenance=proposition.provenance,
-                    )
-                    if proposition not in expected_persisted_nodes:
-                        raise Phase6AssessmentAuthorityError(
-                            "Graph-backed proposition differs from the derived projection"
-                        )
-                    authorized_edges: list[GraphEdge] = []
-                    for expected_edge in expected_edges:
-                        edge_row = session.get(GraphEdgeRow, expected_edge.edge_id)
-                        if edge_row is None:
-                            raise Phase6AssessmentAuthorityError(
-                                "Graph-backed snapshot is missing a required relation row"
-                            )
-                        try:
-                            graph_edge = self._authoritative_graph_edge(session, edge_row)
-                        except (TypeError, ValueError) as exc:
-                            raise Phase6AssessmentAuthorityError(
-                                "Graph-backed relation row cannot be validated"
-                            ) from exc
-                        if graph_edge is None:
-                            raise Phase6AssessmentAuthorityError(
-                                "Graph-backed relation is corrupt or unauthorized"
-                            )
-                        _, expected_persisted_edges = verified_edge_graph_fragment(
-                            (chain.edge,),
-                            (classified.classification,),
-                            observed_at=graph_edge.observed_at,
-                            provenance=graph_edge.provenance,
-                        )
-                        if graph_edge not in expected_persisted_edges:
-                            raise Phase6AssessmentAuthorityError(
-                                "Graph-backed relation differs from the derived projection"
-                            )
-                        authorized_edges.append(graph_edge)
+                    proposition, authorized_edges = projection
+                    for graph_edge in authorized_edges:
                         authorized_relations.append(
                             (
                                 graph_edge,
@@ -853,6 +775,32 @@ class SqlAlchemyEvidenceGraphRepository:
                         tuple(edge.edge_id for edge in authorized_edges),
                     )
                 elif candidate.projection_intent == "SEMANTIC_ONLY":
+                    exact_memberships = tuple(
+                        session.scalars(
+                            select(Phase6GraphEdgeMembershipRow).where(
+                                Phase6GraphEdgeMembershipRow.commit_id == candidate.commit_id,
+                                Phase6GraphEdgeMembershipRow.verified_edge_id
+                                == candidate.verified_edge_id,
+                                Phase6GraphEdgeMembershipRow.classification_id
+                                == candidate.classification_id,
+                            )
+                        ).all()
+                    )
+                    exact_node_memberships = tuple(
+                        session.scalars(
+                            select(Phase6GraphNodeMembershipRow).where(
+                                Phase6GraphNodeMembershipRow.commit_id == candidate.commit_id,
+                                Phase6GraphNodeMembershipRow.verified_edge_id
+                                == candidate.verified_edge_id,
+                                Phase6GraphNodeMembershipRow.classification_id
+                                == candidate.classification_id,
+                            )
+                        ).all()
+                    )
+                    if exact_memberships or exact_node_memberships:
+                        raise Phase6AssessmentAuthorityError(
+                            "Semantic-only commit has claimed graph membership"
+                        )
                     node_row = session.get(GraphNodeRow, expected_node.node_id)
                     if node_row is not None or any(
                         session.get(GraphEdgeRow, edge.edge_id) is not None
@@ -1735,18 +1683,119 @@ class SqlAlchemyEvidenceGraphRepository:
             verified_edge_id=membership.verified_edge_id,
             classification_id=membership.classification_id,
         )
+        if classified is None:
+            return None
+        projection = self._authoritative_phase6_projection(
+            session, classified=classified, commit_id=membership.commit_id
+        )
+        return node if projection is not None and node == projection[0] else None
+
+    def _authoritative_phase6_projection(
+        self,
+        session: Session,
+        *,
+        classified: ClassifiedComparison,
+        commit_id: str,
+    ) -> tuple[GraphNode, tuple[GraphEdge, ...]] | None:
+        """Validate the complete current projection for one committed comparison."""
+        chain = classified.comparison.chain
+        classification = classified.classification
+        expected_nodes, expected_edges = verified_edge_graph_fragment(
+            (chain.edge,),
+            (classification,),
+            observed_at=chain.edge.observed_at,
+            provenance=chain.edge.provenance,
+        )
+        expected_node = next(
+            (node for node in expected_nodes if node.kind == GraphNodeKind.EVIDENCE_PROPOSITION),
+            None,
+        )
+        if expected_node is None:
+            return None
+        identity = (
+            commit_id,
+            chain.edge.edge_id,
+            classification.classification_id,
+        )
+        node_memberships = tuple(
+            session.scalars(
+                select(Phase6GraphNodeMembershipRow).where(
+                    Phase6GraphNodeMembershipRow.commit_id == commit_id,
+                    Phase6GraphNodeMembershipRow.verified_edge_id == chain.edge.edge_id,
+                    Phase6GraphNodeMembershipRow.classification_id
+                    == classification.classification_id,
+                )
+            ).all()
+        )
+        edge_memberships = tuple(
+            session.scalars(
+                select(Phase6GraphEdgeMembershipRow).where(
+                    Phase6GraphEdgeMembershipRow.commit_id == commit_id,
+                    Phase6GraphEdgeMembershipRow.verified_edge_id == chain.edge.edge_id,
+                    Phase6GraphEdgeMembershipRow.classification_id
+                    == classification.classification_id,
+                )
+            ).all()
+        )
+        if {
+            (item.node_id, item.commit_id, item.verified_edge_id, item.classification_id)
+            for item in node_memberships
+        } != {(expected_node.node_id, *identity)} or {
+            (item.edge_id, item.commit_id, item.verified_edge_id, item.classification_id)
+            for item in edge_memberships
+        } != {(edge.edge_id, *identity) for edge in expected_edges}:
+            return None
+        node_row = session.get(GraphNodeRow, expected_node.node_id)
+        if node_row is None:
+            return None
+        try:
+            node = GraphNode.model_validate_json(node_row.document_json)
+        except (TypeError, ValueError):
+            return None
         if (
-            classified is None
-            or node.attributes.get("verified_edge_id") != membership.verified_edge_id
+            node_row.node_id != node.node_id
+            or node_row.kind != node.kind.value
+            or node_row.label != node.label
         ):
             return None
-        expected_nodes, _ = verified_edge_graph_fragment(
-            (classified.comparison.chain.edge,),
-            (classified.classification,),
+        persisted_nodes, _ = verified_edge_graph_fragment(
+            (chain.edge,),
+            (classification,),
             observed_at=node.observed_at,
             provenance=node.provenance,
         )
-        return node if node in expected_nodes else None
+        if node not in persisted_nodes:
+            return None
+        edges: list[GraphEdge] = []
+        for expected_edge in expected_edges:
+            edge_row = session.get(GraphEdgeRow, expected_edge.edge_id)
+            if edge_row is None:
+                return None
+            try:
+                edge = GraphEdge.model_validate_json(edge_row.document_json)
+            except (TypeError, ValueError):
+                return None
+            if (
+                edge_row.edge_id != edge.edge_id
+                or edge_row.kind != edge.kind.value
+                or edge_row.source_node_id != edge.source_node_id
+                or edge_row.target_node_id != edge.target_node_id
+            ):
+                return None
+            _, persisted_edges = verified_edge_graph_fragment(
+                (chain.edge,),
+                (classification,),
+                observed_at=edge.observed_at,
+                provenance=edge.provenance,
+            )
+            if edge not in persisted_edges:
+                return None
+            edges.append(edge)
+        try:
+            self._verify_phase6_edges(session, (node,), tuple(edges), (), (), ())
+        except (TypeError, ValueError):
+            return None
+        return node, tuple(edges)
 
     def observations(self, edge_id: str) -> tuple[datetime, ...]:
         """Return append-only observation times for one semantic edge."""
@@ -1784,17 +1833,12 @@ class SqlAlchemyEvidenceGraphRepository:
             verified_edge_id=membership.verified_edge_id,
             classification_id=membership.classification_id,
         )
-        if (
-            classified is None
-            or edge.verification.verified_edge_id != membership.verified_edge_id
-            or edge.attributes.get("classification_id") != membership.classification_id
-        ):
+        if classified is None:
             return None
-        try:
-            self._verify_phase6_edges(session, (), (edge,), (), (), ())
-        except ValueError:
-            return None
-        return edge
+        projection = self._authoritative_phase6_projection(
+            session, classified=classified, commit_id=membership.commit_id
+        )
+        return edge if projection is not None and edge in projection[1] else None
 
     def nodes(self, *, kinds: frozenset[GraphNodeKind] | None = None) -> tuple[GraphNode, ...]:
         statement = select(GraphNodeRow).order_by(GraphNodeRow.node_id)
