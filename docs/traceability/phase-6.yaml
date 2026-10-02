@@ -86,6 +86,16 @@ requirements:
     status: Public gates revalidate copied artifacts; exact material-commitment judgments, all-source coverage, aligned candidate failures, authenticated patent chronology and target-bound summaries prevent cross-contract bypasses
     modules: [evidence/verification/models.py, evidence/verification/gates.py, evidence/precedent/gates.py, evidence/precedent/patent.py, evidence/phase6_pipeline.py, evidence/graph/migrations.py]
     tests: [tests/adversarial/test_phase6_provenance_hardening.py, tests/integration/test_phase5_slice_with_phase6_evidence.py]
+  - ids: [FR-AUD-002, FR-EVID-001, FR-EVID-004]
+    sections: [26, 27, 28, 44, 60 Phase 6]
+    status: Phase6AssessmentView is loaded by load_phase6_assessment from one repository read transaction; commit manifests authorize classified semantics while schema-v6 edge and proposition memberships separately authorize graph relations; orphan projections fail closed
+    modules: [evidence/graph/assessment_view.py, evidence/graph/sqlalchemy_repository.py, application/vertical_slice.py]
+    tests: [tests/adversarial/test_phase6_r15_assessment_authority.py, tests/unit/test_phase6_architecture_guards.py]
+  - ids: [FR-AUD-002, FR-EVID-005]
+    sections: [26, 44, 60 Phase 6]
+    status: Schema-v7 append-only assessment ledger retains Phase6CandidateLedgerRecord, complete target and bounded coverage facts, failures, context attempts, and derived dependencies; migration cannot fabricate historical coverage
+    modules: [evidence/graph/assessment_ledger.py, evidence/graph/migrations.py, evidence/graph/sqlalchemy_repository.py, evidence/phase6_pipeline.py]
+    tests: [tests/unit/evidence/graph/test_assessment_ledger.py, tests/integration/test_phase6_evidence_pipeline.py, tests/unit/test_phase6_architecture_guards.py]
 review:
   required_reviewer: GPT-6 Sol High
   reviewed_commit: e4683fd
@@ -106,6 +116,9 @@ review:
   provenance_hardening: R01-R09 implementation with immutable content attestations, public boundary revalidation, aligned candidates and authenticated patent screening
   provenance_hardening_decisions: [ADR-036, ADR-030, ADR-034, ADR-035]
   status: GATE 30 OPEN - provenance hardening requires fresh independent GPT-6 Sol High/Max semantic re-review
+  downstream_consolidation: Implementation evidence only; R15 independent Stage-1 re-review and separate Gate-30 review remain open
+  downstream_design: docs/superpowers/specs/2026-10-01-phase-6-downstream-authority-consolidation-design.md
+  downstream_plan: docs/superpowers/plans/2026-10-01-phase-6-downstream-authority-consolidation-implementation-plan.md
   scope: [mapper/verifier separation, verifier blindness, relationship/control-flow preservation, single-source direct precedent, anti-stitching, chronology gates, context expansion, patent single-reference semantics, graph-edge eligibility, benchmark behavior, adversarial cases, Phase 7 leakage]
 deferred:
   - Phase 7 prosecutor/defender, counterbalanced adjudication, four adjudication gates, verdict permission matrix and abstention

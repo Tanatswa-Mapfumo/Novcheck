@@ -1228,3 +1228,104 @@ are reported in the implementation handoff. These implementation checks
 cannot substitute for an independent Stage-1 attack.
 
 Gate 30 remains OPEN pending fresh independent Stage-1 provenance/publication/commit-authority re-review.
+
+---
+
+## Independent Stage-1 authority review of `750917734fbed622f785f96e3d1d443dea166fe7`
+
+**Scope:** Read-only review of the exact clean `phase-6-evidence-verification`
+commit above. This reviewer did not implement R10–R14. The earlier FAIL and
+implementation records remain unchanged. The attached Stage-1 request requires
+the review to stop before focused or full verification when an Important
+authority defect is reproduced. No production code, tests, fixtures, or Phase 7
+work were changed.
+
+**Stage 1: FAIL — R15 (Important), legacy projection ignores schema-v6 graph
+membership.** A Phase 6 commit receipt resolves the stored semantic chain and
+classification through `graph/sqlalchemy_repository.py::_resolve_phase6_commit_in_session`
+(lines 304–348), but that resolver never checks the schema-v6 graph-edge or
+proposition-node membership. `application/evidence_phase6.py::project_verified_edges`
+(lines 82–143) accepts this receipt resolution and projects the classified
+edge. The graph readers do check membership and hide revoked or orphaned graph
+state. Thus the same repository can deny that a direct precedent is an
+authoritative graph relation while exporting it as a `DIRECT_PRECEDENT`
+`EvidenceEdge` for the later-stage compatibility boundary.
+
+**Minimal reproduction:** Persist a valid, fully supported direct comparison
+with its source/version/passage nodes, Phase 6 graph edges, proposition node,
+manifest and memberships. Before mutation, the repository returns one direct
+graph edge and `project_verified_edges` returns one direct legacy edge. In a
+temporary SQLite database, delete only the rows in
+`phase6_graph_edge_memberships` and `phase6_graph_node_memberships`. Afterward,
+`get_edge(direct_id)` and `get_node(proposition_id)` both return `None`, while
+`resolve_phase6_commit(receipt)` still returns the comparison and
+`project_verified_edges(result, repository)` still returns one
+`DIRECT_PRECEDENT` edge. All caller artifacts and receipt IDs are unchanged;
+the removal affects only membership. This is a read-side bypass of the
+request's requirement that missing membership revoke authoritative later-stage
+projection.
+
+**Fresh variants:** Eleven independent temporary-database probes exercised
+edge-only, node-only, both, and direct-edge-only membership deletion; graph
+edge deletion; proposition-node deletion; removal of all Phase 6 graph
+projections; corrupted graph citation; corrupted proposition identity; a
+semantic commit that never wrote graph projections; and v5-to-v6 migration
+with a manifest but no graph membership. In each case the relevant graph read
+was absent or rejected, but receipt resolution and legacy direct projection
+still succeeded. These include migration-plus-projection,
+membership-removal-plus-projection, and corruption-plus-projection interaction
+attacks. The existing R14 tests cover graph readers but do not check this
+cross-boundary export.
+
+**Required behavior:** A later-stage compatibility projection must resolve the
+exact authoritative graph projection and its current v6 membership, including
+the manifest and derived fields, before exporting a Phase 6 relation. A
+semantic-only manifest or a migrated v5 manifest must not silently satisfy
+the asserted graph-authority contract. A regression should repeat the minimal
+reproduction and the v5 migration and graph-corruption variants, assert that
+projection rejects them, and retain a positive exact-commit/replay case.
+Revisit the existing semantic-only upsert path, which currently produces a
+receipt accepted by projection without any Phase 6 graph relation.
+ADR-036 currently describes direct semantic-artifact resolution for the
+compatibility projection; reconcile that documented rule with the requested
+schema-v6 membership authority before treating the boundary as closed.
+
+**Verification scope:** The probes ran with `PYTHONPATH=.:src .venv/bin/python`
+against the exact reviewed commit and used only temporary SQLite databases.
+They changed no repository files. The Stage-1 failure is sufficient to block
+acceptance, so the focused R10–R14/provenance suites, full Stage-2 review and
+fresh checkout were not run. No conclusion is asserted here about the untested
+parts of the A–V matrix or live-model entailment. Gate 30 remains open.
+
+Stage 1 provenance/publication/commit/graph-authority re-review: FAIL — Phase 6 remains blocked.
+
+---
+
+## R15 downstream authority consolidation implementation record (not an independent review)
+
+The independent R15 **FAIL** above and all prior FAIL decisions remain intact.
+This section records implementation evidence only. It does not close R15 or
+grant Gate 30 acceptance.
+
+Schema v7 stores an immutable, versioned assessment ledger for target
+profiles, bounded candidate outcomes, failures, context attempts, coverage,
+and derived multi-source and patent inputs. The repository assembles
+`Phase6AssessmentView` in one SQLite read transaction from that ledger,
+committed semantic chains, immutable passage/content ancestry and current
+schema-v6 graph membership. A semantic commit remains distinguishable from
+an authorized graph relation. Graph-backed membership loss or corruption
+fails the trusted read; a deliberately semantic-only or nonrelational status
+does not claim a graph edge. Historical coverage is unavailable absent a
+validated ledger replay.
+
+The real Phase 6 vertical slice and its fixture adjudicator and minimal
+report use a repository-loaded view. The production legacy projection surface
+was retired. `phase6/assessment_view.json` is a labeled derived export, not
+an authority source. Earlier phase fixture `EvidenceEdge` use remains. The
+new R15 adversarial and parity tests and the architecture guard exercise this
+boundary. Phase 7 adjudication has not started.
+
+Implementation verification and the exact commit are recorded in the Task 12
+handoff. An independent Stage-1 provenance/publication/commit/graph/downstream
+authority attack on that commit is still required. A separate full Gate-30
+review follows any Stage-1 PASS. R15 and Gate 30 remain OPEN.

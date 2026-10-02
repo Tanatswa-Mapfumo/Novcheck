@@ -501,3 +501,34 @@ ADR-036 records the receipt authority rule. Full and fresh-checkout results
 are reported in the implementation handoff.
 
 Gate 30 remains OPEN pending fresh independent Stage-1 provenance/publication re-review.
+
+## R15 downstream authority consolidation implementation record
+
+The independent R15 **FAIL** in `docs/reviews/phase-6-final-review.md`
+remains open. This bounded implementation introduces the repository-derived
+`Phase6AssessmentView` and schema-v7 append-only assessment ledger. The view
+includes complete target profiles, bounded candidate and failure coverage,
+context attempts, committed classified chains and cited passages, lineage,
+and dependency-bound multi-source and patent summaries. A semantic commit
+authorizes its comparison; schema-v6 edge and proposition membership
+separately authorizes graph relations. Deliberately semantic-only commits and
+nonrelational classifications are visible as statuses without relation
+authority. Missing membership for an expected graph projection fails closed.
+
+The repository loads the exact snapshot in one SQLite read transaction.
+Migration from an older schema does not fabricate candidate coverage;
+`HISTORICAL_LEDGER_UNAVAILABLE` requires validated replay. The production
+vertical slice now loads the view by snapshot ID, and the legacy
+`project_verified_edges` production adapter has been retired. Its fixture
+adjudicator and minimal report revalidate repository authority, but still
+carry fixture provenance and do not implement Phase 7. Earlier Phase 1/4
+`EvidenceEdge` fixtures remain available. The
+`phase6/assessment_view.json` run artifact labels itself a derived export
+requiring repository revalidation; it cannot transfer authority when
+deserialized. The future Phase 7 input contract is the rich repository view,
+with decisive IDs checked again at frozen findings. No Phase 7 code was added.
+
+The deterministic parity, R15 authority, architecture, pipeline and full
+slice tests provide implementation evidence. Live-model entailment,
+calibration, recovered historical coverage without replay, and independent
+Stage-1/Gate-30 acceptance remain outside this implementation record.

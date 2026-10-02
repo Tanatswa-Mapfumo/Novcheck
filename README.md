@@ -256,8 +256,8 @@ uv run pytest tests/benchmarks/test_phase6_support_verifier.py -v
 ```
 
 The slice reaches REPORTED/COMPLETED with real Phases 2-6; Phase 7+
-adjudication stays visibly fixture-backed and consumes the real verified
-edges. Phase 6 persists `phase6/profiles.jsonl`, `propositions.jsonl`,
+adjudication stays visibly fixture-backed and consumes a repository-loaded
+assessment view. Phase 6 persists `phase6/profiles.jsonl`, `propositions.jsonl`,
 `mappings.jsonl`, `support_claims.jsonl`, `support_verifications.jsonl`,
 `context_expansions.jsonl`, `verified_edges.jsonl`,
 `precedent_classifications.jsonl`, `multi_source_assessments.jsonl`,
@@ -268,6 +268,26 @@ a diagnostic baseline, not calibration. Phase 6 is **not accepted** until the
 mandatory independent GPT-6 Sol High semantic review is closed; see
 [traceability](docs/traceability/phase-6.yaml) and
 [completion record](docs/phase-6-completion.md).
+
+The real Phase 6 slice now reads `Phase6AssessmentView` from the SQLite
+repository by explicit `snapshot_id`. The schema-v7 assessment ledger retains
+target profiles, bounded candidate coverage, failures, context attempts and
+derived multi-source/patent dependencies. A semantic commit identifies a
+validated comparison; schema-v6 graph membership separately authorizes an
+edge and proposition as a relation. The loader validates both within one
+SQLite read transaction. Semantic-only and nonrelational findings remain
+visible as statuses without claiming a graph relation. Historical databases
+without a validated ledger replay report unavailable coverage.
+
+The slice writes `phase6/assessment_view.json` with
+`export_kind=derived_repository_assessment_view` and
+`authority=repository_revalidation_required`. This export, the trace and
+`Phase6EvidenceResult` are audit/locator artifacts; downstream authority
+requires a fresh repository load. The slice's adjudicator and minimal report
+remain fixture-backed. Real Phase 7 adjudication has not begun; its future
+input contract is the repository-derived view with decisive references
+revalidated at the frozen-finding boundary. R15 and Gate 30 remain open for
+independent review.
 
 ### Earlier phases at a glance
 

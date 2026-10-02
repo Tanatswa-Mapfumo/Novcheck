@@ -245,3 +245,26 @@ def test_production_has_no_legacy_phase6_projection_surface() -> None:
                     assert function.id != "project_verified_edges", path
                 if isinstance(function, ast.Attribute):
                     assert function.attr != "project_verified_edges", path
+
+
+def test_phase6_downstream_authority_is_traced_and_documented() -> None:
+    repository_root = ROOT.parents[1]
+    traceability = (repository_root / "docs/traceability/phase-6.yaml").read_text()
+    adr = (
+        repository_root
+        / "docs/architecture/decisions/ADR-036-immutable-content-and-passage-attestation.md"
+    ).read_text()
+    for required in (
+        "Phase6AssessmentView",
+        "Phase6CandidateLedgerRecord",
+        "load_phase6_assessment",
+        "tests/adversarial/test_phase6_r15_assessment_authority.py",
+    ):
+        assert required in traceability
+    assert (
+        "The repository-derived `Phase6AssessmentView` is a read model, not a new source of truth."
+    ) in adr
+    assert (
+        "Real Phase 6 downstream consumers use repository-authoritative state; "
+        "the legacy adapter is not an authority boundary."
+    ) in adr

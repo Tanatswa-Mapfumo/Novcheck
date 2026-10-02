@@ -162,3 +162,40 @@ transaction can add the membership; migration alone cannot. The legacy
 compatibility projection continues to resolve committed semantic artifacts
 directly through `Phase6CommitReceipt` and does not infer authority from graph
 rows. Gate 30 remains open pending fresh independent Stage-1 re-review.
+
+## R15 amendment: repository-derived downstream assessment (2 October 2026)
+
+The repository-derived `Phase6AssessmentView` is a read model, not a new source of truth.
+Real Phase 6 downstream consumers use repository-authoritative state; the legacy adapter is not an authority boundary.
+
+The earlier R14 paragraph describing the legacy compatibility projection is
+historical implementation context. It no longer defines the trusted downstream
+contract. A semantic commit manifest validates the classified comparison and
+its cited content. It does not by itself authorize a graph relation. Schema-v6
+edge and proposition-node membership, derived graph fields, and current
+repository validation authorize graph-backed relations. A deliberately
+semantic-only commit remains visible as an audit status with no relation;
+missing or corrupt membership for a graph-backed comparison fails the trusted
+assessment read. A nonrelational classification stays a typed status rather
+than being promoted to a precedent edge.
+
+Schema v7 adds an append-only assessment ledger for complete target profiles,
+bounded source/version selection, exclusions, failed candidates, context
+attempts and limitations, and derived multi-source and patent dependencies.
+The ledger is versioned by an exact snapshot ID. Migrating an older database
+does not invent historical coverage: without a validated replayed ledger, the
+trusted loader reports `HISTORICAL_LEDGER_UNAVAILABLE`. The loader joins the
+ledger, committed semantic chain, passage/content ancestry and graph
+membership inside one explicit SQLite read transaction. A serialized view,
+receipt, trace or run artifact is only a locator or derived export and cannot
+grant authority on reimport.
+
+The current real Phase 6 vertical slice reloads the repository view for its
+fixture adjudicator and minimal report path. Its adjudication remains fixture
+provenance, with no Phase 7 verdict authority. `phase6/assessment_view.json`
+is labeled `derived_repository_assessment_view` and
+`repository_revalidation_required`; it is not an authority transfer. Future
+Phase 7 prosecutor, defender and adjudicator inputs should consume the
+repository-derived view and bind decisive references to its authorized IDs,
+then revalidate at the frozen-finding boundary. Phase 7 implementation is
+outside this decision. R15 and Gate 30 remain open for independent review.
