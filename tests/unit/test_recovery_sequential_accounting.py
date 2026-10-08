@@ -107,3 +107,23 @@ def test_failed_teardown_and_reordered_phases_cannot_pass():
     reports[-1]["outcome"] = "failed"
     assert account([node], reports)["state"] != "PASSED"
     assert account([node], list(reversed(phases(node))))["state"] != "PASSED"
+
+
+def test_subtests_are_nested_in_call_time_and_must_all_pass():
+    from scripts.recovery.sequential import account_batch
+
+    node = "tests/x.py::test_a"
+    subtests = [{"nodeid": node, "outcome": "passed", "duration": 0.03, "identity": "a" * 64}]
+    result = account_batch(
+        [node], phases(node), child_state="PASSED", returncode=0, subtests=subtests
+    )
+    assert result["state"] == "PASSED"
+    assert result["execution_seconds"] == pytest.approx(0.1)
+    assert result["nested_subtest_seconds"] == pytest.approx(0.03)
+    assert result["subtest_count"] == 1
+    subtests[0]["outcome"] = "failed"
+    result = account_batch(
+        [node], phases(node), child_state="PASSED", returncode=0, subtests=subtests
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert result["passed"] == []

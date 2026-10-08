@@ -23,7 +23,13 @@ class ResourceGuardTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.output = self.root / "receipt.json"
         self.lock = self.root / "exclusive.lock"
-        self.limits = ResourceLimits(timeout_seconds=2, grace_seconds=0.2)
+        self.limits = ResourceLimits(
+            soft_bytes=2_500_000_000,
+            hard_bytes=3_000_000_000,
+            timeout_seconds=2,
+            grace_seconds=0.2,
+            policy_version=1,
+        )
 
     def tearDown(self):
         self.directory.cleanup()
@@ -69,7 +75,10 @@ class ResourceGuardTests(unittest.TestCase):
 
         def output(command):
             if "vm_stat" in command[0]:
-                return "page size of 16384 bytes\nPages free: 200000.\nPages inactive: 1."
+                return (
+                    "page size of 16384 bytes\nPages free: 200000.\nPages inactive: 1.\n"
+                    "Pageins: 0.\nPageouts: 0.\nSwapins: 0.\nSwapouts: 0."
+                )
             return "used = 0.00M" if "vm.swapusage" in command else "1"
 
         with patch.object(guard, "_output", side_effect=output):
@@ -100,7 +109,10 @@ class ResourceGuardTests(unittest.TestCase):
 
         def output(command):
             if "vm_stat" in command[0]:
-                return "page size of 16384 bytes\nPages free: 200000.\nPages inactive: 1."
+                return (
+                    "page size of 16384 bytes\nPages free: 200000.\nPages inactive: 1.\n"
+                    "Pageins: 0.\nPageouts: 0.\nSwapins: 0.\nSwapouts: 0."
+                )
             return "used = 0.00M" if "vm.swapusage" in command else "1"
 
         with (
@@ -225,7 +237,7 @@ class ResourceGuardTests(unittest.TestCase):
             f"open({str(control)!r},'w').write(str(os.getpid())); "
             "collect=lambda pg:ResourceSample(time.monotonic(),0,0,0,1,4000000000,0,()); "
             f"run_guarded(({sys.executable!r},'-I','-S','-c',{code!r}),cwd=Path.cwd(),"
-            f"limits=ResourceLimits(),output=Path({str(self.output)!r}),collector=collect,"
+            f"limits=ResourceLimits(policy_version=1),output=Path({str(self.output)!r}),collector=collect,"
             f"lock_path=Path({str(self.lock)!r}))"
         )
         supervisor = subprocess.Popen([sys.executable, "-S", "-B", "-c", driver])
@@ -310,3 +322,94 @@ class ResourceGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RiskPolicyTests(unittest.TestCase):
+    def setUp(self):
+        from scripts.recovery.resource_guard import RiskMonitor
+
+        self.limits = ResourceLimits(
+            soft_bytes=256_000_000,
+            hard_bytes=384_000_000,
+            min_headroom_bytes=1_000_000_000,
+            policy_version=2,
+            allow_warning=True,
+        )
+        self.monitor = RiskMonitor(self.limits)
+
+    def sample(self, seconds, **changes):
+        return replace(
+            safe_sample(),
+            monotonic_seconds=seconds,
+            pressure=2,
+            swap_bytes=5_000_000_000,
+            pageins_bytes=0,
+            pageouts_bytes=0,
+            swapins_bytes=0,
+            swapouts_bytes=0,
+            **changes,
+        )
+
+    def test_retained_swap_and_warning_allow_small_workload_after_observed_window(self):
+        first = self.sample(10)
+        self.assertIsNone(self.monitor.check(first))
+        self.assertFalse(self.monitor.ready(first))
+        final = self.sample(13)
+        self.assertIsNone(self.monitor.check(final))
+        self.assertTrue(self.monitor.ready(final))
+
+    def test_sustained_output_paging_refuses_despite_ample_headroom(self):
+        self.monitor.check(self.sample(10))
+        sample = replace(self.sample(13), swapouts_bytes=192_000_000)
+        self.assertEqual(self.monitor.check(sample), "SUSTAINED_PAGING")
+
+    def test_severe_swapins_unknown_counters_and_counter_rewind_stop(self):
+        self.monitor.check(self.sample(10))
+        self.assertEqual(
+            self.monitor.check(replace(self.sample(13), swapins_bytes=768_000_000)),
+            "SUSTAINED_SWAPINS",
+        )
+        from scripts.recovery.resource_guard import RiskMonitor
+
+        monitor = RiskMonitor(self.limits)
+        self.assertEqual(
+            monitor.check(replace(self.sample(10), swapouts_bytes=None)), "PAGING_UNKNOWN"
+        )
+        monitor.check(replace(self.sample(10), swapouts_bytes=10))
+        self.assertEqual(monitor.check(self.sample(11)), "PAGING_COUNTER_INVALID")
+
+    def test_critical_unknown_pressure_headroom_and_process_limits_still_stop(self):
+        for changes, reason in (
+            ({"pressure": 4}, "MEMORY_PRESSURE"),
+            ({"pressure": None}, "MEMORY_PRESSURE_UNKNOWN"),
+            ({"headroom_bytes": 999_999_999}, "LOW_HEADROOM"),
+            ({"rss_bytes": 256_000_000}, "SOFT_MEMORY_LIMIT"),
+            ({"footprint_bytes": 384_000_000}, "HARD_MEMORY_LIMIT"),
+        ):
+            self.assertEqual(self.monitor.check(replace(self.sample(10), **changes)), reason)
+
+    def test_warning_permission_cannot_authorize_large_workload(self):
+        with self.assertRaises(ValueError):
+            replace(self.limits, soft_bytes=1_500_000_000, hard_bytes=2_000_000_000)
+
+    def test_v2_heavy_policy_ignores_allocated_swap_but_refuses_warning(self):
+        from scripts.recovery.resource_guard import RiskMonitor
+
+        limits = replace(self.limits, allow_warning=False, min_headroom_bytes=1_500_000_000)
+        self.assertEqual(RiskMonitor(limits).check(self.sample(10)), "MEMORY_PRESSURE")
+        self.assertIsNone(RiskMonitor(limits).check(replace(self.sample(10), pressure=1)))
+
+    def test_moderate_paging_requires_capacity_or_growth_evidence(self):
+        from scripts.recovery.resource_guard import RiskMonitor
+
+        self.monitor.check(self.sample(10))
+        stable = replace(self.sample(13), swapouts_bytes=60_000_000)
+        self.assertIsNone(self.monitor.check(stable))
+        for change in (
+            {"headroom_bytes": 1_100_000_000},
+            {"rss_bytes": 200_000_000},
+            {"headroom_bytes": 3_800_000_000},
+        ):
+            monitor = RiskMonitor(self.limits)
+            monitor.check(self.sample(10))
+            self.assertEqual(monitor.check(replace(stable, **change)), "SUSTAINED_PAGING")

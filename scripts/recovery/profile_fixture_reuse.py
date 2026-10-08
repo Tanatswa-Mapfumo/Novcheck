@@ -6,17 +6,20 @@ copy only after the unchanged minimum native primary and cache controls pass.
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import resource
 import sys
 import time
 from pathlib import Path
 
-from scripts.recovery.batch_evidence import write_record
+from scripts.recovery.batch_evidence import digest_file, write_record
 from scripts.recovery.local_batches import execution_identity
 from tests.fixtures.native_baselines import reusable_report_case
 from tests.fixtures.phase8 import make_report_case
+from tests.fixtures.recorded_clock import recorded_observation_clock
 from tests.fixtures.sqlite_baselines import _timed
+from tests.integration.test_phase6_evidence_pipeline import NOW
 
 
 def main():
@@ -28,10 +31,29 @@ def main():
     args.directory.mkdir(parents=True, exist_ok=False, mode=0o700)
     stages = args.directory / "stages.jsonl"
     started = time.perf_counter()
-    source, _, _ = execution_identity(Path.cwd(), Path(sys.executable))
-    # Both modes bind the same exact builder and environment recipe. No historical
-    # timings are silently substituted for an unsafe fresh measurement.
-    recipe = hashlib.sha256((source + ":minimum-native-report-case-v1").encode()).hexdigest()
+    source, _, environment = execution_identity(Path.cwd(), Path(sys.executable))
+    scenario = {
+        "recipe_version": "minimum-native-report-case-v2",
+        "synthetic_observation_clock": NOW.isoformat(),
+        "copies": args.copies,
+        "unassessable": False,
+        "clock_controls": "explicit-provider-normalization-and-utc-defaults-v1",
+    }
+    recipe = hashlib.sha256(json.dumps(scenario, sort_keys=True).encode()).hexdigest()
+    locked_environment = hashlib.sha256(
+        json.dumps(
+            {
+                "lock": digest_file(Path("uv.lock")),
+                "python": sys.version,
+                "binary": digest_file(Path(sys.executable).resolve()),
+                "packages": sorted(
+                    (d.metadata["Name"], d.version) for d in importlib.metadata.distributions()
+                ),
+                "environment": environment,
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
     fingerprints = []
     with stages.open("x", encoding="utf-8") as stream:
 
@@ -42,7 +64,8 @@ def main():
             stream.flush()
 
         def build(path):
-            return make_report_case(path, observe=observe)
+            with recorded_observation_clock(NOW) as clock:
+                return make_report_case(path, observe=observe, observation_clock=clock)
 
         for index in range(args.copies):
             if args.mode == "original":
@@ -72,13 +95,18 @@ def main():
             "mode": args.mode,
             "copies": args.copies,
             "recipe": recipe,
+            "scenario": scenario,
+            "locked_environment_sha256": locked_environment,
+            "synthetic_observation_clock": NOW.isoformat(),
             "source_identity": source,
             "bundle_digests": fingerprints,
             "total_seconds": time.perf_counter() - started,
             "child_ru_maxrss": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
             "ru_maxrss_units": "bytes" if sys.platform == "darwin" else "KiB",
             "guard_receipt_required": True,
-            "notes": "nested stage durations are not additive; native peaks require supervisor evidence",
+            "notes": (
+                "nested stage durations are not additive; native peaks require supervisor evidence"
+            ),
         },
     )
     return 0

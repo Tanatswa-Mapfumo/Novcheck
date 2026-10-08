@@ -43,7 +43,7 @@ def evidence(tmp_path):
         str(job.resolve()),
     ]
     command_digest = hashlib.sha256(json.dumps(command).encode()).hexdigest()
-    limits = asdict(ResourceLimits(soft_bytes=256000000, hard_bytes=384000000))
+    limits = asdict(ResourceLimits(soft_bytes=256000000, hard_bytes=384000000, policy_version=1))
     samples = [
         ResourceSample(float(index), 10, 5, 5, 1, 2000000000, 0, ()) for index in range(1, 5)
     ]
@@ -177,3 +177,38 @@ def test_guard_for_another_command_cannot_certify_pytest_resume(tmp_path):
     payload["evidence"]["guard"]["sha256"] = digest_file(files["guard"])
     receipt.write_text(json.dumps(payload))
     assert not verify_resume(receipt, source_identity="a" * 64, expected_nodes=[node])
+
+
+@pytest.mark.parametrize("attack", [None, "paging", "unknown", "early_child"])
+def test_v2_proof_replays_paging_and_completed_preflight(tmp_path, attack):
+    from dataclasses import replace
+
+    from scripts.recovery.batch_evidence import verify_guard
+
+    _, _, files = evidence(tmp_path)
+    guard = json.loads(files["guard"].read_text())
+    guard["limits"] = asdict(
+        ResourceLimits(
+            soft_bytes=256000000,
+            hard_bytes=384000000,
+            allow_warning=True,
+            min_headroom_bytes=1000000000,
+        )
+    )
+    files["guard"].write_text(json.dumps(guard))
+    samples = [
+        ResourceSample(float(i), 10, 5, 5, 2, 2000000000, 5000000000, (), 0, 0, 0, 0)
+        for i in range(1, 5)
+    ]
+    if attack == "paging":
+        samples[-1] = replace(samples[-1], swapouts_bytes=200000000)
+    elif attack == "unknown":
+        samples[-1] = replace(samples[-1], swapouts_bytes=None)
+    elif attack == "early_child":
+        samples[1] = replace(samples[1], pids=(123,))
+    files["samples"].write_text("".join(json.dumps(asdict(s)) + "\n" for s in samples))
+    if attack is None:
+        assert verify_guard(files["guard"], files["samples"])["state"] == "PASSED"
+    else:
+        with pytest.raises(ValueError):
+            verify_guard(files["guard"], files["samples"])

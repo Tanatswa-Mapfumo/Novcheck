@@ -124,3 +124,24 @@ def test_reusable_native_recipe_builds_once_and_revalidates_each_private_copy(tm
         assert stages.count("cache_hit") == 1
     finally:
         second.repository.close()
+
+
+def test_explicit_observation_clock_reproduces_exact_native_closure(tmp_path):
+    from datetime import UTC, datetime
+
+    observed = datetime(2026, 9, 26, 12, tzinfo=UTC)
+    digests = []
+    for name in ("one", "two"):
+        from tests.fixtures.recorded_clock import recorded_observation_clock
+
+        with recorded_observation_clock(observed) as clock:
+            case = make_report_case(tmp_path / name, observation_clock=clock)
+        try:
+            digests.append(case.bundle.bundle_digest)
+            assert all(
+                source.version.observed_at == observed for source in case.bundle.source_metadata
+            )
+        finally:
+            case.repository.close()
+        del case
+    assert digests[0] == digests[1]

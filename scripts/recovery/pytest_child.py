@@ -18,6 +18,7 @@ class EvidencePlugin:
         self.stream = path.open("x", encoding="utf-8")
         self.started = time.perf_counter()
         self.deselected = []
+        self.subtest_count = 0
 
     def emit(self, kind, **fields):
         self.stream.write(json.dumps({"kind": kind, **fields}, ensure_ascii=False) + "\n")
@@ -69,6 +70,23 @@ class EvidencePlugin:
 
     def pytest_runtest_logreport(self, report):
         outcome = "xfailed" if hasattr(report, "wasxfail") else report.outcome
+        if hasattr(report, "context"):
+            self.subtest_count += 1
+            # Record identity only: parameter values can contain evidence prose.
+            context = report.context
+            identity = hashlib.sha256(
+                json.dumps(
+                    [context.msg, dict(context.kwargs)], sort_keys=True, default=repr
+                ).encode()
+            ).hexdigest()
+            self.emit(
+                "subtest",
+                nodeid=report.nodeid,
+                outcome=outcome,
+                duration=report.duration,
+                identity=identity,
+            )
+            return
         self.emit(
             "phase",
             nodeid=report.nodeid,
@@ -81,6 +99,7 @@ class EvidencePlugin:
         self.emit(
             "session_finish",
             exitstatus=int(exitstatus),
+            subtest_count=self.subtest_count,
             elapsed_seconds=time.perf_counter() - self.started,
         )
         os.fsync(self.stream.fileno())

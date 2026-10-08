@@ -8,7 +8,7 @@ import math
 from collections import Counter
 
 
-def account_batch(expected, reports, *, child_state, returncode):
+def account_batch(expected, reports, *, child_state, returncode, subtests=()):
     if not expected or any(not isinstance(node, str) or not node for node in expected):
         raise ValueError("nonempty exact test inventory required")
     if len(set(expected)) != len(expected):
@@ -36,6 +36,29 @@ def account_batch(expected, reports, *, child_state, returncode):
         counts[node, phase] += 1
         totals[phase] += duration
         by_node[node].append(report)
+    failed_subtest_nodes = set()
+    nested_subtest_seconds = 0.0
+    for report in subtests:
+        if set(report) != {"nodeid", "outcome", "duration", "identity"}:
+            invalid.append("SUBTEST_SCHEMA")
+            continue
+        duration = report["duration"]
+        identity = report["identity"]
+        if (
+            report["nodeid"] not in by_node
+            or type(duration) not in (int, float)
+            or not math.isfinite(duration)
+            or duration < 0
+            or not isinstance(identity, str)
+            or len(identity) != 64
+            or any(char not in "0123456789abcdef" for char in identity)
+            or report["outcome"] not in {"passed", "failed", "skipped", "xfailed"}
+        ):
+            invalid.append("INVALID_SUBTEST")
+            continue
+        nested_subtest_seconds += duration
+        if report["outcome"] != "passed":
+            failed_subtest_nodes.add(report["nodeid"])
     passed = []
     for node in expected:
         events = by_node[node]
@@ -43,6 +66,7 @@ def account_batch(expected, reports, *, child_state, returncode):
             [event["when"] for event in events] == ["setup", "call", "teardown"]
             and all(counts[node, phase] == 1 for phase in totals)
             and all(event["outcome"] == "passed" for event in events)
+            and node not in failed_subtest_nodes
         ):
             passed.append(node)
     safe = child_state == "PASSED" and type(returncode) is int and returncode == 0
@@ -51,6 +75,8 @@ def account_batch(expected, reports, *, child_state, returncode):
         "state": "PASSED" if complete else "INCOMPLETE",
         "passed": passed if safe and not invalid else [],
         "expected_nodes": list(expected),
+        "subtest_count": len(subtests),
+        "nested_subtest_seconds": nested_subtest_seconds,
         "setup_seconds": totals["setup"],
         "execution_seconds": totals["call"],
         "teardown_seconds": totals["teardown"],

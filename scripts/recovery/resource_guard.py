@@ -24,13 +24,18 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class ResourceLimits:
-    soft_bytes: int = 2_500_000_000
-    hard_bytes: int = 3_000_000_000
+    soft_bytes: int = 1_500_000_000
+    hard_bytes: int = 2_000_000_000
     min_headroom_bytes: int = 1_500_000_000
     max_swap_bytes: int = 2_000_000_000
     sample_seconds: float = 0.1
     timeout_seconds: float = 60
     grace_seconds: float = 0.5
+    # Version 1 is retained solely for interpreting historical controls/receipts.
+    policy_version: int = 2
+    allow_warning: bool = False
+    max_paging_bytes_per_second: int = 16_000_000
+    paging_window_seconds: float = 3.0
 
     def __post_init__(self):
         if not all(math.isfinite(value) for value in asdict(self).values()):
@@ -43,6 +48,17 @@ class ResourceLimits:
             raise ValueError("headroom, timeout and grace must be positive")
         if self.max_swap_bytes < 0:
             raise ValueError("swap limit cannot be negative")
+        if self.policy_version not in (1, 2) or type(self.allow_warning) is not bool:
+            raise ValueError("invalid risk policy")
+        if self.max_paging_bytes_per_second <= 0 or self.paging_window_seconds < 1:
+            raise ValueError("paging policy requires a positive rate and one-second window")
+        if self.allow_warning and (
+            self.policy_version != 2
+            or self.soft_bytes > 256_000_000
+            or self.hard_bytes > 384_000_000
+            or self.min_headroom_bytes < 1_000_000_000
+        ):
+            raise ValueError("warning-pressure execution is limited to bounded small workloads")
 
 
 @dataclass(frozen=True)
@@ -55,6 +71,10 @@ class ResourceSample:
     headroom_bytes: int | None
     swap_bytes: int | None
     pids: tuple[int, ...]
+    pageins_bytes: int | None = None
+    pageouts_bytes: int | None = None
+    swapins_bytes: int | None = None
+    swapouts_bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -80,15 +100,112 @@ def stop_reason(sample: ResourceSample, limits: ResourceLimits) -> str | None:
         return "HARD_MEMORY_LIMIT"
     if peak >= limits.soft_bytes:
         return "SOFT_MEMORY_LIMIT"
-    if sample.pressure != 1:
+    if sample.pressure != 1 and not (
+        limits.policy_version == 2 and limits.allow_warning and sample.pressure == 2
+    ):
         return "MEMORY_PRESSURE_UNKNOWN" if sample.pressure is None else "MEMORY_PRESSURE"
     if sample.headroom_bytes is None or sample.swap_bytes is None:
         return "UNKNOWN_SYSTEM_MEMORY"
     if sample.headroom_bytes < limits.min_headroom_bytes:
         return "LOW_HEADROOM"
-    if sample.swap_bytes > limits.max_swap_bytes:
+    if limits.policy_version == 1 and sample.swap_bytes > limits.max_swap_bytes:
         return "SWAP_LIMIT"
     return None
+
+
+class RiskMonitor:
+    """Replayable capacity/paging decisions; allocated swap is not a v2 veto.
+
+    Output paging includes page-outs and swap-outs conservatively. A three-second
+    rolling window avoids treating a single counter burst as sustained thrashing.
+    Critical/unknown pressure, unreadable counters and low headroom stop at once.
+    """
+
+    def __init__(self, limits: ResourceLimits):
+        self.limits = limits
+        self.history: list[ResourceSample] = []
+        self.started: float | None = None
+
+    def ready(self, sample: ResourceSample) -> bool:
+        return self.limits.policy_version == 1 or (
+            self.started is not None
+            and sample.monotonic_seconds - self.started >= self.limits.paging_window_seconds
+        )
+
+    def check(self, sample: ResourceSample) -> str | None:
+        reason = stop_reason(sample, self.limits)
+        if reason or self.limits.policy_version == 1:
+            return reason
+        counters = ("pageins_bytes", "pageouts_bytes", "swapins_bytes", "swapouts_bytes")
+        if any(
+            type(getattr(sample, key)) is not int or getattr(sample, key) < 0 for key in counters
+        ):
+            return "PAGING_UNKNOWN"
+        if self.started is None:
+            self.started = sample.monotonic_seconds
+        if self.history:
+            previous = self.history[-1]
+            if sample.monotonic_seconds <= previous.monotonic_seconds or any(
+                getattr(sample, key) < getattr(previous, key) for key in counters
+            ):
+                return "PAGING_COUNTER_INVALID"
+        self.history.append(sample)
+        window = self.limits.paging_window_seconds
+        while len(self.history) > 2 and (
+            sample.monotonic_seconds - self.history[1].monotonic_seconds >= window
+        ):
+            self.history.pop(0)
+        first = self.history[0]
+        elapsed = sample.monotonic_seconds - first.monotonic_seconds
+        if elapsed >= window:
+            output_rate = (
+                sample.pageouts_bytes
+                - first.pageouts_bytes
+                + sample.swapouts_bytes
+                - first.swapouts_bytes
+            ) / elapsed
+            input_rate = (sample.swapins_bytes - first.swapins_bytes) / elapsed
+            swap_growth = max(0, sample.swap_bytes - first.swap_bytes) / elapsed
+            paging_rate = max(output_rate, swap_growth)
+            # Moderate background paging is only dangerous with shrinking
+            # capacity or growing children; severe paging remains an absolute stop.
+            headroom_loss = first.headroom_bytes - sample.headroom_bytes
+            process_growth = max(sample.rss_bytes, sample.footprint_bytes) - max(
+                first.rss_bytes, first.footprint_bytes
+            )
+            capacity_risk = (
+                sample.headroom_bytes < self.limits.min_headroom_bytes + self.limits.soft_bytes
+                or headroom_loss >= 128_000_000
+                or (
+                    process_growth >= 64_000_000
+                    and max(sample.rss_bytes, sample.footprint_bytes)
+                    >= 0.75 * self.limits.soft_bytes
+                )
+            )
+            if paging_rate >= 4 * self.limits.max_paging_bytes_per_second or (
+                paging_rate >= self.limits.max_paging_bytes_per_second and capacity_risk
+            ):
+                return "SUSTAINED_PAGING"
+            if input_rate >= 16 * self.limits.max_paging_bytes_per_second or (
+                input_rate >= 4 * self.limits.max_paging_bytes_per_second and capacity_risk
+            ):
+                return "SUSTAINED_SWAPINS"
+        return None
+
+
+def approved_local_limits(limits: ResourceLimits) -> bool:
+    headroom = (
+        1_000_000_000 if limits.policy_version == 2 and limits.allow_warning else 1_500_000_000
+    )
+    return (
+        limits.soft_bytes <= 1_500_000_000
+        and limits.hard_bytes <= 2_000_000_000
+        and limits.min_headroom_bytes >= headroom
+        and limits.sample_seconds <= 0.1
+        and (limits.policy_version == 2 or limits.max_swap_bytes <= 2_000_000_000)
+        and limits.max_paging_bytes_per_second <= 16_000_000
+        and limits.paging_window_seconds == 3.0
+    )
 
 
 def _output(command: tuple[str, ...]) -> str:
@@ -184,6 +301,10 @@ class MacCollector:
             (free + inactive) * page_size,
             swap_bytes,
             pids,
+            *(
+                int(re.search(rf"{name}:\s+(\d+)", vm).group(1)) * page_size
+                for name in ("Pageins", "Pageouts", "Swapins", "Swapouts")
+            ),
         )
 
 
@@ -237,6 +358,8 @@ def run_guarded(
 ) -> RunReceipt:
     if not command:
         raise ValueError("empty command")
+    if limits.policy_version == 2 and not approved_local_limits(limits):
+        raise ValueError("execution exceeds the approved local risk policy")
     output.parent.mkdir(parents=True, exist_ok=True)
     # Reserve receipt before launch; no replay may overwrite previous evidence.
     receipt_file = output.open("x")
@@ -288,6 +411,7 @@ def run_guarded(
             previous_term = signal.signal(signal.SIGTERM, interrupted)
             try:
                 collect = collector or MacCollector()
+                risk = RiskMonitor(limits)
                 while True:
                     before = time.monotonic()
                     sample = collect(process.pid if process else None)
@@ -299,7 +423,7 @@ def run_guarded(
                     )
                     samples.write(json.dumps(asdict(sample)) + "\n")
                     samples.flush()
-                    reason = stop_reason(sample, limits)
+                    reason = risk.check(sample)
                     if reason is None and time.monotonic() - before > 0.2:
                         reason = "MONITOR_TOO_SLOW"
                     if reason:
@@ -307,7 +431,7 @@ def run_guarded(
                         break
                     if process is None:
                         # Three stable samples before any actual command launch.
-                        if count >= 3:
+                        if count >= 3 and risk.ready(sample):
                             process = subprocess.Popen(
                                 command,
                                 cwd=cwd,
@@ -370,6 +494,7 @@ def main() -> int:
     parser.add_argument("--soft-bytes", type=int, default=256_000_000)
     parser.add_argument("--hard-bytes", type=int, default=384_000_000)
     parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--small-workload", action="store_true")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = tuple(args.command[1:] if args.command[:1] == ["--"] else args.command)
@@ -377,7 +502,12 @@ def main() -> int:
         command,
         cwd=Path.cwd(),
         limits=ResourceLimits(
-            soft_bytes=args.soft_bytes, hard_bytes=args.hard_bytes, timeout_seconds=args.timeout
+            soft_bytes=args.soft_bytes,
+            hard_bytes=args.hard_bytes,
+            timeout_seconds=args.timeout,
+            policy_version=2,
+            allow_warning=args.small_workload,
+            min_headroom_bytes=1_000_000_000 if args.small_workload else 1_500_000_000,
         ),
         output=args.output,
     )

@@ -184,7 +184,7 @@ def _insert_fixture_dependency(repository, run_id, kind, payload, *, execution=N
     return artifact.artifact_id
 
 
-def _freeze_fixture(tmp_path, *, all_unassessable=False):
+def _freeze_fixture(tmp_path, *, all_unassessable=False, observation_clock=None):
     import asyncio
     import json
     from datetime import UTC, datetime
@@ -216,7 +216,9 @@ def _freeze_fixture(tmp_path, *, all_unassessable=False):
     from tests.unit.adjudication.test_judge import _judging_fixture, _scripted_judge
     from tests.unit.adjudication.test_roles import scope
 
-    packet, repository, run, prosecution, _, disputes, facts = _judging_fixture(tmp_path)
+    packet, repository, run, prosecution, _, disputes, facts = _judging_fixture(
+        tmp_path, observation_clock=observation_clock
+    )
     judge = _scripted_judge(packet, prosecution)
     if all_unassessable:
         manifest = packet.manifest.model_copy(

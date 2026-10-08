@@ -34,8 +34,12 @@ from tests.fixtures.phase7_execution import executed_artifact
 from tests.integration.test_phase6_evidence_pipeline import graph_database, run_phase6_for_ledger
 
 
-def build_packet(tmp_path, *, original_input: str | None = None) -> AdjudicationCasePacket:
-    result, _, _, _, _ = asyncio.run(run_phase6_for_ledger(tmp_path))
+def build_packet(
+    tmp_path, *, original_input: str | None = None, observation_clock=None
+) -> AdjudicationCasePacket:
+    result, _, _, _, _ = asyncio.run(
+        run_phase6_for_ledger(tmp_path, observation_clock=observation_clock)
+    )
     assert result.snapshot_id is not None
     repository = SqlAlchemyEvidenceGraphRepository(graph_database(tmp_path))
     try:
@@ -604,11 +608,11 @@ def test_no_material_dispute_skips_rebuttal(packet: AdjudicationCasePacket) -> N
     )
 
 
-def _committed_dispute_run(tmp_path):
+def _committed_dispute_run(tmp_path, *, observation_clock=None):
     from novelty_harness.adjudication.models import Phase7RunState
     from novelty_harness.adjudication.roles import material_disputes
 
-    packet = build_packet(tmp_path)
+    packet = build_packet(tmp_path, observation_clock=observation_clock)
     repository = SqlAlchemyEvidenceGraphRepository(graph_database(tmp_path))
     run = repository.begin_phase7_run(packet.assessment_context_id, attempt_token="rebuttal")
     prosecution = valid_case(packet)

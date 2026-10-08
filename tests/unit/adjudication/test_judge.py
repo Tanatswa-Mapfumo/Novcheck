@@ -130,10 +130,12 @@ def test_model_cannot_supply_high_impact_flag(tmp_path) -> None:
         type(dispute).model_validate(forged)
 
 
-def _judging_fixture(tmp_path):
+def _judging_fixture(tmp_path, *, observation_clock=None):
     from tests.unit.adjudication.test_roles import _committed_dispute_run
 
-    packet, repository, run, prosecution, defense, disputes = _committed_dispute_run(tmp_path)
+    packet, repository, run, prosecution, defense, disputes = _committed_dispute_run(
+        tmp_path, observation_clock=observation_clock
+    )
     target = TargetRef(kind="MCU", id=prosecution.target_id)
     gate_a, _ = evaluate_gate_a(packet, target)
     robustness, domain = repository.load_phase7_qualifications(packet.assessment_context_id, target)

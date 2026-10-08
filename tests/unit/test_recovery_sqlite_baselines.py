@@ -313,3 +313,23 @@ def test_backup_constructor_failure_closes_already_open_source(tmp_path, monkeyp
     assert len(opened) == 1
     assert opened[0].closed
     assert not (tmp_path / "baseline" / "ready.json").exists()
+
+
+def test_recorded_observation_clock_restores_defaults_after_interruption():
+    import time
+    from datetime import UTC, datetime
+
+    from novelty_harness.domain.base import utc_now
+    from tests.fixtures.recorded_clock import recorded_observation_clock
+
+    observed = datetime(2026, 9, 26, 12, tzinfo=UTC)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError):
+        with recorded_observation_clock(observed) as clock:
+            assert clock() == utc_now() == observed
+            assert time.monotonic() >= started
+            raise RuntimeError("interrupted synthetic fixture")
+    assert utc_now() != observed
+    with pytest.raises(ValueError):
+        with recorded_observation_clock(observed.replace(tzinfo=None)):
+            pytest.fail("naive observation time admitted")

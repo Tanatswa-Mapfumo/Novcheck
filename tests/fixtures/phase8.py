@@ -56,15 +56,18 @@ class ReportCase:
     bundle: ReportInputBundle
 
 
-def make_report_case(path: Path, *, unassessable: bool = False, observe=None) -> ReportCase:
-    from tests.unit.evidence.graph.test_phase7_store import _freeze_fixture
-
+def make_report_case(
+    path: Path, *, unassessable: bool = False, observe=None, observation_clock=None
+) -> ReportCase:
     from tests.fixtures.sqlite_baselines import _timed
+    from tests.unit.evidence.graph.test_phase7_store import _freeze_fixture
 
     repository = None
     try:
         with _timed("upstream_construction", observe):
-            packet, repository, run, proposed = _freeze_fixture(path, all_unassessable=unassessable)
+            packet, repository, run, proposed = _freeze_fixture(
+                path, all_unassessable=unassessable, observation_clock=observation_clock
+            )
         with _timed("native_freeze", observe):
             repository.freeze_phase7_adjudication(run.run_id, proposed)
         with _timed("native_frozen_load", observe):

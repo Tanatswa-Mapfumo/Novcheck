@@ -44,8 +44,9 @@ def graph_database(tmp_path):
     return database
 
 
-async def run_phase5(writer, client, database):
-    research, _, _ = await run_phase4(client)
+async def run_phase5(writer, client, database, *, observation_clock=None):
+    clock_options = {"clock": observation_clock} if observation_clock is not None else {}
+    research, _, _ = await run_phase4(client, **clock_options)
     repository = SqlAlchemyEvidenceGraphRepository(database)
     try:
         return await run_evidence_normalization(
@@ -56,16 +57,19 @@ async def run_phase5(writer, client, database):
             writer=writer,
             trace_sink=InMemoryTraceSink(),
             graph_ref="phase5/evidence_graph.sqlite3",
+            **clock_options,
         )
     finally:
         repository.close()
 
 
-async def run_phase6_for_ledger(tmp_path, *, max_sources=3, evidence_update=None, runner=None):
+async def run_phase6_for_ledger(
+    tmp_path, *, max_sources=3, evidence_update=None, runner=None, observation_clock=None
+):
     writer = RunArtifactWriter(tmp_path)
     database = graph_database(tmp_path)
     async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
-        evidence = await run_phase5(writer, client, database)
+        evidence = await run_phase5(writer, client, database, observation_clock=observation_clock)
     if evidence_update is not None:
         evidence = evidence_update(evidence)
     repository = SqlAlchemyEvidenceGraphRepository(database)

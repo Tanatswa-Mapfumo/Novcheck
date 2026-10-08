@@ -22,10 +22,10 @@ from scripts.recovery.batch_evidence import (
     verify_resume,
     write_record,
 )
-from scripts.recovery.resource_guard import ResourceLimits, run_guarded
+from scripts.recovery.resource_guard import ResourceLimits, approved_local_limits, run_guarded
 from scripts.recovery.sequential import account_batch
 
-POLICY = "guarded-local-inventory-v1"
+POLICY = "guarded-local-inventory-v2-risk"
 
 
 def _digest(value):
@@ -146,7 +146,14 @@ def _dispatch(cwd, python, directory, nodes, collect_only, limits):
 def collect_inventory(cwd, python, directory, *, expected_network_exclusions=5):
     started = time.perf_counter()
     before, tree, _ = execution_identity(cwd, python)
-    limits = ResourceLimits(soft_bytes=256_000_000, hard_bytes=384_000_000, timeout_seconds=60)
+    limits = ResourceLimits(
+        soft_bytes=256_000_000,
+        hard_bytes=384_000_000,
+        timeout_seconds=60,
+        policy_version=2,
+        allow_warning=True,
+        min_headroom_bytes=1_000_000_000,
+    )
     result, guard, job, events = _dispatch(cwd, python, directory, ["tests/"], True, limits)
     if result.state != "PASSED" or not result.cleanup_complete:
         return {"state": result.state, "reason": result.reason, "guard": str(guard)}
@@ -155,7 +162,11 @@ def collect_inventory(cwd, python, directory, *, expected_network_exclusions=5):
         raise ValueError("source/environment changed during collection")
     evidence = inspect_events(events, job_digest=digest_file(job))
     verify_invocation(asdict(result), job, evidence["configuration"], list(_command(python, job)))
-    if evidence["phases"] or len(evidence["deselected"]) != expected_network_exclusions:
+    if (
+        evidence["phases"]
+        or evidence["subtests"]
+        or len(evidence["deselected"]) != expected_network_exclusions
+    ):
         raise ValueError("collection policy or network exclusion inventory changed")
     receipt = {
         "state": "COLLECTED",
@@ -216,6 +227,7 @@ def load_inventory(path, cwd, python):
         or actual["configuration"] != receipt["configuration"]
         or actual["deselected"] != receipt["network_exclusions"]
         or actual["phases"]
+        or actual["subtests"]
     ):
         raise ValueError("inventory differs from actual collection")
     return receipt
@@ -232,13 +244,7 @@ def run_batch(cwd, python, directory, *, inventory, nodes, limits, resume_from=N
         or any(node not in inventory["expected_nodes"] for node in nodes)
     ):
         raise ValueError("batch contains duplicate or foreign nodes")
-    if (
-        limits.soft_bytes > 1_500_000_000
-        or limits.hard_bytes > 2_000_000_000
-        or limits.min_headroom_bytes < 1_500_000_000
-        or limits.max_swap_bytes > 2_000_000_000
-        or limits.sample_seconds > 0.1
-    ):
+    if limits.policy_version != 2 or not approved_local_limits(limits):
         raise ValueError("batch exceeds the approved provisional local ceiling")
     if resume_from is not None and verify_resume(
         resume_from, source_identity=current, expected_nodes=nodes
@@ -272,7 +278,11 @@ def run_batch(cwd, python, directory, *, inventory, nodes, limits, resume_from=N
             if evidence["configuration"] != inventory["configuration"]:
                 raise ValueError("actual pytest environment/plugin configuration changed")
             receipt["accounting"] = account_batch(
-                nodes, evidence["phases"], child_state=result.state, returncode=result.returncode
+                nodes,
+                evidence["phases"],
+                child_state=result.state,
+                returncode=result.returncode,
+                subtests=evidence["subtests"],
             )
             receipt["configuration"] = evidence["configuration"]
             receipt["passed"] = receipt["accounting"]["passed"]
@@ -365,18 +375,106 @@ def account_complete_inventory(inventory_path, batch_paths, *, cwd, python):
     }
 
 
+def execute_measured_plan(inventory_path, cohort_paths, output, *, cwd, python, resume=False):
+    """Execute proven cohorts sequentially; incomplete capacity is never a suite pass.
+
+    Resume reopens each complete proof through run_batch. Fresh is the default;
+    final detached verification must use fresh execution and separate final gates.
+    A resource refusal stops this dispatch session rather than retrying.
+    """
+    started = time.perf_counter()
+    plan = plan_measured_batches(inventory_path, cohort_paths, cwd=cwd, python=python)
+    inventory = load_inventory(inventory_path, cwd, python)
+    output.mkdir(parents=True, exist_ok=False, mode=0o700)
+    outcomes = []
+    completed = []
+    for index, batch in enumerate(plan["batches"]):
+        directory = output / f"batch-{index:04d}"
+        result = run_batch(
+            cwd,
+            python,
+            directory,
+            inventory=inventory,
+            nodes=batch["nodes"],
+            limits=ResourceLimits(**batch["limits"]),
+            resume_from=Path(batch["capacity_evidence"]) if resume else None,
+        )
+        proof = (
+            Path(result["receipt"]) if result["state"] == "RESUMED" else directory / "batch.json"
+        )
+        outcomes.append(
+            {
+                "state": result["state"],
+                "receipt": str(proof),
+                "reason": result.get("guard", {}).get("reason"),
+                "nodes": batch["nodes"],
+            }
+        )
+        if result["state"] not in {"PASSED", "RESUMED"}:
+            break
+        completed.append(proof)
+    coverage = account_complete_inventory(inventory_path, completed, cwd=cwd, python=python)
+    result = {
+        "execution_state": "PASSED" if len(completed) == len(plan["batches"]) else "INCOMPLETE",
+        "coverage": coverage,
+        "outcomes": outcomes,
+        "unmeasured_nodes": plan["unmeasured_nodes"],
+        "resume_requested": resume,
+        "total_seconds": time.perf_counter() - started,
+        "collection_seconds": inventory["total_seconds"],
+        "final_acceptance": "NOT_ESTABLISHED",
+    }
+    write_record(output / "session.json", result)
+    return result
+
+
 def main():
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--collect", action="store_true")
+    modes = parser.add_mutually_exclusive_group(required=True)
+    modes.add_argument("--collect", action="store_true")
+    modes.add_argument("--run-measured", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--inventory", type=Path)
+    parser.add_argument("--cohort-evidence", type=Path, nargs="+")
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
-    if not args.collect:
-        parser.error("only explicit guarded collection is enabled at this preparation stage")
-    result = collect_inventory(Path.cwd(), Path(sys.executable), args.output)
-    print(json.dumps(result, indent=2))
-    return 0 if result["state"] == "COLLECTED" else 1
+    if args.collect:
+        if args.inventory or args.cohort_evidence or args.resume:
+            parser.error("collection does not accept execution/resume options")
+        result = collect_inventory(Path.cwd(), Path(sys.executable), args.output)
+        print(
+            json.dumps(
+                {key: value for key, value in result.items() if key != "expected_nodes"}, indent=2
+            )
+        )
+        return 0 if result["state"] == "COLLECTED" else 1
+    if not args.inventory or not args.cohort_evidence:
+        parser.error("measured execution requires exact inventory and complete cohort evidence")
+    result = execute_measured_plan(
+        args.inventory,
+        args.cohort_evidence,
+        args.output,
+        cwd=Path.cwd(),
+        python=Path(sys.executable),
+        resume=args.resume,
+    )
+    print(
+        json.dumps(
+            {
+                key: value
+                for key, value in result.items()
+                if key not in {"outcomes", "unmeasured_nodes"}
+            },
+            indent=2,
+        )
+    )
+    return (
+        0
+        if result["execution_state"] == "PASSED" and result["coverage"]["state"] == "PASSED"
+        else 1
+    )
 
 
 if __name__ == "__main__":

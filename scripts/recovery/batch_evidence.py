@@ -7,7 +7,13 @@ import os
 from dataclasses import fields
 from pathlib import Path
 
-from scripts.recovery.resource_guard import ResourceLimits, ResourceSample, RunReceipt, stop_reason
+from scripts.recovery.resource_guard import (
+    ResourceLimits,
+    ResourceSample,
+    RiskMonitor,
+    RunReceipt,
+    approved_local_limits,
+)
 from scripts.recovery.sequential import account_batch, eligible_resume
 
 
@@ -44,7 +50,15 @@ def write_record(path, value):
 def inspect_events(path, *, job_digest, expected_nodes=None):
     with path.open(encoding="utf-8") as stream:
         events = [json.loads(line, object_pairs_hook=_unique) for line in stream]
-    kinds = {"job", "configured", "collection", "session_finish", "phase", "collection_nonpass"}
+    kinds = {
+        "job",
+        "configured",
+        "collection",
+        "session_finish",
+        "phase",
+        "subtest",
+        "collection_nonpass",
+    }
     if any(not isinstance(event, dict) or event.get("kind") not in kinds for event in events):
         raise ValueError("unknown pytest evidence event")
     jobs = [event for event in events if event.get("kind") == "job"]
@@ -78,8 +92,16 @@ def inspect_events(path, *, job_digest, expected_nodes=None):
         for event in events
         if event.get("kind") == "phase"
     ]
+    subtests = [
+        {key: event[key] for key in ("nodeid", "outcome", "duration", "identity")}
+        for event in events
+        if event.get("kind") == "subtest"
+    ]
+    if endings[0].get("subtest_count", 0) != len(subtests):
+        raise ValueError("incomplete subtest evidence")
     return {
         "nodes": nodes,
+        "subtests": subtests,
         "deselected": deselected,
         "phases": phases,
         "configuration": configs[0],
@@ -101,15 +123,10 @@ def verify_guard(guard_path, samples_path):
         or guard["cleanup_complete"] is not True
     ):
         raise ValueError("supervisor did not complete safely")
-    limits = ResourceLimits(**guard["limits"])
-    if (
-        limits.soft_bytes > 1_500_000_000
-        or limits.hard_bytes > 2_000_000_000
-        or limits.min_headroom_bytes < 1_500_000_000
-        or limits.max_swap_bytes > 2_000_000_000
-        or limits.sample_seconds > 0.1
-    ):
+    limits = ResourceLimits(**{"policy_version": 1, **guard["limits"]})
+    if not approved_local_limits(limits):
         raise ValueError("supervisor policy exceeds approved local limits")
+    risk = RiskMonitor(limits)
     count = peak_rss = peak_footprint = 0
     previous = -math.inf
     with samples_path.open(encoding="utf-8") as stream:
@@ -128,8 +145,10 @@ def verify_guard(guard_path, samples_path):
                 or sample.swap_bytes < 0
             ):
                 raise ValueError("invalid system memory measurement")
-            if stop_reason(sample, limits) is not None:
+            if risk.check(sample) is not None:
                 raise ValueError("unsafe sample in supposedly passing run")
+            if sample.pids and not risk.ready(sample):
+                raise ValueError("child observed before paging preflight completed")
             previous = sample.monotonic_seconds
             count += 1
             peak_rss = max(peak_rss, sample.rss_bytes)
@@ -138,6 +157,7 @@ def verify_guard(guard_path, samples_path):
             )
     if (
         count < 4
+        or not risk.ready(sample)
         or count != guard["samples"]
         or peak_rss != guard["peak_rss_bytes"]
         or peak_footprint != guard["peak_footprint_bytes"]
@@ -213,6 +233,7 @@ def verify_resume(receipt_path, *, source_identity, expected_nodes):
             evidence["phases"],
             child_state=guard["state"],
             returncode=guard["returncode"],
+            subtests=evidence["subtests"],
         )
         return actual["state"] == "PASSED" and actual == receipt["accounting"]
     except (OSError, ValueError, TypeError, KeyError):
