@@ -4,6 +4,7 @@ import fcntl
 import hashlib
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
 from tests.fixtures.sqlite_baselines import (
@@ -99,7 +100,18 @@ def reusable_report_case(
     original path. A cache hit always validates the copied native authority.
     """
     from novelty_harness.evidence.graph.migrations import SCHEMA_VERSION
+    from scripts.recovery.local_batches import execution_identity
 
+    # Native reuse independently binds actual current source, modes, new files,
+    # interpreter and installed environment, even if a caller supplied a stale
+    # recipe label. The caller labels still distinguish scenario options.
+    actual_execution, _, _ = execution_identity(Path.cwd(), Path(sys.executable))
+    recipe_digest = hashlib.sha256(
+        json.dumps([recipe_digest, actual_execution], separators=(",", ":")).encode()
+    ).hexdigest()
+    environment_digest = hashlib.sha256(
+        json.dumps([environment_digest, actual_execution], separators=(",", ":")).encode()
+    ).hexdigest()
     key = hashlib.sha256(
         json.dumps(
             [recipe_digest, environment_digest, SCHEMA_VERSION], separators=(",", ":")

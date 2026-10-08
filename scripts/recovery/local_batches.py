@@ -80,6 +80,8 @@ def execution_identity(cwd, python):
     environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment.pop("_", None)
+    # Pytest observation state varies by node/phase; it is not configuration.
+    environment.pop("PYTEST_CURRENT_TEST", None)
     metadata = []
     for path in sorted(
         (python.parent.parent / "lib").glob("python*/site-packages/*.dist-info/METADATA")
