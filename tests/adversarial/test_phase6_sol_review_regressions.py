@@ -323,12 +323,12 @@ def test_f07_schema_v1_migrates_to_v3(tmp_path) -> None:
     repository = SqlAlchemyEvidenceGraphRepository(database)
     # Simulate a v1 database with no Phase 6 edges.
     with repository.engine.begin() as connection:
-        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 7"))
+        connection.execute(sql_text("UPDATE schema_version SET version = 1"))
     repository.close()
     migrated = SqlAlchemyEvidenceGraphRepository(database)
     from novelty_harness.evidence.graph.migrations import SCHEMA_VERSION, schema_version
 
-    assert schema_version(migrated.engine) == SCHEMA_VERSION == 7
+    assert schema_version(migrated.engine) == SCHEMA_VERSION == 9
     migrated.close()
 
 
@@ -356,7 +356,7 @@ def test_f07_legacy_direct_edge_cannot_be_reinterpreted_as_verified(tmp_path) ->
         ),
     )
     with repository.engine.begin() as connection:
-        connection.execute(sql_text("UPDATE schema_version SET version = 1 WHERE version = 7"))
+        connection.execute(sql_text("UPDATE schema_version SET version = 1"))
     repository.close()
     with pytest.raises(ValueError, match="Legacy Phase 6 graph edges"):
         SqlAlchemyEvidenceGraphRepository(database)

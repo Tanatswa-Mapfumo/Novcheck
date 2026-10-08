@@ -411,7 +411,7 @@ def test_v4_semantic_rows_need_replay_to_gain_a_v7_commit_manifest(tmp_path) -> 
         repository.close()
     reopened = SqlAlchemyEvidenceGraphRepository(database)
     try:
-        assert schema_version(reopened.engine) == SCHEMA_VERSION == 7
+        assert schema_version(reopened.engine) == SCHEMA_VERSION == 9
         with pytest.raises(ValueError, match="commit|authorit|persist"):
             diagnostic_legacy_projection_ignores_graph_authority(result, reopened)
         replay = _commit(reopened)

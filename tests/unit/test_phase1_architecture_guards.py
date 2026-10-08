@@ -9,7 +9,7 @@ from novelty_harness.domain.adjudication import FrozenAdjudication, MCUFinding
 from novelty_harness.domain.idea import ArtifactProvenance, ClaimedAdvantage
 from novelty_harness.domain.research import CoverageEntry
 from novelty_harness.reporting.minimal import compile_minimal_report
-from tests.unit.test_import_boundaries import forbidden_imports
+from tests.unit.test_import_boundaries import FORBIDDEN, forbidden_imports
 
 ROOT = Path(__file__).resolve().parents[2]
 NETWORK_IMPORTS = (
@@ -27,25 +27,144 @@ NETWORK_IMPORTS = (
 
 
 def test_reporting_has_only_domain_and_standard_library_dependencies():
-    # The approved Phase 6 report compiler consumes only typed evidence-graph
-    # contracts and its repository port; the Phase 1 compiler stays domain-only.
-    phase6_read_contracts = {
+    # Approved Phase 6/7 summaries consume only typed domain/evidence read
+    # contracts and repository ports; application services remain forbidden.
+    phase_read_contracts = {
+        "novelty_harness.adjudication.repository",
         "novelty_harness.evidence.graph.assessment_view",
         "novelty_harness.evidence.graph.models",
         "novelty_harness.evidence.graph.repository",
     }
+    report_read_contracts = {
+        "bundle.py": {
+            "novelty_harness.adjudication.context",
+            "novelty_harness.adjudication.counterfactual",
+            "novelty_harness.adjudication.frozen",
+            "novelty_harness.adjudication.gates",
+            "novelty_harness.adjudication.judge",
+            "novelty_harness.adjudication.models",
+            "novelty_harness.adjudication.needs",
+            "novelty_harness.adjudication.qualifications",
+            "novelty_harness.adjudication.roles",
+            "novelty_harness.evidence.graph.assessment_view",
+            "novelty_harness.evidence.mapping.dimensions",
+            "novelty_harness.evidence.normalization.models",
+            "novelty_harness.mcu.overrides",
+        },
+        "obligations.py": {
+            "novelty_harness.adjudication.models",
+            "novelty_harness.adjudication.roles",
+        },
+        "fallback.py": {
+            "novelty_harness.adjudication.roles",
+            "novelty_harness.evidence.passages.models",
+        },
+        "ir.py": {
+            "novelty_harness.adjudication.frozen",
+            "novelty_harness.adjudication.models",
+            "novelty_harness.evidence.graph.assessment_ledger",
+        },
+        "citations.py": {
+            "novelty_harness.evidence.normalization.models",
+            "novelty_harness.evidence.passages.models",
+        },
+        "firewall.py": {"novelty_harness.adjudication.frozen"},
+        "verification.py": {"novelty_harness.adjudication.frozen"},
+        "wording.py": {
+            "novelty_harness.adjudication.frozen",
+            "novelty_harness.adjudication.models",
+        },
+        "claims.py": {
+            "novelty_harness.adjudication.frozen",
+            "novelty_harness.adjudication.models",
+        },
+        "drafts.py": {
+            "novelty_harness.adjudication.counterfactual",
+            "novelty_harness.adjudication.frozen",
+            "novelty_harness.adjudication.judge",
+            "novelty_harness.adjudication.needs",
+            "novelty_harness.adjudication.roles",
+            "novelty_harness.evidence.graph.assessment_ledger",
+            "novelty_harness.evidence.graph.assessment_view",
+            "novelty_harness.evidence.mapping.dimensions",
+            "novelty_harness.evidence.provenance.models",
+            "novelty_harness.mcu.overrides",
+        },
+        "plan.py": {
+            "novelty_harness.adjudication.frozen",
+            "novelty_harness.adjudication.models",
+            "novelty_harness.evidence.graph.assessment_view",
+            "novelty_harness.evidence.mapping.dimensions",
+            "novelty_harness.mcu.overrides",
+        },
+        "value.py": {"novelty_harness.adjudication.models"},
+        "uncertainty.py": {
+            "novelty_harness.adjudication.models",
+            "novelty_harness.adjudication.roles",
+        },
+    }
     for path in (ROOT / "src/novelty_harness/reporting").rglob("*.py"):
         source = path.read_text()
-        assert not forbidden_imports(source, "novelty_harness.reporting")
+        # The one runtime import is pure canonical serialization, never execution.
+        violations = forbidden_imports(source, "novelty_harness.reporting")
+        assert not [
+            v
+            for v in violations
+            if v != "novelty_harness.runtime.tracing.hashing"
+            and not v.startswith("novelty_harness.runtime.tracing.hashing.")
+        ]
+        assert not forbidden_imports(
+            source,
+            "novelty_harness.reporting",
+            banned=tuple(prefix for prefix in FORBIDDEN if prefix != "novelty_harness.runtime"),
+        )
         for node in ast.walk(ast.parse(source)):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                imported = (
+                    [alias.name for alias in node.names]
+                    if isinstance(node, ast.Import)
+                    else [node.module or ""]
+                )
+                if any(name == "yaml" or name.startswith("yaml.") for name in imported):
+                    assert path.name == "rendering.py", path
             if (
                 isinstance(node, ast.ImportFrom)
                 and node.module
                 and node.module.startswith("novelty_harness")
             ):
-                assert node.module.startswith("novelty_harness.domain.") or (
-                    path.name == "minimal.py" and node.module in phase6_read_contracts
-                )
+                assert (
+                    node.module.startswith("novelty_harness.domain.")
+                    or node.module.startswith("novelty_harness.reporting.")
+                    or (path.name == "minimal.py" and node.module in phase_read_contracts)
+                    or (
+                        path.name
+                        in {
+                            "models.py",
+                            "artifacts.py",
+                            "execution.py",
+                            "bundle.py",
+                            "obligations.py",
+                            "uncertainty.py",
+                            "plan.py",
+                            "drafts.py",
+                            "claims.py",
+                            "firewall.py",
+                            "verification.py",
+                            "recommendations.py",
+                            "fallback.py",
+                            "repair.py",
+                            "citations.py",
+                            "ir.py",
+                            "rendering.py",
+                        }
+                        and node.module == "novelty_harness.runtime.tracing.hashing"
+                    )
+                    or (
+                        path.name == "models.py"
+                        and node.module == "novelty_harness.adjudication.models"
+                    )
+                    or node.module in report_read_contracts.get(path.name, set())
+                ), (path, node.module)
 
 
 def test_production_has_no_test_imports_or_concrete_network_provider_dependencies():
@@ -119,3 +238,11 @@ def test_every_nested_findings_contract_is_frozen_without_mutable_collections(mo
 def test_default_suite_is_network_blocked_without_host_allowances(pytestconfig):
     assert pytestconfig.getoption("disable_socket") is True
     assert not pytestconfig.getoption("allow_hosts")
+
+
+def test_yaml_serialization_is_confined_to_report_renderer():
+    renderer = ROOT / "src/novelty_harness/reporting/rendering.py"
+    for path in (ROOT / "src").rglob("*.py"):
+        package = ".".join(path.relative_to(ROOT / "src").parent.parts)
+        violations = forbidden_imports(path.read_text(), package, banned=("yaml",))
+        assert path == renderer or not violations, (path, violations)

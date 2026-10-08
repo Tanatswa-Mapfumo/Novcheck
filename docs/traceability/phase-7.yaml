@@ -1,0 +1,142 @@
+phase: 7
+acceptance: PASS_INDEPENDENT_REMEDIATION_CONFIRMED
+phase6_baseline: e4dd4e09699f755dd0fe7b7bc3dd8be4e11f7ee1
+scope: Claim-specific adversarial review, neutral adjudication and repository-frozen structured handoff only
+requirements:
+  - ids: [INV-01, INV-02, INV-03, INV-05, INV-06, INV-07, INV-11, INV-14, INV-15, FR-AUD-001]
+    master_sections: [31, 32, 34, 37]
+    design_sections: [1, 2, 3, 4, 5, 6, 7, 8, 32, 33]
+    tasks: [1, 2, 3, 4, 6, 18, 19]
+    status: Schema v8 exact context and packet bindings; Phase6AssessmentView is sole prior-art authority; transactional freeze/read revalidate dependencies and policy
+    modules: [adjudication/models.py, adjudication/context.py, adjudication/packet.py, adjudication/repository.py, evidence/graph/phase7_models.py, evidence/graph/phase7_store.py]
+    tests: [tests/unit/adjudication/test_contracts.py, tests/unit/adjudication/test_context.py, tests/unit/adjudication/test_packet.py, tests/unit/evidence/graph/test_phase7_store.py]
+  - ids: [FR-SEC-001, FR-SEC-002, FR-AUD-002]
+    master_sections: [31, 32, 33]
+    design_sections: [9, 10, 11, 36, 38]
+    tasks: [4, 5, 6, 7, 15, 21]
+    status: Independent first passes, packet-only citations, untrusted evidence blocks, one rebuttal per role and bounded strict-schema recovery
+    modules: [adjudication/roles.py, adjudication/prompts.py, ports/adjudication.py, application/phase7_model_adapter.py, application/phase7_roles.py]
+    tests: [tests/unit/adjudication/test_roles.py, tests/unit/test_phase7_architecture_guards.py, tests/adversarial/test_phase7_authority_semantics.py]
+  - ids: [FR-ARC-001, FR-ARC-002, FR-OBS-001, INV-03, INV-06]
+    master_sections: [31, 32, 34, 35]
+    design_sections: [12, 13, 14, 37]
+    tasks: [2, 8, 9, 10, 20]
+    status: Gate A input needs never dispatch; evidence-dependent D requires a comparable defined target and bound external fact; B/C/D use typed bounded reviewed Phases3–6; changed zero-yield state restarts; only exact repository no-op resumes
+    modules: [adjudication/needs.py, adjudication/gates.py, application/phase7_research.py, application/phase7.py, evidence/graph/phase7_store.py]
+    tests: [tests/unit/adjudication/test_needs.py, tests/unit/adjudication/test_gate_d_research_origin.py, tests/unit/adjudication/test_context.py, tests/integration/test_phase7_slice.py]
+  - ids: [FR-AUD-002, INV-07, INV-11]
+    master_sections: [33, 34]
+    design_sections: [15, 16, 17, 18]
+    tasks: [7, 14, 15, 16]
+    status: Complete candidate set is rederived; semantic consequence changes and unbounded space trigger HIGH_IMPACT; primary and alternate reversed pairs retain actual findings; heterogeneous probes never vote
+    modules: [adjudication/roles.py, adjudication/judge.py, application/phase7_roles.py]
+    tests: [tests/unit/adjudication/test_roles.py, tests/unit/adjudication/test_judge.py, tests/integration/test_phase7_slice.py]
+  - ids: [FR-EQ-004, FR-EVID-004, INV-02, INV-03, INV-05, INV-07]
+    master_sections: [35]
+    design_sections: [19, 20, 21, 22, 29]
+    tasks: [9, 10, 11, 12]
+    status: Categorical Gate A/B facts; exact authorized single-source Gate C; validated structured Gate D removal localization; no source stitching or Phase6 reclassification
+    modules: [adjudication/gates.py, adjudication/counterfactual.py]
+    tests: [tests/unit/adjudication/test_gates.py, tests/adversarial/test_phase6_equivalence_attacks.py]
+  - ids: [INV-09, INV-12, INV-13, INV-07]
+    master_sections: [36]
+    design_sections: [23, 24, 25, 26, 27, 30, 44]
+    tasks: [13, 16, 17, 18]
+    status: Pure permission policy scopes negatives and potentials; instability lowers permission; production strong positive requires future trusted qualification issuer; value stays separate
+    modules: [adjudication/policy.py, adjudication/qualifications.py, adjudication/frozen.py, adjudication/judge.py]
+    tests: [tests/unit/adjudication/test_policy.py, tests/unit/adjudication/test_judge.py, tests/unit/evidence/graph/test_phase7_store.py]
+  - ids: [INV-05, INV-09, INV-12, INV-13, FR-AUD-001]
+    master_sections: [34, 36, 37]
+    design_sections: [28, 31, 35, 41, 43]
+    tasks: [17, 18, 19, 20]
+    status: Exact target-universe composition preserves mixed and unassessable contributions; real frozen contract is distinct from fixture; locator summary reloads authority; Phase8 narrative remains deferred
+    modules: [adjudication/frozen.py, evidence/graph/phase7_store.py, application/phase7.py, application/models.py, application/vertical_slice.py, reporting/minimal.py]
+    tests: [tests/unit/adjudication/test_frozen.py, tests/unit/evidence/graph/test_phase7_store.py, tests/integration/test_phase7_slice.py, tests/integration/test_phase5_slice_with_phase6_evidence.py, tests/unit/test_minimal_report_compiler.py]
+  - ids: [FR-OBS-001, FR-OBS-002, FR-AUD-001, FR-AUD-002, FR-SEC-001, FR-SEC-002]
+    master_sections: [31, 32, 33, 34, 35, 36, 37]
+    design_sections: [34, 39, 40, 42, 45]
+    tasks: [21, 22]
+    status: Post-commit traces project repository execution provenance; exact approved prompt/config joins at write/freeze/load; typed failures and deterministic adversarial tests; historical FAIL reviews retained; targeted remediation independently confirmed PASS with focused and clean detached full verification
+    modules: [adjudication/execution.py, application/phase7_execution.py, application/phase7.py, application/phase7_model_adapter.py, runtime/tracing/models.py]
+    tests: [tests/unit/adjudication/test_execution_provenance.py, tests/unit/test_phase7_architecture_guards.py, tests/adversarial/test_phase7_authority_semantics.py, tests/integration/test_phase7_slice.py]
+versions:
+  prosecutor: p7-prosecutor-v2
+  defender: p7-defender-v2
+  rebuttal: p7-rebuttal-v2
+  rubric: p7-judge-rubric-v2
+  policy: phase7-verdict-permission-v2
+  packet_builder: phase7-case-builder-v1
+  real_slice_handoff: phase7-real-slice-v1
+  research_gap: phase7-research-gap-request-v3
+  artifact: phase7-artifact-v2
+  semantic_configuration: phase7-semantic-configuration-v1
+  semantic_execution: phase7-semantic-execution-v1
+previous_implementation_verification:
+  implementation_commit: 9b2df02d6e93733c34d5a7d76762b351fe23b958
+  command: uv run python scripts/verify.py
+  worktree: {passed: 1985, network_deselected: 5, seconds: 2028.51}
+  clean_detached: {passed: 1985, network_deselected: 5, seconds: 2025.12}
+  lint_format_types: PASS
+  details: docs/phase-7-completion.md
+
+independent_review:
+  reviewed_commit: 4a4b0a721c0ddf7869f7ab77dc51ec3ae6a5abc5
+  result: FAIL
+  report: docs/reviews/phase-7-independent-acceptance.md
+  important_findings: [I1, I2, I3, I4, I5]
+  deferred_minor: M1
+  correction_adr: docs/architecture/decisions/ADR-037-phase7-review-contract-and-dispatch-boundaries.md
+  correction_tests:
+    - tests/unit/adjudication/test_contracts.py
+    - tests/unit/adjudication/test_policy.py
+    - tests/unit/adjudication/test_needs.py
+    - tests/unit/adjudication/test_roles.py
+    - tests/unit/adjudication/test_judge.py
+    - tests/unit/evidence/graph/test_phase7_store.py
+    - tests/integration/test_phase7_slice.py
+    - tests/adversarial/test_phase7_authority_semantics.py
+
+correction_verification:
+  implementation_commit: 54fb701454c0c2e5298837349d29045da7debd54
+  focused: {passed: 262, seconds: 1670.81}
+  command: uv run python scripts/verify.py
+  worktree: {passed: 2008, network_deselected: 5, seconds: 1851.89}
+  lint_format_types: PASS
+  detached_result_record: /private/tmp/phase7-review-final-verification.md
+  detached_log: /private/tmp/phase7-review-final-clean-verify.log
+  details: docs/phase-7-completion.md
+
+
+final_pre_remediation_review:
+  reviewed_commit: ef601119eb4962152ebe3eaa844f60076df77550
+  result: FAIL
+  report: docs/reviews/phase-7-final-review.md
+  important_findings: [F1, F2]
+  closed_original_findings: [I1, I2, I4, I5]
+  superseded_original_finding: I3
+
+targeted_remediation:
+  routing_commit: af28c258bc36816e589dbc93f35b339df480b2d1
+  provenance_commit: 0cef9f7f407c44f4682edfe0befe3e1fcc5c30cc
+  adrs:
+    - docs/architecture/decisions/ADR-038-phase7-gate-d-external-fact-basis.md
+    - docs/architecture/decisions/ADR-039-phase7-semantic-execution-provenance.md
+  tests:
+    - tests/unit/adjudication/test_gate_d_research_origin.py
+    - tests/unit/adjudication/test_execution_provenance.py
+  focused: {passed: 291, seconds: 2118.64}
+  worktree: {passed: 2037, network_deselected: 5, seconds: 2360.91}
+  lint_format_types: PASS
+
+independent_remediation_confirmation:
+  reviewed_commit: 0cef9f7f407c44f4682edfe0befe3e1fcc5c30cc
+  result: PASS
+  report: docs/reviews/phase-7-remediation-review.md
+  blocker_dispositions: {F1: CLOSED, F2: CLOSED}
+  focused: {passed: 46, seconds: 431.80}
+  clean_detached: {passed: 2037, network_deselected: 5, seconds: 2449.18}
+  fresh_variants: 5
+  lint_format_types: PASS
+  phase6_authority: INTACT
+  deferred_minor: M1
+  phase8_implementation: DEFERRED

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date
+from typing import cast
 
 from pydantic import ConfigDict
 
@@ -24,7 +25,10 @@ from novelty_harness.domain.enums import (
 )
 from novelty_harness.domain.idea import ArtifactProvenance, ClaimedAdvantage, NonBlankText
 from novelty_harness.domain.ids import AssessmentId, SourceId
+from novelty_harness.domain.reporting import Phase7FrozenSummary as Phase7FrozenSummary
 from novelty_harness.domain.research import CoverageEntry
+from novelty_harness.ports.reporting import ReportPorts
+from novelty_harness.reporting.models import ReportOptions
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +42,20 @@ class VerticalSliceComponents:
     mapper: EvidenceMapper
     verifier: EvidenceVerifier
     adjudicator: AdjudicationEngine
+
+
+@dataclass(frozen=True, slots=True)
+class ReportCompilationRequest:
+    options: ReportOptions
+    ports: ReportPorts | None = None
+    attempt_token: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(cast(object, self.options), ReportOptions):
+            raise ValueError("Phase 8 request requires ReportOptions")
+        ReportOptions.model_validate_json(self.options.model_dump_json())
+        if self.ports is not None and not isinstance(cast(object, self.ports), ReportPorts):
+            raise ValueError("Phase 8 request requires ReportPorts")
 
 
 class AssessmentSummary(ContractModel):

@@ -94,12 +94,23 @@ def test_evidence_domain_packages_do_not_import_storage_or_infrastructure() -> N
 
 
 def test_only_sqlalchemy_adapter_files_import_storage() -> None:
+    storage_adapters = {
+        "graph/sqlalchemy_models.py",
+        "graph/sqlalchemy_repository.py",
+        "graph/migrations.py",
+        "graph/phase7_models.py",
+        "graph/phase7_store.py",
+        "graph/report_models.py",
+        "graph/report_input.py",
+        "graph/report_store.py",
+        "graph/report_validation.py",
+    }
     for path in _evidence_modules():
         source = path.read_text()
         assert not forbidden_imports(
             source, "novelty_harness.evidence", banned=("tests", "httpx", "openai", "anthropic")
         ), path
-        if path.name not in {"sqlalchemy_models.py", "sqlalchemy_repository.py", "migrations.py"}:
+        if path.relative_to(EVIDENCE).as_posix() not in storage_adapters:
             assert not forbidden_imports(
                 source, "novelty_harness.evidence", banned=("sqlalchemy",)
             ), path

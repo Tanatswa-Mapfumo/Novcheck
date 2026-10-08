@@ -560,3 +560,151 @@ async def test_authenticated_mixed_phase6_lifecycle_reaches_completed(
     assert (phase6 / "context_expansions.jsonl").read_text().strip()
     assert (phase6 / "patent_screenings.jsonl").read_text().strip()
     assert "PHASE7_FIXTURE_BOUNDARY" in {event.reason_code for event in sink.events}
+
+
+async def test_vertical_slice_has_explicit_real_phase7_handoff(tmp_path) -> None:
+    f = make_fixture()
+    understanding = UnderstandingComponents(
+        SemanticRunner(RecordedLLM(understanding_responses())), clock=f.clock
+    )
+    runner = SemanticRunner(
+        RecordedLLM(
+            {
+                "assess_families": applicability_response(),
+                "plan_research": planning_response(),
+                "criticize_search": critic_response(),
+            }
+        )
+    )
+    from novelty_harness.adjudication.roles import DefenseCase, ProsecutionCase
+    from novelty_harness.ports.adjudication import Phase7Ports
+    from tests.unit.adjudication.test_roles import scope
+
+    class Roles:
+        def __init__(self, prosecution):
+            self.prosecution = prosecution
+            self.calls = 0
+
+        async def propose(self, packet):
+            target_id = sorted(packet.target_ids)[self.calls % len(packet.target_ids)]
+            self.calls += 1
+            if self.prosecution:
+                return ProsecutionCase(
+                    **scope(packet, target_id), case_id=f"p7pro_vertical_{target_id}", challenges=()
+                )
+            return DefenseCase(
+                **scope(packet, target_id), case_id=f"p7def_vertical_{target_id}", points=()
+            )
+
+    class Unused:
+        model_config_id = "unused"
+
+        async def propose(self, *args):
+            raise AssertionError("No disputed arguments")
+
+    class NeutralJudge:
+        model_config_id = "neutral-vertical-v2"
+
+        def __init__(self):
+            self.calls = []
+
+        async def judge(self, packet, arguments, *, order, rubric_version):
+            from novelty_harness.adjudication.gates import evaluate_gate_c, evaluate_gate_d
+            from novelty_harness.adjudication.judge import JudgeFinding
+            from novelty_harness.adjudication.models import TargetRef
+
+            self.calls.append((arguments[0].target_id, order))
+            profile = next(
+                p for p in packet.target_profiles if p.target_id == arguments[0].target_id
+            )
+            target = TargetRef(kind=profile.target_kind, id=profile.target_id)
+            gate_c = evaluate_gate_c(packet, target, None)
+            gate_d = evaluate_gate_d(packet, target, None, None)
+            return JudgeFinding(
+                **scope(packet, arguments[0].target_id),
+                finding_id="p7judge_vertical_scope_" + arguments[0].target_id,
+                phase6_basis_ids=gate_c.comparison_ids,
+                proposed_gate_c=gate_c.state,
+                proposed_gate_d=gate_d.state,
+                reason=(
+                    "The packet supports these scoped states; "
+                    "unresolved contribution stays unresolved"
+                ),
+            )
+
+    judge = NeutralJudge()
+    phase7 = Phase7Ports(Roles(True), Roles(False), Unused(), Unused(), judge)
+    components = replace(
+        f.components,
+        normalizer=understanding,
+        sufficiency_analyzer=understanding,
+        decomposer=understanding,
+        reconciler=CombinationReconciler(understanding),
+    )
+    sink = InMemoryTraceSink()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
+        providers, _ = registry(client, clock=f.clock)
+        policy = CoveragePolicy.standard()
+        research = Phase3ResearchComponents(
+            EvidenceFamilyApplicabilityAssessor(runner),
+            SearchStrategist(runner),
+            SearchPlanCritic(runner),
+            SearchPlanReviser(runner),
+            ScreeningExecutor(providers, policy),
+        )
+        adaptive = Phase4ResearchComponents(
+            providers, policy, BudgetLimits(max_deep_search_rounds=80), stop_policy()
+        )
+        result = await run_vertical_slice(
+            request=f.request,
+            components=components,
+            search_provider=f.search_provider,
+            content_resolver=SyntheticContentResolver(),
+            trace_sink=sink,
+            artifact_writer=RunArtifactWriter(tmp_path),
+            clock=f.clock,
+            research=research,
+            adaptive_research=adaptive,
+            evidence=ExpandedPhase5EvidenceComponents(),
+            phase6=Phase6EvidenceComponents(
+                SemanticRunner(
+                    StubLLMProvider(
+                        {
+                            "map_evidence": map_evidence_response,
+                            "verify_support": verify_expanded_response,
+                        }
+                    )
+                )
+            ),
+            phase7=phase7,
+        )
+    from novelty_harness.application.vertical_slice import Phase7VerticalSliceResult
+
+    assert isinstance(result, Phase7VerticalSliceResult)
+    assert result.adjudication.contract_kind == "phase7-frozen-adjudication-v1"
+    assert judge.calls
+    assert len(result.adjudication.judge_run_ids) == len(judge.calls)
+    for target_id in {target for target, _ in judge.calls}:
+        assert [order for target, order in judge.calls if target == target_id] == [
+            ("A", "B"),
+            ("B", "A"),
+        ]
+    assert result.summary.adjudication_id == result.adjudication.adjudication_id
+    assert "Phase 8" in result.summary.markdown
+    repository = SqlAlchemyEvidenceGraphRepository(
+        result.run_dir / "phase5" / "evidence_graph.sqlite3"
+    )
+    try:
+        context = repository.load_phase7_context(
+            result.record.assessment_id, context_id=result.adjudication.assessment_context_id
+        )
+        assert context.manifest.research_result is not None
+        assert context.manifest.research_plan is not None
+        assert context.manifest.research_plan.reviewed
+        assert context.manifest.budget_usage == context.manifest.research_result.budget_usage
+        assert not context.manifest.unknown_upstream_artifacts
+        assert result.adjudication == repository.load_frozen_adjudication(
+            result.record.assessment_id, adjudication_id=result.adjudication.adjudication_id
+        )
+    finally:
+        repository.close()

@@ -39,3 +39,15 @@ class CompiledReport(ContractModel):
     answers: ReportAnswers
     markdown: NonBlankText
     provenance: ArtifactProvenance
+
+
+class Phase7FrozenSummary(ContractModel):
+    """Repository-derived structured summary; Phase 8 narrative remains deferred."""
+
+    model_config = ConfigDict(frozen=True)
+    assessment_id: AssessmentId
+    adjudication_id: str
+    assessment_context_id: str
+    phase6_snapshot_id: str
+    overall_verdict: VerdictState
+    markdown: str

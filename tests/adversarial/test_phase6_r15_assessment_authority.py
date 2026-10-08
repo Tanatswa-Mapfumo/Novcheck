@@ -455,7 +455,7 @@ async def test_v5_migration_does_not_recreate_graph_membership(tmp_path) -> None
                 {"node_id": direct.proposition_node.node_id},
             )
             connection.execute(text("UPDATE schema_version SET version = 5"))
-        assert ensure_schema(repository.engine) == 7
+        assert ensure_schema(repository.engine) == 9
         with pytest.raises(Phase6AssessmentAuthorityError):
             repository.load_phase6_assessment("asm_research", snapshot_id=result.snapshot_id)
     finally:

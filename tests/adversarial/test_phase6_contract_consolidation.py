@@ -634,10 +634,10 @@ def test_schema_v3_metadata_graph_migrates_and_unsafe_phase6_is_blocked(tmp_path
     safe_path = tmp_path / "safe-v3.sqlite"
     safe = SqlAlchemyEvidenceGraphRepository(safe_path)
     with safe.engine.begin() as connection:
-        connection.execute(sql_text("UPDATE schema_version SET version = 3 WHERE version = 7"))
+        connection.execute(sql_text("UPDATE schema_version SET version = 3"))
     safe.close()
     reopened = SqlAlchemyEvidenceGraphRepository(safe_path)
-    assert schema_version(reopened.engine) == SCHEMA_VERSION == 7
+    assert schema_version(reopened.engine) == SCHEMA_VERSION == 9
     reopened.close()
 
     unsafe_path = tmp_path / "unsafe-v3.sqlite"
@@ -650,7 +650,7 @@ def test_schema_v3_metadata_graph_migrates_and_unsafe_phase6_is_blocked(tmp_path
         classified_comparisons=(classified,),
     )
     with unsafe.engine.begin() as connection:
-        connection.execute(sql_text("UPDATE schema_version SET version = 3 WHERE version = 7"))
+        connection.execute(sql_text("UPDATE schema_version SET version = 3"))
     unsafe.close()
     with pytest.raises(ValueError, match="Legacy Phase 6 graph edges"):
         SqlAlchemyEvidenceGraphRepository(unsafe_path)

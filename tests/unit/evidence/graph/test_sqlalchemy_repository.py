@@ -219,8 +219,8 @@ def test_v4_v5_v6_migration_creates_empty_phase6_ledger(tmp_path, old_version: i
             text("UPDATE schema_version SET version = :version"), {"version": old_version}
         )
 
-    assert ensure_schema(repository.engine) == 7
-    assert schema_version(repository.engine) == 7
+    assert ensure_schema(repository.engine) == SCHEMA_VERSION
+    assert schema_version(repository.engine) == SCHEMA_VERSION
     expected_tables = {
         "phase6_assessment_snapshots",
         "phase6_assessment_targets",

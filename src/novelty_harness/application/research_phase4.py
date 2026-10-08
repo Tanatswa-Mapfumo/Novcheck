@@ -43,6 +43,7 @@ class Phase4ResearchComponents:
         trace_sink: TraceSink,
         writer: RunArtifactWriter,
         clock: Callable[[], datetime] = utc_now,
+        budget_allowance: BudgetLimits | None = None,
     ) -> ResearchResult:
         return await run_adaptive_research(
             assessment=assessment,
@@ -51,7 +52,7 @@ class Phase4ResearchComponents:
             provider_registry=self.registry,
             coverage_policy=self.coverage_policy,
             budget_controller=BudgetController(),
-            budget_limits=self.budget_limits,
+            budget_limits=budget_allowance or self.budget_limits,
             stopping_policy=self.stopping_policy,
             trace_sink=trace_sink,
             artifact_writer=writer,

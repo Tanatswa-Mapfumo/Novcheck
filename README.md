@@ -283,11 +283,10 @@ The slice writes `phase6/assessment_view.json` with
 `export_kind=derived_repository_assessment_view` and
 `authority=repository_revalidation_required`. This export, the trace and
 `Phase6EvidenceResult` are audit/locator artifacts; downstream authority
-requires a fresh repository load. The slice's adjudicator and minimal report
-remain fixture-backed. Real Phase 7 adjudication has not begun; its future
-input contract is the repository-derived view with decisive references
-revalidated at the frozen-finding boundary. R15 and Gate 30 remain open for
-independent review.
+requires a fresh repository load. The accepted Phase 6 baseline is
+`e4dd4e09699f755dd0fe7b7bc3dd8be4e11f7ee1`; its evidence semantics and Gate 30
+record remain frozen. The legacy slice retains its explicit Phase 7 fixture
+adjudicator. The real Phase 7 path is described below.
 
 ### Earlier phases at a glance
 
@@ -357,3 +356,54 @@ See [Phase 0 traceability](docs/traceability/phase-0.yaml),
 [Phase 4 completion](docs/phase-4-completion.md),
 [Phase 5 completion](docs/phase-5-completion.md) and
 [architecture decisions](docs/architecture/decisions/) for scope and decisions.
+
+
+## Phase 7: Adversarial review and neutral adjudication
+
+**Phase 7 is accepted and complete.** The fresh narrow
+[independent remediation confirmation](docs/reviews/phase-7-remediation-review.md)
+closed both remaining Important findings at implementation commit `0cef9f7`.
+Full verification passed 2,037 tests with 5 opt-in network tests excluded in both
+the implementation worktree and a clean detached checkout. Phase 8 may begin;
+its narrative compiler remains unimplemented. M1 remains deferred Minor.
+The [original review](docs/reviews/phase-7-independent-acceptance.md) and
+[final pre-remediation FAIL](docs/reviews/phase-7-final-review.md) remain intact.
+[ADR-037](docs/architecture/decisions/ADR-037-phase7-review-contract-and-dispatch-boundaries.md),
+[ADR-038](docs/architecture/decisions/ADR-038-phase7-gate-d-external-fact-basis.md) and
+[ADR-039](docs/architecture/decisions/ADR-039-phase7-semantic-execution-provenance.md)
+record the corrections and contract versions.
+
+`application.phase7.run_phase7` accepts an assessment/context locator, the
+Phase 7 repository protocol and `Phase7Ports`. SQLite schema v8 seals the exact
+CIR, sufficiency, graph, research, coverage and budget state against the sole
+prior-art authority: a repository-loaded `Phase6AssessmentView`. Changed state,
+including zero-yield research with changed usage or coverage, creates a successor
+context and restarts both independent roles. Only a repository-proven true no-op
+continues the same cases.
+
+The real vertical slice uses `run_vertical_slice(..., phase7=ports)` with real
+Phases 3–6 and returns `Phase7VerticalSliceResult`. It seals the completed typed
+upstream records and displays a labeled summary reloaded by frozen locator.
+For multiple targets, model adapters can bind a target selector through the
+immutable `Phase7Ports.target_roles` mapping; each role still receives the same
+complete packet. Existing fixture entrypoints and results remain distinct.
+
+Assessable targets receive neutral adjudication even when roles agree. Model
+proposals carry typed clarification/research needs with exact ID joins and
+recorded dispositions. Dispatch enforces the remaining cumulative allowance.
+Material disputes retain complete bounded alternatives or an unbounded marker.
+HIGH_IMPACT judging uses both argument orders, including an optional alternate
+model. Full comparison records are reconciled without votes. Gates A–D and pure
+policy set claim-specific permissions; value cannot change novelty. Production
+strong-positive findings remain unavailable without genuine future robustness
+and domain qualification authority. Model proposals, exported JSON, report text
+and traces never establish frozen authority.
+
+Trace delivery follows repository commits and can be retried by frozen locator
+without new model calls. Provider usage that the port does not expose remains
+UNKNOWN. The Phase 8 narrative compiler, Phase 9 live robustness, Phase 10
+calibration, novelty scores and legal opinions remain deferred.
+
+See the [approved implementation plan](docs/superpowers/plans/2026-10-03-phase-7-adversarial-review-neutral-adjudication-implementation-plan.md)
+and [Phase 7 traceability](docs/traceability/phase-7.yaml). Exact commands, counts,
+limits and execution decisions are in the [implementation handoff](docs/phase-7-completion.md).

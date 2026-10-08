@@ -1,10 +1,12 @@
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel, JsonValue
 
+from novelty_harness.adjudication.context import Phase7InputManifest
+from novelty_harness.adjudication.frozen import FrozenAdjudication as Phase7FrozenAdjudication
 from novelty_harness.application.evidence_phase5 import (
     Phase5EvidenceComponents,
     Phase6FixtureContinuation,
@@ -19,8 +21,16 @@ from novelty_harness.application.evidence_phase6 import (
     GRAPH_REF,
     Phase6EvidenceComponents,
 )
-from novelty_harness.application.models import AssessmentSummary, VerticalSliceComponents
+from novelty_harness.application.models import (
+    AssessmentSummary,
+    Phase7FrozenSummary,
+    ReportCompilationRequest,
+    VerticalSliceComponents,
+)
 from novelty_harness.application.phase6_fixture import Phase6FixtureAdjudicator
+from novelty_harness.application.phase7 import run_phase7
+from novelty_harness.application.phase8 import compile_assessment_report
+from novelty_harness.application.phase8_exports import Phase8ReportingError, export_compiled_report
 from novelty_harness.application.research import (
     DeferredFixtureContinuation,
     Phase3ResearchComponents,
@@ -58,6 +68,7 @@ from novelty_harness.domain.state_machine import advance_stage, change_status, c
 from novelty_harness.evidence.graph.assessment_view import Phase6AssessmentView
 from novelty_harness.evidence.graph.sqlalchemy_repository import SqlAlchemyEvidenceGraphRepository
 from novelty_harness.evidence.phase6_pipeline import Phase6EvidenceResult
+from novelty_harness.ports.adjudication import Phase7Ports
 from novelty_harness.ports.content import ContentResolver
 from novelty_harness.ports.models import (
     ProviderCallMetadata,
@@ -66,7 +77,14 @@ from novelty_harness.ports.models import (
     SourceContent,
 )
 from novelty_harness.ports.search import SearchProvider
-from novelty_harness.reporting.minimal import compile_minimal_phase6_report, compile_minimal_report
+from novelty_harness.reporting.ir import CompiledAssessmentReport
+from novelty_harness.reporting.minimal import (
+    compile_minimal_phase6_report,
+    compile_minimal_report,
+    summarize_frozen_phase7,
+)
+from novelty_harness.reporting.repository import ReportAuthorityError
+from novelty_harness.research.adaptive.pipeline import ResearchResult
 from novelty_harness.research.screening import write_screening_artifacts
 from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
 from novelty_harness.runtime.tracing.hashing import canonical_hash
@@ -93,6 +111,23 @@ class VerticalSliceResult:
     adjudication: FrozenAdjudication
     report: CompiledReport
     summary: AssessmentSummary
+
+
+@dataclass(frozen=True, slots=True)
+class Phase7VerticalSliceResult:
+    record: AssessmentRecord
+    run_dir: Path
+    adjudication: Phase7FrozenAdjudication
+    summary: Phase7FrozenSummary
+
+
+@dataclass(frozen=True, slots=True)
+class Phase8VerticalSliceResult:
+    record: AssessmentRecord
+    run_dir: Path
+    adjudication: Phase7FrozenAdjudication
+    report: CompiledAssessmentReport
+    summary: Phase7FrozenSummary
 
 
 @dataclass(slots=True)
@@ -378,8 +413,14 @@ async def run_vertical_slice(
     evidence_fixture_continuation: Phase6FixtureContinuation | None = None,
     phase6: Phase6EvidenceComponents | None = None,
     phase6_fixture_adjudicator: Phase6FixtureAdjudicator | None = None,
-) -> VerticalSliceResult:
-    if phase6 is not None and phase6_fixture_adjudicator is None:
+    phase7: Phase7Ports | None = None,
+    phase8: ReportCompilationRequest | None = None,
+) -> VerticalSliceResult | Phase7VerticalSliceResult | Phase8VerticalSliceResult:
+    if phase8 is not None and phase7 is None:
+        raise ValueError("Full Phase 8 report requires real Phase 7")
+    if phase7 is not None and (phase6 is None or phase6_fixture_adjudicator is not None):
+        raise ValueError("Real Phase 7 requires real Phase 6 and an exclusive adjudication path")
+    if phase6 is not None and phase6_fixture_adjudicator is None and phase7 is None:
         raise ValueError("Real Phase 6 requires an explicit Phase 7 fixture adjudicator")
     if phase6 is None and phase6_fixture_adjudicator is not None:
         raise ValueError("Phase 7 fixture adjudicator requires real Phase 6")
@@ -556,6 +597,7 @@ async def run_vertical_slice(
             ),
         )
         evidence_origin: ArtifactProvenance | None = None
+        adaptive_result: ResearchResult | None = None
         phase6_result: Phase6EvidenceResult | None = None
         phase6_view: Phase6AssessmentView | None = None
         if research and preparation and adaptive_research and adaptive_fixture_continuation:
@@ -812,6 +854,190 @@ async def run_vertical_slice(
             if verified
             else _origin("deferred", "No verified evidence supplied."),
         )
+        if phase7 is not None:
+            assert (
+                phase6_view is not None
+                and preparation is not None
+                and adaptive_research is not None
+                and adaptive_result is not None
+            )
+            adaptive_result = ResearchResult.model_validate_json(adaptive_result.model_dump_json())
+            idea = idea.model_copy(
+                update={
+                    "mcu_ids": tuple(mcu.mcu_id for mcu in graph.mcus),
+                    "combination_ids": tuple(combo.combination_id for combo in graph.combinations),
+                }
+            )
+            artifact_writer.write_json(record.assessment_id, "canonical_idea.json", idea)
+            repository = SqlAlchemyEvidenceGraphRepository(directory / GRAPH_REF)
+            try:
+                manifest = Phase7InputManifest(
+                    assessment_id=record.assessment_id,
+                    phase6_snapshot_id=phase6_view.snapshot_id,
+                    as_of=request.as_of,
+                    cir=idea,
+                    sufficiency=sufficiency,
+                    mcu_graph=graph,
+                    research_plan=preparation.plan,
+                    research_result=adaptive_result,
+                    coverage_policy=adaptive_research.coverage_policy,
+                    budget_limits=adaptive_research.budget_limits,
+                    budget_usage=adaptive_result.budget_usage,
+                    coverage_cells=tuple(
+                        cell.screening for cell in adaptive_result.coverage_matrix
+                    ),
+                    query_history=tuple(
+                        str(event.compiled_query.query_id)
+                        for event in adaptive_result.request_events
+                    ),
+                    providers_attempted=tuple(
+                        dict.fromkeys(
+                            event.compiled_query.provider_name
+                            for event in adaptive_result.request_events
+                        )
+                    ),
+                    access_failures=tuple(
+                        dict.fromkeys(
+                            failure
+                            for branch in adaptive_result.branch_states
+                            for failure in branch.access_failures
+                        )
+                    ),
+                    remaining_gaps=tuple(
+                        dict.fromkeys(
+                            gap
+                            for stop in adaptive_result.stop_assessments
+                            for gap in stop.unresolved_gaps
+                        )
+                    ),
+                    upstream_artifact_digests={
+                        "cir": canonical_hash(idea),
+                        "sufficiency": canonical_hash(sufficiency),
+                        "mcu_graph": canonical_hash(graph),
+                        "research_plan": canonical_hash(preparation.plan),
+                        "research_result": canonical_hash(adaptive_result),
+                    },
+                    method_versions={"handoff": "phase7-real-slice-v1"},
+                )
+                context = repository.seal_phase7_context(
+                    record.assessment_id, snapshot_id=phase6_view.snapshot_id, manifest=manifest
+                )
+                origin = _origin(
+                    "implemented", "Independent Phase 7 roles over one repository-sealed context."
+                )
+                run.stage(AssessmentStage.ADVERSARIAL_CHALLENGE, origin)
+                run.stage(AssessmentStage.DEFENCE_REVIEW, origin)
+                frozen = await run_phase7(
+                    record.assessment_id,
+                    context_id=context.context_id,
+                    repository=repository,
+                    ports=replace(phase7, trace_sink=phase7.trace_sink or _ResearchTraceSink(run)),
+                )
+                run.stage(AssessmentStage.PRELIMINARY_ADJUDICATION, origin, frozen)
+                run.stage(
+                    AssessmentStage.ROBUSTNESS_REVIEW,
+                    _origin(
+                        "deferred",
+                        (
+                            "Phase 9 robustness remains deferred; "
+                            "production qualifications are not granted."
+                        ),
+                    ),
+                )
+                run.stage(AssessmentStage.FINDINGS_FROZEN, origin, frozen)
+                summary = summarize_frozen_phase7(
+                    assessment_id=record.assessment_id,
+                    adjudication_id=frozen.adjudication_id,
+                    repository=repository,
+                )
+                artifact_writer.write_json(
+                    record.assessment_id,
+                    "phase7/frozen-export.json",
+                    {
+                        "authority": "repository_revalidation_required",
+                        "frozen": frozen.model_dump(mode="json"),
+                    },
+                )
+                artifact_writer.write_json(record.assessment_id, "assessment.json", summary)
+                artifact_writer.write_text(record.assessment_id, "report.md", summary.markdown)
+                if phase8 is not None:
+                    try:
+                        report = await compile_assessment_report(
+                            record.assessment_id,
+                            adjudication_id=frozen.adjudication_id,
+                            repository=repository,
+                            ports=phase8.ports,
+                            options=phase8.options,
+                            attempt_token=phase8.attempt_token,
+                        )
+                        export_compiled_report(
+                            record.assessment_id,
+                            report_id=report.report_id,
+                            repository=repository,
+                            artifact_writer=artifact_writer,
+                        )
+                    except ReportAuthorityError:
+                        raise
+                    except Exception as exc:
+                        raise Phase8ReportingError(
+                            "Phase 8 report operation failed; "
+                            "frozen adjudication and summary retained"
+                        ) from exc
+                    run.stage(
+                        AssessmentStage.REPORTED,
+                        _origin("implemented", "Repository-accepted full nine-question report"),
+                        report,
+                    )
+                    final_record, completion = complete_assessment(
+                        run.record,
+                        actor="vertical_slice",
+                        reason="Frozen Phase 7 and repository-accepted Phase 8 report produced.",
+                        occurred_at=clock(),
+                    )
+                    artifact_writer.write_json(
+                        record.assessment_id, "assessment_record.json", final_record
+                    )
+                    run.emit(
+                        reason="STATUS_TRANSITION",
+                        data={
+                            "lifecycle": completion.model_dump(mode="json"),
+                            "execution": "implemented",
+                            "semantics_implemented": True,
+                        },
+                    )
+                    run.record = final_record
+                    return Phase8VerticalSliceResult(
+                        final_record, directory, frozen, report, summary
+                    )
+                run.stage(
+                    AssessmentStage.REPORTED,
+                    _origin(
+                        "implemented",
+                        "Labeled frozen structured summary; Phase 8 narrative is deferred.",
+                    ),
+                    summary,
+                )
+                final_record, completion = complete_assessment(
+                    run.record,
+                    actor="vertical_slice",
+                    reason="Repository-frozen Phase 7 and labeled structured summary produced.",
+                    occurred_at=clock(),
+                )
+                artifact_writer.write_json(
+                    record.assessment_id, "assessment_record.json", final_record
+                )
+                run.emit(
+                    reason="STATUS_TRANSITION",
+                    data={
+                        "lifecycle": completion.model_dump(mode="json"),
+                        "execution": "implemented",
+                        "semantics_implemented": True,
+                    },
+                )
+                run.record = final_record
+                return Phase7VerticalSliceResult(final_record, directory, frozen, summary)
+            finally:
+                repository.close()
         run.stage(
             AssessmentStage.ADVERSARIAL_CHALLENGE,
             _origin("deferred", "Prosecutor reasoning is not implemented."),

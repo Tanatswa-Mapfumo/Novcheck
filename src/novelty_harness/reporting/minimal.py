@@ -2,6 +2,10 @@ import hashlib
 import json
 from collections.abc import Sequence
 
+from novelty_harness.adjudication.repository import (
+    Phase7AdjudicationRepository,
+    Phase7AuthorityError,
+)
 from novelty_harness.domain.adjudication import FrozenAdjudication
 from novelty_harness.domain.enums import PrecedentState, SupportVerificationState, VerdictState
 from novelty_harness.domain.evidence import EvidenceEdge
@@ -10,8 +14,14 @@ from novelty_harness.domain.idea import (
     CanonicalIdeaRepresentation,
     SufficiencyAssessment,
 )
+from novelty_harness.domain.ids import AssessmentId
 from novelty_harness.domain.mcu import MCU
-from novelty_harness.domain.reporting import CANONICAL_QUESTIONS, CompiledReport, ReportAnswers
+from novelty_harness.domain.reporting import (
+    CANONICAL_QUESTIONS,
+    CompiledReport,
+    Phase7FrozenSummary,
+    ReportAnswers,
+)
 from novelty_harness.evidence.graph.assessment_view import (
     AuthorizedGraphRelation,
     Phase6AssessmentView,
@@ -333,4 +343,34 @@ def compile_minimal_phase6_report(
                 "no novelty decision."
             ),
         ),
+    )
+
+
+def summarize_frozen_phase7(
+    *,
+    assessment_id: AssessmentId,
+    adjudication_id: object,
+    repository: Phase7AdjudicationRepository,
+) -> Phase7FrozenSummary:
+    """Reload a frozen locator before displaying a labeled structured summary."""
+    if not isinstance(adjudication_id, str):
+        raise Phase7AuthorityError("Phase 7 summary requires a repository frozen locator")
+    frozen = repository.load_frozen_adjudication(assessment_id, adjudication_id=adjudication_id)
+    lines = [
+        "# Phase 7 frozen summary",
+        f"Frozen record: `{frozen.adjudication_id}`",
+        f"As of: {frozen.as_of.isoformat()}",
+        f"Overall: {frozen.overall_finding.verdict.value}",
+    ]
+    lines.extend(
+        f"- {finding.target_id}: {finding.verdict.value}" for finding in frozen.target_findings
+    )
+    lines.extend(("", "Phase 8 narrative compilation remains deferred."))
+    return Phase7FrozenSummary(
+        assessment_id=assessment_id,
+        adjudication_id=frozen.adjudication_id,
+        assessment_context_id=frozen.assessment_context_id,
+        phase6_snapshot_id=frozen.phase6_snapshot_id,
+        overall_verdict=frozen.overall_finding.verdict,
+        markdown="\n\n".join(lines) + "\n",
     )

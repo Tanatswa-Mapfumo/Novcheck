@@ -30,6 +30,9 @@ def test_report_has_every_canonical_heading_in_order_and_answers():
         assert getattr(report.answers, f"q{i}").strip()
     assert "fixture" in report.markdown.lower()
     assert "CLAIMED" in report.answers.q6
+    from novelty_harness.reporting.ir import CompiledAssessmentReport
+
+    assert not isinstance(report, CompiledAssessmentReport)
 
 
 def test_report_hash_and_all_inputs_are_preserved():
