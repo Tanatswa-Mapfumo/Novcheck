@@ -1,4 +1,4 @@
-"""Optional native adapter, pending guarded isolation gates before fixture routing."""
+"""Verified native SQLite adapter; cache membership never grants authority."""
 
 import fcntl
 import hashlib
@@ -8,6 +8,7 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
+from scripts.recovery.local_batches import execution_identity
 from tests.fixtures.sqlite_baselines import (
     SnapshotIdentity,
     _timed,
@@ -94,14 +95,13 @@ def native_report_validator(expected: SnapshotIdentity):
 def reusable_report_case(
     cache_root, destination, *, recipe_digest, environment_digest, builder, observe=None
 ):
-    """Opt-in only. Existing fixture routes stay unchanged until native gates pass.
+    """Reuse genuinely frozen upstream authority after the owning native gates pass.
 
     Builder receives a private source directory and returns a genuinely committed
     ReportCase. Keep independent construction/migration/concurrency tests on their
     original path. A cache hit always validates the copied native authority.
     """
     from novelty_harness.evidence.graph.migrations import SCHEMA_VERSION
-    from scripts.recovery.local_batches import execution_identity
 
     # Native reuse independently binds actual current source, modes, new files,
     # interpreter and installed environment, even if a caller supplied a stale
@@ -181,3 +181,62 @@ def reusable_report_case(
             for case in loaded:
                 case.repository.close()
             raise
+
+
+VERIFIED_PROJECTION_OWNERS = frozenset(
+    {
+        "tests.unit.reporting.test_obligations",
+        "tests.unit.reporting.test_uncertainty",
+    }
+)
+
+
+def fixture_route(owner, mode):
+    """Keep construction/mutation/migration owners on independent setup."""
+    if mode not in ("original", "cached"):
+        raise ValueError("unknown fixture mode")
+    return mode if owner in VERIFIED_PROJECTION_OWNERS else "original"
+
+
+def owned_report_case(owner, destination, *, mode, cache_root, observe=None):
+    """Reuse only the measured upstream recipe, always on a private database.
+
+    The original route remains available for exact paired regression measurements.
+    Explicit observation clocks belong to this new synthetic recipe; historical
+    records and independent construction owners retain their original inputs.
+    """
+    from tests.fixtures.phase8 import make_report_case
+    from tests.fixtures.recorded_clock import recorded_observation_clock
+    from tests.integration.test_phase6_evidence_pipeline import NOW
+
+    route = fixture_route(owner, mode)
+    if owner not in VERIFIED_PROJECTION_OWNERS:
+        return make_report_case(destination, observe=observe)
+
+    def build(path):
+        with recorded_observation_clock(NOW) as clock:
+            return make_report_case(path, observe=observe, observation_clock=clock)
+
+    if route == "original":
+        with _timed("fixture_construction", observe):
+            return build(destination)
+    recipe = hashlib.sha256(
+        json.dumps(
+            {
+                "recipe_version": "verified-projection-upstream-v1",
+                "synthetic_observation_clock": NOW.isoformat(),
+                "unassessable": False,
+                "clock_controls": "explicit-provider-normalization-and-utc-defaults-v1",
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    environment, _, _ = execution_identity(Path.cwd(), Path(sys.executable))
+    return reusable_report_case(
+        cache_root,
+        destination / "evidence_graph.sqlite3",
+        recipe_digest=recipe,
+        environment_digest=environment,
+        builder=build,
+        observe=observe,
+    )

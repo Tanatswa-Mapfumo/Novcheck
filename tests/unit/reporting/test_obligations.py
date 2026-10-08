@@ -1,17 +1,58 @@
 """Mandatory content is derived from accepted records, never presentation limits."""
 
+import json
+import os
+import time
+import uuid
+from pathlib import Path
+
 import pytest
 
-from tests.fixtures.phase8 import make_report_case
+from tests.fixtures.native_baselines import owned_report_case
+from tests.fixtures.sqlite_baselines import _timed
 
 
 @pytest.fixture(scope="module")
-def report_case(tmp_path_factory):
-    case = make_report_case(tmp_path_factory.mktemp("report-obligations"))
-    try:
-        yield case
-    finally:
-        case.repository.close()
+def report_case(tmp_path_factory, request):
+    owner = request.module.__name__
+    # Only the two measured, verified projection owners use reusable baselines.
+    # All other importers retain independent construction, including mutations.
+    mode = os.environ.get("NOVCHECK_PHASE8_BASELINE_MODE", "cached")
+    root = Path.cwd() / ".superpowers/recovery-validation/20261008/fixture-route-v1"
+    timings = root / "timings"
+    timings.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = timings / (uuid.uuid4().hex + ".jsonl")
+    started = time.perf_counter()
+    with path.open("x", encoding="utf-8") as stream:
+        os.chmod(path, 0o600)
+
+        def observe(event):
+            stream.write(
+                json.dumps(
+                    {
+                        **event,
+                        "owner": owner,
+                        "mode": mode,
+                        "elapsed_seconds": time.perf_counter() - started,
+                    }
+                )
+                + "\n"
+            )
+            stream.flush()
+
+        case = owned_report_case(
+            owner,
+            tmp_path_factory.mktemp("report-obligations"),
+            mode=mode,
+            cache_root=root / "cache",
+            observe=observe,
+        )
+        try:
+            observe({"stage": "fixture_ready", "bundle_digest": case.bundle.bundle_digest})
+            yield case
+        finally:
+            with _timed("fixture_teardown", observe):
+                case.repository.close()
 
 
 def test_obligations_preserve_every_target_and_material_limit(report_case):

@@ -1,6 +1,6 @@
 # Local 8 GB verification remediation proposal
 
-**Status: user approved test-only tranches A+B and bounded diagnostics. C/D/E production changes require separate approval. Implementation execution remains subject to native memory preflight and exact RED/GREEN gates.**
+**Status: A+B controls and minimum native isolation gates pass; measured cache reuse is activated for two projection owners. Full-suite rollout and recovered-baseline acceptance remain OPEN. C/D/E production changes require separate approval. Current risk policy is in §11.**
 
 **Date:** 8 October 2026. **Source checkpoint:** `fa7feb5daad3ab340c96f04413bfe79e11abe3fe`.
 
@@ -17,6 +17,8 @@
 - Earlier 26 small passes and 15 bounded projection observations retain their original source/recipe evidence. They do not qualify native full-report capacity. Eight golden artifacts remain unresolved, original `1f50323` equivalence unproved, and the recovered functional baseline remains OPEN.
 
 ## 2. Resource policy for this proposal
+
+**Historical initial policy:** the warning-pressure and allocated-swap refusal rules below are superseded by the user-authorized measured risk policy in §11. Process caps remain provisional; all execution remains supervised.
 
 | Workload | Initial soft limit | Hard limit | Dispatch policy |
 | --- | ---: | ---: | --- |
@@ -203,3 +205,57 @@ Static-review corrections and focused controls cover SQLite constructor cleanup 
 After native capacity permits the minimum tests, prioritize the shared `test_obligations.report_case` fixture's verified upstream disk baseline across compatible owning modules, with private copies and mandatory native reloads. Preserve all construction/migration/concurrency owners. Separately measure the six single-question fallback call sites that create all nine sections unnecessarily; retain every existing assertion and every full nine-question/coverage primary. Do not claim an 8/9 wall-time or memory reduction from call-count inspection. Accepted/proposed report caches and intrinsically large report operations still need their own guarded measurements and complete authority controls.
 
 The full required inventory, final fresh detached gate and independent review remain required. New source-review corrections are local until checkpoint review/approval. A+B cannot be declared operational before its execution, integrity, activation and paired cost gates pass.
+
+
+## 11. Practical risk policy and measured A+B activation
+
+The user authorized risk-based local execution: editing/analysis continue normally; allocated swap alone is not a veto; measured small workloads may execute at warning pressure with adequate headroom and without harmful sustained paging. This supersedes earlier blanket warning/swap refusals. No restart, app termination, swap clearing, external runner or production change was performed.
+
+### Supervisor v2 and calibration evidence
+
+The native supervisor retains exclusive worktree-wide locking, immutable source/command/output/sample receipts, native RSS/physical-footprint collection, 0.1s sampling, maximum 0.2s collection latency and complete process cleanup on limits, interruptions or monitoring failures. It now records cumulative page-in/page-out/swap-in/swap-out bytes and evaluates a rolling three-second window. Legacy v1 receipt interpretation remains explicit; old refusals are not relabeled as passes.
+
+Small warning-permitted jobs have at least 1 GB estimated free-plus-inactive headroom, caps no higher than 256/384 MB, and the same runtime monitoring. Actual measurements support 128/192 MB for mechanical controls, 192/256 MB for the minimum native recipe, and 256/384 MB for collection. A new route control imports additional application definitions, so the combined expanded controls use 192/256 MB rather than silently assuming their previous lower footprint. Heavy/unmeasured intensive jobs retain normal-pressure preflight, at least 1.5 GB estimated headroom plus workload-specific capacity review, and provisional 1.5/2 GB process-tree caps. No known historical 9.7 GB recipe is eligible.
+
+Unknown/critical pressure, unknown capacity/counters, insufficient headroom, process RSS or native footprint peaks reaching a cap, invalid monitoring and cleanup failure stop/refuse immediately. Sustained output paging above 16 MB/s is coupled to credible capacity risk: headroom below minimum plus the workload's soft cap, a 128 MB window headroom drop, or at least 64 MB child growth approaching its cap. Severe output paging at 64 MB/s stops even with otherwise adequate headroom. Swap-in rates use analogous capacity checks at 64 MB/s, with a 256 MB/s severe threshold. These are initial calibrated rules, not guaranteed capacity or permission to increase a workload's cap.
+
+A one-second blanket paging rule aborted an approximately 83 MB control despite roughly 1.33 GB headroom. Another bounded native attempt had decreasing process RSS, a 66 MB headroom drop and approximately 16 MB/s background paging. These observations motivated the three-second joint capacity/growth evaluation, with deterministic RED/GREEN controls for dangerous counter/rate/capacity cases. Completed native and control jobs subsequently ran at pressure level 2 with roughly 3–5 GB allocated swap. Swap remains observed, including growth and paging rates, rather than ignored. Genuine paging-related and slow-monitor aborts remain preserved; no attempt is retried by bypassing or inflating the monitor limits.
+
+### Verified controls, inventory and selected activation
+
+- Preserved missing-helper `f846b43` primary was independently run under the new guard and failed with the expected import error; the implemented primary passed.
+- Current supervisor/cache/accounting/evidence/coordinator selection passed **97 tests plus eight nested subtests**. Six route-selection controls passed after an observed missing-route RED. Nested subtests are independently accounted and cannot be hidden by a passing outer test.
+- Unchanged minimum bundle primary, native private-clone isolation/reopen/deleted-authority rejection, schema rejection without migration, scope/digest rejection, one-build/two-private-copy revalidation and exact observation-clock closure gates passed individually. No report compilation/rendering/acceptance or golden generation was involved.
+- Actual full collection initially failed because two `test_contracts.py` files shared a bare import identity. Three package markers resolve it under the existing pytest import policy. Successful collection captured **2,541 required parameterized nodes and the existing five opt-in network exclusions**, including six new route controls. Collection is not a suite pass.
+- Real batch execution, fresh replay and hash-bound resume worked for five measured controls. Full coverage accounting correctly remained INCOMPLETE; no required nodes disappeared and no partial selection was labeled complete.
+
+The shared `test_obligations.report_case` route now reuses the genuinely frozen upstream SQLite baseline **only** for `test_obligations` and `test_uncertainty`. Each owner receives a private database and mandatory native transactional bundle reload with exact locators/digest. Construction, mutation, migration and concurrency owners remain on their independent route, including other importers of this shared fixture. Full source/modes/new files, installed environment, schema and recipe identity bind cache reuse. `NOVCHECK_PHASE8_BASELINE_MODE=original` retains the original construction path for matched comparisons. Both measured paths use the same explicitly scoped synthetic observation clock; old observations, forensic records and goldens are untouched.
+
+Protected fixture ledgers record upstream construction, freeze, frozen/bundle load, coherent backup, publication/checksum work, private copy, native validation and teardown separately. Pytest evidence independently records import/collection and setup/call/teardown; nested durations are not added twice. No complete accepted/proposed report cache has been rerouted, and no validation boundary was removed.
+
+### Actual first paired results
+
+All comparisons below use exact matching nodes and unchanged source/test/environment/plugin policy; the native comparison varies only the documented original/cached selector. Every native fixture-ready digest equals `723c0cc6155bab04d37040116797b5e5942376dcc9315f454a53bd9d52c5fc77`.
+
+| Matched workload | Original | Optimized | Actual saving |
+| --- | ---: | ---: | ---: |
+| Five lightweight controls, including supervisor/startup/reap | 18.720s, five children | 3.740s, one child | 14.980s, **80.0%** |
+| Nine obligation/uncertainty nodes, cold-cache publication and all native reloads included | 40.398s | 30.072s | 10.327s, **25.6%** |
+| Same native cohort including its separately guarded full inventory capture | 48.115s | 37.374s | 10.741s, **22.3%** |
+| Native cohort setup | 36.124s | 25.937s | 10.187s, **28.2%** |
+| Native cohort call phase | 0.0533s | 0.0535s | No demonstrated execution speedup |
+| Native cohort sampled peak RSS | 137,740,288 B | 136,478,720 B | 1,261,568 B, **0.9%** |
+| Native cohort native footprint peak | 130,188,800 B | 135,972,928 B | **Increased 5,784,128 B, 4.4%** |
+
+The lightweight cohort's RSS stayed approximately 49.6 MB (a 65,536-byte increase). The native comparison performed two upstream constructions originally, versus one construction, one coherent publication, two private copies, one cache hit and three mandatory cache native-validation callbacks. Original construction occupied 35.042s; cached construction occupied 18.795s. Private copying totaled 0.00558s, coherent backup 0.00623s; publication 1.970s includes its native validation. Cache native-validation callbacks totaled 5.853s, in addition to the builder's original frozen/bundle loads. Teardown was approximately 0.00110s per cohort. Import/collection, guard overhead and actual setup/call phases are retained separately in the private ledger.
+
+These are single bounded paired observations, not a statistically established full-suite speedup or a substantial memory reduction. Physical-footprint variance/cost must remain visible. No full required-suite duration can be forecast from nine nodes or compared as equivalent to the historical 377-test run. Under two hours remains aspirational, with no omissions authorized.
+
+### Remaining work and next optimization
+
+A+B is operational for the verified small-cohort runner and two activated projection owners, **not yet fully rolled out or accepted for complete verification**. Next expand compatible owning routes only after their own regression/capacity/net-cost proof, and reuse measured lightweight cohorts to amortize collection/interpreter/supervisor overhead. Current full-source cache keys conservatively invalidate even for documentation edits; any narrower dependency identity needs independent invalidation controls before use. Accepted/proposed report JSON caches, single-report representation amplification and native acceptance/load peaks remain unoptimized.
+
+Full strict typing, complete required inventory execution, eight golden integrity/independent-regeneration readiness gates, original-commit provenance limitation, fresh detached local acceptance and independent whole-phase review remain OPEN. C/D/E require separate concrete production approval. Task 22 feature work and Tasks 23–24 remain held. The local-only encrypted forensic exception remains accepted and is never a testing blocker.
+
+
+The first post-activation collection recheck was REFUSED before launching a child: estimated headroom fell 226 MB in three seconds with approximately 76 MB/s output paging. This is genuine concurrent system activity under the calibrated severe-paging stop, not an allocated-swap veto. The monitor was retained unchanged and work continued with static review. Public outgoing review covers only documentation, diagnostics and tests; no new forensic payload, credentials, production path or private execution receipt is included. Existing previously reviewed historical source records remain unchanged.
