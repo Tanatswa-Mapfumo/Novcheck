@@ -1,6 +1,6 @@
 # Local 8 GB verification remediation proposal
 
-**Status: investigation and proposal only. Production/fixture refactoring and heavyweight verification are not approved by this document.**
+**Status: user approved test-only tranches A+B and bounded diagnostics. C/D/E production changes require separate approval. Implementation execution remains subject to native memory preflight and exact RED/GREEN gates.**
 
 **Date:** 8 October 2026. **Source checkpoint:** `fa7feb5daad3ab340c96f04413bfe79e11abe3fe`.
 
@@ -134,3 +134,44 @@ No optimization claims without paired native peaks/time. No full pass from parti
 **Recommended first approval:** A+B test-only infrastructure and P0–P2 diagnostic work, gated by safe macOS conditions and isolation/provenance tests. C/D production changes require their concrete differential design after stage measurements; E requires a separate ADR/version decision. This proposal does not authorize any tranche by its existence.
 
 Today only static inspection, Git/checkpoint verification and guarded refusal ran. Once normal memory conditions return, start the unchanged minimum native bundle node sequentially. If it exceeds its provisional budget, preserve partial logs and investigate the measured stage without inflating limits to force a pass. All blocked workloads remain local remediation work; no external execution destination is proposed.
+
+
+## 8. Approved A+B execution and wall-clock measurement protocol
+
+The user explicitly approved A+B on 8 October 2026, emphasizing both memory and total verification time. Under two hours for equivalent historical coverage is aspirational; it does not authorize omissions or relaxed safety. No C/D/E production work is approved.
+
+### Separate timing and construction-frequency ledger
+
+Every representative recipe and complete batch ledger must record, without logging evidence prose:
+
+| Stage | Timer boundary / accounting |
+| --- | --- |
+| Interpreter/import/collection | Child start to completed pytest collection; recorded separately from test setup |
+| Fixture construction | Native builder enter/exit, number of native constructions and failure outcome |
+| Publication/cache validation | Coherent snapshot creation, schema/recipe/locator/hash checks and mandatory native validation |
+| Private database copy | SQLite backup start/finish, source/destination bytes and baseline key |
+| Native validation | Frozen/bundle/artifact/report load calls separately; no validation disabled or borrowed from cache |
+| Pytest setup | Full pytest setup phase; includes nested construction/copy/validation intervals, not additive to them |
+| Execution | Pytest call phase, preserving every assertion and expected result |
+| Teardown | Pytest teardown plus engine disposal/subprocess reap; interrupted teardown remains incomplete |
+| Monitoring/orchestration | Parent guard and runner overhead; total start-to-final-receipt wall time |
+
+Nested stage times are labeled and not summed twice. Include baseline cache creation/checksum I/O, guard/collection/startup cost, resume bookkeeping, slow regressions and failed/refused attempts in end-to-end cost reporting. Count native builds, cache hits/misses, private copies, validation calls and subprocess starts; do not infer fewer native calls from a cache-hit label.
+
+Keep a reproducible original path (cache disabled) for the same representative nodes/recipes, locked code/environment and monitoring configuration. When this is unsafe, the existing historical 27,497.48s/377-test record, 27.53s setup lead and 0.004–0.015s copy / 3.33–3.56s reload leads are explicitly non-equivalent historical evidence, not a fresh before measurement. Record fixture identities and outcome/provenance so mismatched scenarios cannot become a before/after pair. No historical setup/execution/teardown partition is invented.
+
+Report absolute and percentage savings for matching before/after recipes: `(before−after)` and `100×(before−after)/before`, alongside peaks and build/validation counts. End-to-end complete-suite time is measured only for the complete required inventory. A forecast from per-node timings must label collection/startup/shared construction/teardown/copy costs, measured versus unknown nodes and uncertainty; no complete expected-suite duration from a small selection. Compare cache creation plus all reuse costs against repeated construction before retaining an optimization. If an isolated test is slower, keep isolation for required safety but record its cost; do not advertise it as a speedup. Roll back optional changes with no demonstrated net benefit without weakening checks.
+
+Historical-to-aspirational arithmetic only: 27,497.48 seconds down to 7,200 seconds would require 20,297.48 seconds (73.8%) less elapsed time. This is a target gap, not a prediction or measured saving. A+B may leave intrinsic single-report costs dominant; their measured remainder informs a separate C/D/E approval.
+
+### Incremental execution gates
+
+1. Preserve `18eb3ec` and its complete bundle; GitHub `fa7feb5` remains the verified source backup. The newer checkpoint is local until expressly approved for push. Originals/forensic receipts unchanged.
+2. Prepared first mechanical cache and accounting regressions in `test_recovery_sqlite_baselines.py` and `test_recovery_sequential_accounting.py`. Toy SQLite controls are expressly not native authority evidence. Helpers remain unimplemented until an exact safe RED is observed. Existing fixture routes and `scripts/verify.py` remain unchanged.
+3. The exact primary cache-control RED launch was **REFUSED**, warning pressure level 2, before any pytest child. This is neither RED nor GREEN. Static parsing is not a test result. Native/global performance claims remain pending.
+4. When the guard permits execution, observe primary RED; implement the test-only cache mechanics minimally, GREEN/variants, then add native isolation/provenance/schema/revocation/reload controls and measured original/cached scenarios. Route only proven beneficial compatible report fixtures, preserving construction/migration/concurrency owners' independent setup.
+5. Capture inventory and source/environment/policy identity; implement accounting, immutable receipts and timings before invoking batches. Group measured lightweight cohorts whose aggregate peak fits the small limits; unmeasured nodes stay individually guarded. Unknown resource demand is not lightweight based on directory/name.
+6. Add independent resume tests for source/config/mode/new-file changes, missing/altered receipt/report bytes, wrong environment/plugins/socket policy, duplicates, skips, collection failure, child timeout/refusal and incomplete teardown. A fabricated complete flag or zero exit does not suffice. Runner checkpoint and outcome hashes must resolve to actual complete guard/pytest records.
+7. Only after focused controls and representative capacity/cost proof, use safe local batches for complete recovered-baseline verification. Final fresh detached inventory still runs afresh. Complete coverage requires the same required nodes, explicit network exclusions, full static gates, no required skips/refusals/failed nodes and exact artifact/golden readiness.
+
+Actual A+B speedup, peak improvement and complete-suite forecast are **not yet available**. All existing assertions/tests, production modules, contracts and dependencies remain unchanged during this preparation checkpoint.
