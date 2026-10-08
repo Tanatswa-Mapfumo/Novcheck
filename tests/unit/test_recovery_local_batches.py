@@ -99,3 +99,11 @@ def test_invalid_batch_is_rejected_before_guard_dispatch(monkeypatch, attack):
             nodes=nodes,
             limits=limits,
         )
+
+
+def test_pytest_observation_state_does_not_prevent_cross_node_fixture_reuse(tmp_path, monkeypatch):
+    python, _, _ = environment(tmp_path, monkeypatch)
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/x.py::test_first (setup)")
+    first = local_batches.execution_identity(tmp_path, python)[0]
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/x.py::test_second (call)")
+    assert local_batches.execution_identity(tmp_path, python)[0] == first
