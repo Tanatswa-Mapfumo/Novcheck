@@ -37,8 +37,10 @@
 - [x] Audit 518 manifest paths with `scripts/recovery/audit_baseline.py`; 0 mismatches, 402 syntax checks; measurement is not functional verification.
 - [x] Preserve uncertainty: 125 reconstructed, two diff-only witnesses, one complete recorded projection without final hash; eight missing/partial goldens and five unimplemented later files.
 - [ ] Obtain private independent destination and encryption/key custody. There is currently no mounted external drive; destination is required, not inferred.
-- [ ] Inventory both forensic directories, all evidence/archives/object stores/scripts/checkpoints and modes/hashes using streamed reads. Keep all sensitive manifests inside encryption or ignored local receipts.
+- [x] Inventory both forensic directories, all evidence/archives/object stores/scripts/checkpoints and modes/hashes using streamed reads. Keep all sensitive manifests inside encryption or ignored local receipts.
 - [ ] Encrypt without logging a passphrase/private key. Copy/upload only to the approved confidential destination. Verify destination ciphertext hash, independently decrypt/restore, compare exact members/hashes/modes and tree closures; record receipt. No local-only file counts as off-device completion.
+
+Local AES-256 preparation and decrypted member verification completed; destination transfer/restore remains OPEN. See [guarded validation results](../../recovery/2026-10-08-guarded-validation-results.md).
 
 ## RV2 — Tested resource supervisor
 
@@ -46,11 +48,11 @@
 
 **Interfaces:** Frozen `ResourceLimits` (soft/hard bytes, pressure/headroom/swap thresholds), `ResourceSample` (monotonic time, tree RSS/footprint/lifetime peak, OS pressure, available-headroom estimate, swap usage), and `RunReceipt` (command identity, checkpoint, state, exit, elapsed, peaks and log identity). `stop_reason(sample: ResourceSample, limits: ResourceLimits) -> str | None`; `run_guarded(command: tuple[str,...], *, cwd: Path, limits: ResourceLimits, output: Path) -> RunReceipt`. OS collection is injectable for tests; implementation imports no report/application module. CLI records one receipt per run and refuses overwrite.
 
-- [ ] **RED:** `test_warning_or_unknown_pressure_prevents_child_launch`, `test_child_tree_peak_triggers_stop`, `test_second_intensive_run_cannot_acquire_lock`, `test_monitor_failure_and_interrupt_reap_child_group`, `test_aborted_run_never_reports_pass`. Use mocked OS samples and small child allocations; never allocate 3 GB to prove the threshold.
-- [ ] Run the exact named tests, record actual RED; implement the minimal supervisor with process-group cleanup, lock, stream samples, fail-closed monitoring and a bounded terminate/kill grace.
-- [ ] Exact GREEN then nearby variants: already-exited child races, descendant accounting, simulated swap/headroom exhaustion, zero/invalid limits, SIGINT/failure cleanup. Default cadence at most 0.2s; monitoring overhead measured. Sampled limits cannot guarantee zero transient overshoot.
-- [ ] Run `uv run pytest tests/unit/test_recovery_resource_guard.py -q` and selected Ruff/Pyright as appropriate only after stable safe launch prerequisites. Demonstrate normal tiny child and intentionally stopped low-threshold child, each with receipt; no heavy tests.
-- [ ] Commit supervisor separately after green; no claims about report memory yet.
+- [x] **RED:** `test_warning_or_unknown_pressure_prevents_child_launch`, `test_child_tree_peak_triggers_stop`, `test_second_intensive_run_cannot_acquire_lock`, `test_monitor_failure_and_interrupt_reap_child_group`, `test_aborted_run_never_reports_pass`. Use mocked OS samples and small child allocations; never allocate 3 GB to prove the threshold.
+- [x] Run the exact named tests, record actual RED; implement the minimal supervisor with process-group cleanup, lock, stream samples, fail-closed monitoring and a bounded terminate/kill grace.
+- [x] Exact GREEN then nearby variants: already-exited child races, descendant accounting, simulated swap/headroom exhaustion, zero/invalid limits, SIGINT/failure cleanup. Default cadence at most 0.2s; monitoring overhead measured. Sampled limits cannot guarantee zero transient overshoot.
+- [x] Run `uv run pytest tests/unit/test_recovery_resource_guard.py -q` and selected Ruff/Pyright as appropriate only after stable safe launch prerequisites. Demonstrate normal tiny child and intentionally stopped low-threshold child, each with receipt; no heavy tests.
+- [x] Commit supervisor separately after green; no claims about report memory yet.
 
 ## RV3 — Fresh small baseline, then separate stage measurements
 
@@ -58,8 +60,8 @@
 
 **Interfaces:** `StageObservation(stage: str, source_sha: str, elapsed_seconds: float, peak_rss_bytes: int, peak_footprint_bytes: int, payload_bytes: int, outcome: str)` and diagnostic `measure_stage(stage: str, recipe: str, output: Path) -> StageObservation`. Stages execute in fresh isolated children under RV2; no fabricated authority/model shortcuts.
 
-- [ ] Restore locked uv environment/Python 3.12+, including missing typing dependencies; setup failure is not a check failure.
-- [ ] After stable normal pressure, start sequential shape-only reporting/base contracts, AST architecture/import guards, and `tests/integration/test_phase8_slice.py::test_report_request_is_immutable_and_refuses_export_seed`. Inspect fixture dependencies before choosing a node; directory names do not establish resource cost.
+- [x] Restore locked uv environment/Python 3.12+, including missing typing dependencies; setup failure is not a check failure.
+- [x] After stable normal pressure, start sequential shape-only reporting/base contracts, AST architecture/import guards, and `tests/integration/test_phase8_slice.py::test_report_request_is_immutable_and_refuses_export_seed`. Inspect fixture dependencies before choosing a node; directory names do not establish resource cost.
 - [ ] Run locked Ruff/format and strict Pyright sequentially with receipts. No full suite at this step. Investigate every red gate honestly.
 - [ ] Measure smallest native upstream construction, SQLite copy, frozen/bundle load, individual Q1–Q9 fallback, citations/IR, acceptance/load, JSON/YAML/Markdown and parity. Record call counts/SQL counts where useful; distinguish fresh profiling overhead from ordinary runs.
 - [ ] Partition reproduced accepted-report bytes into public text, normalized assertions, basis proposition repeats, repeated IR collections, history and executions. Original 53.8 MB DB is lost; this is a new profile, not the same fixture.
@@ -124,3 +126,7 @@ Avoid redundant post-commit reruns only when complete file/mode/config/test/gene
 Coverage includes every current recovery priority, confidential evidence, eight artifacts, identity uncertainty, native authority, fixture isolation, production memory, measured gates and checkpoint preservation. Scope is recovery/performance, not later-phase features. No optimization is claimed from static call counts. Before/after native measurements remain pending because OS pressure is warning level 2.
 
 Native execution method is preserved. The investigation/plan checkpoint can be committed now after scoped static/document checks. A confidential destination/key and exact remote backup checkpoints require input/approval. Regeneration is already authorized subject to safety and independent semantics checks. Report measured evidence before substantial refactoring/heavy execution; material contract deviations and remote provisioning require explicit decisions.
+
+RV3 partial: fifteen bounded real-contract representation probes completed with no authority fixture; native ReportIR/accept/load profiling, full static/type gates and optimization are still pending. Results/limits are recorded in the guarded validation report.
+
+Execution ruling: one diagnostics checkpoint groups the verified supervisor, bounded representation probe and public-safe measurement report; no production optimization is included. The RV2 commit step remains separate from future fixture/production refactors.
