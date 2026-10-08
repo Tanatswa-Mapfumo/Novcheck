@@ -11,8 +11,12 @@ def account(expected, reports, *, state="PASSED", returncode=0):
 
 def phases(node, *, call="passed"):
     return [
-        {"nodeid": node, "when": stage, "outcome": call if stage == "call" else "passed",
-         "duration": 0.1}
+        {
+            "nodeid": node,
+            "when": stage,
+            "outcome": call if stage == "call" else "passed",
+            "duration": 0.1,
+        }
         for stage in ("setup", "call", "teardown")
     ]
 
@@ -42,8 +46,9 @@ def test_zero_child_exit_cannot_hide_incomplete_or_wrong_inventory(attack):
     assert account(expected, reports)["state"] != "PASSED"
 
 
-@pytest.mark.parametrize("state,code", [("REFUSED", None), ("ABORTED", -15),
-                                        ("FAILED", 1), ("PASSED", 7)])
+@pytest.mark.parametrize(
+    "state,code", [("REFUSED", None), ("ABORTED", -15), ("FAILED", 1), ("PASSED", 7)]
+)
 def test_partial_reports_never_override_guard_or_process_failure(state, code):
     node = "tests/x.py::test_a"
     result = account([node], phases(node), state=state, returncode=code)
@@ -69,14 +74,36 @@ def test_resume_requires_exact_source_inventory_and_complete_receipt():
 
     node = "tests/x.py::test_a"
     receipt = {
-        "source_identity": "a" * 64, "expected_nodes": [node], "state": "PASSED",
-        "cleanup_complete": True, "required_gates": {"guard": "PASSED"},
+        "source_identity": "a" * 64,
+        "expected_nodes": [node],
+        "state": "PASSED",
+        "cleanup_complete": True,
+        "required_gates": {"guard": "PASSED"},
     }
     assert eligible_resume(receipt, source_identity="a" * 64, expected_nodes=[node])
     assert not eligible_resume(receipt, source_identity="b" * 64, expected_nodes=[node])
-    assert not eligible_resume(receipt, source_identity="a" * 64,
-                               expected_nodes=[node, "tests/x.py::test_b"])
-    for patch in ({"state": "ABORTED"}, {"cleanup_complete": False},
-                  {"required_gates": {"guard": "REFUSED"}}):
-        assert not eligible_resume(receipt | patch, source_identity="a" * 64,
-                                   expected_nodes=[node])
+    assert not eligible_resume(
+        receipt, source_identity="a" * 64, expected_nodes=[node, "tests/x.py::test_b"]
+    )
+    for patch in (
+        {"state": "ABORTED"},
+        {"cleanup_complete": False},
+        {"required_gates": {"guard": "REFUSED"}},
+    ):
+        assert not eligible_resume(receipt | patch, source_identity="a" * 64, expected_nodes=[node])
+
+
+@pytest.mark.parametrize("duration", [float("nan"), float("inf"), -1, True])
+def test_invalid_durations_cannot_certify_batch(duration):
+    node = "tests/x.py::test_a"
+    reports = phases(node)
+    reports[1]["duration"] = duration
+    assert account([node], reports)["state"] != "PASSED"
+
+
+def test_failed_teardown_and_reordered_phases_cannot_pass():
+    node = "tests/x.py::test_a"
+    reports = phases(node)
+    reports[-1]["outcome"] = "failed"
+    assert account([node], reports)["state"] != "PASSED"
+    assert account([node], list(reversed(phases(node))))["state"] != "PASSED"

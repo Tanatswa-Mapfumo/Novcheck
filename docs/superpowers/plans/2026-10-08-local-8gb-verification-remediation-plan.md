@@ -175,3 +175,21 @@ Historical-to-aspirational arithmetic only: 27,497.48 seconds down to 7,200 seco
 7. Only after focused controls and representative capacity/cost proof, use safe local batches for complete recovered-baseline verification. Final fresh detached inventory still runs afresh. Complete coverage requires the same required nodes, explicit network exclusions, full static gates, no required skips/refusals/failed nodes and exact artifact/golden readiness.
 
 Actual A+B speedup, peak improvement and complete-suite forecast are **not yet available**. All existing assertions/tests, production modules, contracts and dependencies remain unchanged during this preparation checkpoint.
+
+## 9. Authorized implementation while execution is unsafe
+
+The user subsequently authorized useful non-test implementation when preflight is unsafe and declined a restart. This supersedes §8's instruction to leave helpers unimplemented until an executable RED, **only for preparation of approved A+B infrastructure**. The prepared regressions predate implementation, but their original RED launch was refused. RED/GREEN has not been observed and is not represented as satisfied. The preserved `f846b43` checkpoint retains the missing-helper state for a later independently guarded RED. No application test or fixture benchmark ran during this implementation interval.
+
+The opt-in draft now contains coherent SQLite publication, strict checksum/schema/recipe/environment/native-scope manifests, private copies, native transactional bundle revalidation, source/environment identity, collection/phase accounting, hash-bound disk evidence checks and a measured-cohort planner. Default report fixtures still construct independently; no existing fixture has been routed through reusable baselines. `scripts/verify.py` and all production contracts/implementations remain unchanged. The optional timing observer on `make_report_case` retains construction, freeze and both native load calls and closes repositories on interruption or observation failure.
+
+The batch CLI enables guarded collection only. Complete-suite execution is not enabled as a final gate. Grouping requires complete matching cohort evidence and 25% margin beneath the small soft limit; unmeasured nodes remain listed rather than automatically dispatched. Resume checks reopen guard/job/pytest/log/sample dependencies and independently re-account actual collection, phases, cleanup, native samples and peaks. Receipt integrity is not a cryptographic claim against an owner replacing every evidence file.
+
+Pending execution sequence remains:
+
+1. Guarded mechanical cache primary, including the preserved missing-helper RED, then current GREEN and malformed/isolation variants.
+2. Guarded accounting/evidence/coordinator controls, then real small pytest collection/outcome capture and cleanup controls.
+3. Unchanged minimum native bundle primary, native cache isolation/schema/revocation/digest/reopen checks, then original/cached recipe profiling, initially one copy in each separate child.
+4. Compare matching authoritative bundle digests, complete costs, construction/copy/validation frequency and process peaks before routing any owning fixture. Cache publication/checksum/validation/guard/collection/startup costs remain included. A cache hit never substitutes for native authority.
+5. Enable measured cohorts and account the complete required inventory only after these gates. Full fresh detached verification, static gates, golden readiness and independent review remain required.
+
+Three post-implementation native samples still reported warning pressure level 2, roughly 1.62 GB estimated headroom and 4.17 GB swap. Tests were not launched. Swap was **not the sole blocker**; no evidence supports relaxing its policy here. All thresholds and the supervisor remain unchanged. Source-formatting edits and syntax parsing are not test passes or performance evidence. Actual speedup, memory improvement and full-suite duration forecast remain **unmeasured**. C/D/E and Phase 8 feature work remain held.
