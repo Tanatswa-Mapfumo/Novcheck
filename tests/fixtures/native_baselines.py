@@ -5,6 +5,7 @@ import hashlib
 import json
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 from tests.fixtures.sqlite_baselines import (
@@ -41,7 +42,7 @@ def _open_report_case(path: Path, expected: SnapshotIdentity):
     if expected.authority_digest is None:
         raise ValueError("native baseline requires an exact upstream bundle digest")
     # Reject schema changes before repository initialization can migrate them.
-    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as database:
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as database:
         versions = database.execute("SELECT version FROM schema_version").fetchall()
     if versions != [(expected.schema_version,)]:
         raise ValueError("cached native schema differs from the exact baseline")

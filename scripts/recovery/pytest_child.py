@@ -36,6 +36,7 @@ class EvidencePlugin:
         environment = {
             "python": sys.version,
             "executable": str(Path(sys.executable).resolve()),
+            "invoked_executable": str(Path(sys.executable).absolute()),
             "packages": sorted(
                 (distribution.metadata["Name"], distribution.version)
                 for distribution in importlib.metadata.distributions()

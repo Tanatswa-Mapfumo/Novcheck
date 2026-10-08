@@ -193,3 +193,13 @@ Pending execution sequence remains:
 5. Enable measured cohorts and account the complete required inventory only after these gates. Full fresh detached verification, static gates, golden readiness and independent review remain required.
 
 Three post-implementation native samples still reported warning pressure level 2, roughly 1.62 GB estimated headroom and 4.17 GB swap. Tests were not launched. Swap was **not the sole blocker**; no evidence supports relaxing its policy here. All thresholds and the supervisor remain unchanged. Source-formatting edits and syntax parsing are not test passes or performance evidence. Actual speedup, memory improvement and full-suite duration forecast remain **unmeasured**. C/D/E and Phase 8 feature work remain held.
+
+## 10. Resume review and current verification blockers
+
+`65ff775` is now user-approved and independently fresh-fetch verified on GitHub. The checkpoint remains an unverified infrastructure draft. Five fresh native observations retained warning pressure; swap-out accumulation was stationary during the short window, while swap-ins and page-outs increased. This distinguishes retained swap from current pressure and does not establish normal-pressure capacity. Keep the verified supervisor and current thresholds unchanged; investigate a swap-only policy decision only after sustained normal pressure and sufficient headroom are actually measured.
+
+Static-review corrections and focused controls cover SQLite constructor cleanup and exact guard-command/interpreter/job joins for collection and resume. No test result, fixture-route activation, speedup or memory saving is inferred. Existing fixture routes remain original until mechanical and native controls pass.
+
+After native capacity permits the minimum tests, prioritize the shared `test_obligations.report_case` fixture's verified upstream disk baseline across compatible owning modules, with private copies and mandatory native reloads. Preserve all construction/migration/concurrency owners. Separately measure the six single-question fallback call sites that create all nine sections unnecessarily; retain every existing assertion and every full nine-question/coverage primary. Do not claim an 8/9 wall-time or memory reduction from call-count inspection. Accepted/proposed report caches and intrinsically large report operations still need their own guarded measurements and complete authority controls.
+
+The full required inventory, final fresh detached gate and independent review remain required. New source-review corrections are local until checkpoint review/approval. A+B cannot be declared operational before its execution, integrity, activation and paired cost gates pass.

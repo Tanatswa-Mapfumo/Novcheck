@@ -1,5 +1,6 @@
 """Independent durable-proof controls, prepared before batch runner execution."""
 
+import hashlib
 import json
 from dataclasses import asdict
 
@@ -18,7 +19,7 @@ def evidence(tmp_path):
     write_record(job, {"nodes": [node], "collect_only": False, "events_path": str(events)})
     config = {
         "kind": "configured",
-        "environment": {"python": "mechanical only"},
+        "environment": {"python": "mechanical only", "invoked_executable": "/mechanical/python"},
         "plugin_policy": "explicit-socket-asyncio-v1",
         "marker_policy": "not network",
     }
@@ -34,6 +35,14 @@ def evidence(tmp_path):
         {"kind": "session_finish", "exitstatus": 0, "elapsed_seconds": 0.4},
     ]
     events.write_text("".join(json.dumps(event) + "\n" for event in payload))
+    command = [
+        "/mechanical/python",
+        "-B",
+        "-m",
+        "scripts.recovery.pytest_child",
+        str(job.resolve()),
+    ]
+    command_digest = hashlib.sha256(json.dumps(command).encode()).hexdigest()
     limits = asdict(ResourceLimits(soft_bytes=256000000, hard_bytes=384000000))
     samples = [
         ResourceSample(float(index), 10, 5, 5, 1, 2000000000, 0, ()) for index in range(1, 5)
@@ -49,7 +58,7 @@ def evidence(tmp_path):
                 peak_rss_bytes=10,
                 peak_footprint_bytes=5,
                 samples=4,
-                command_sha256="c" * 64,
+                command_sha256=command_digest,
                 source_commit="mechanical",
                 source_diff_sha256="d" * 64,
                 source_tree_sha256="b" * 64,
@@ -79,7 +88,8 @@ def evidence(tmp_path):
             "cleanup_complete": True,
             "required_gates": {"guard": "PASSED"},
             "source_tree_sha256": "b" * 64,
-            "command_sha256": "c" * 64,
+            "command_sha256": command_digest,
+            "command": command,
             "limits": limits,
             "configuration": config,
             "accounting": account_batch([node], phases, child_state="PASSED", returncode=0),
@@ -153,5 +163,17 @@ def test_rehashed_unsafe_native_sample_cannot_resume(tmp_path):
     files["samples"].write_text("".join(json.dumps(value) + "\n" for value in values))
     payload = json.loads(receipt.read_text())
     payload["evidence"]["samples"]["sha256"] = digest_file(files["samples"])
+    receipt.write_text(json.dumps(payload))
+    assert not verify_resume(receipt, source_identity="a" * 64, expected_nodes=[node])
+
+
+def test_guard_for_another_command_cannot_certify_pytest_resume(tmp_path):
+    receipt, node, files = evidence(tmp_path)
+    payload = json.loads(receipt.read_text())
+    guard = json.loads(files["guard"].read_text())
+    guard["command_sha256"] = "e" * 64
+    files["guard"].write_text(json.dumps(guard))
+    payload["command_sha256"] = "e" * 64
+    payload["evidence"]["guard"]["sha256"] = digest_file(files["guard"])
     receipt.write_text(json.dumps(payload))
     assert not verify_resume(receipt, source_identity="a" * 64, expected_nodes=[node])

@@ -146,6 +146,21 @@ def verify_guard(guard_path, samples_path):
     return guard
 
 
+def verify_invocation(guard, job_path, configuration, recorded_command):
+    command = [
+        configuration["environment"]["invoked_executable"],
+        "-B",
+        "-m",
+        "scripts.recovery.pytest_child",
+        str(job_path.resolve()),
+    ]
+    if (
+        recorded_command != command
+        or hashlib.sha256(json.dumps(command).encode()).hexdigest() != guard["command_sha256"]
+    ):
+        raise ValueError("supervisor invocation does not match actual pytest job")
+
+
 def verify_resume(receipt_path, *, source_identity, expected_nodes):
     """Require exact committed artifact hashes, guard identity and actual phases.
 
@@ -192,6 +207,7 @@ def verify_resume(receipt_path, *, source_identity, expected_nodes):
         )
         if evidence["configuration"] != receipt["configuration"]:
             return False
+        verify_invocation(guard, paths["job"], evidence["configuration"], receipt.get("command"))
         actual = account_batch(
             expected_nodes,
             evidence["phases"],

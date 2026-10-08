@@ -18,6 +18,7 @@ from scripts.recovery.batch_evidence import (
     inspect_events,
     read_json,
     verify_guard,
+    verify_invocation,
     verify_resume,
     write_record,
 )
@@ -104,7 +105,7 @@ def execution_identity(cwd, python):
 
 
 def _command(python, job):
-    return (str(python), "-B", "-m", "scripts.recovery.pytest_child", str(job.resolve()))
+    return (str(python.absolute()), "-B", "-m", "scripts.recovery.pytest_child", str(job.resolve()))
 
 
 def _files(directory, guard, job, events):
@@ -153,6 +154,7 @@ def collect_inventory(cwd, python, directory, *, expected_network_exclusions=5):
     if before != after or result.source_tree_sha256 != tree:
         raise ValueError("source/environment changed during collection")
     evidence = inspect_events(events, job_digest=digest_file(job))
+    verify_invocation(asdict(result), job, evidence["configuration"], list(_command(python, job)))
     if evidence["phases"] or len(evidence["deselected"]) != expected_network_exclusions:
         raise ValueError("collection policy or network exclusion inventory changed")
     receipt = {
@@ -163,6 +165,7 @@ def collect_inventory(cwd, python, directory, *, expected_network_exclusions=5):
         "network_exclusions": evidence["deselected"],
         "configuration": evidence["configuration"],
         "command_sha256": result.command_sha256,
+        "command": list(_command(python, job)),
         "limits": asdict(limits),
         "evidence": _files(directory, guard, job, events),
         "import_collection_seconds": evidence["import_collection_seconds"],
@@ -207,6 +210,7 @@ def load_inventory(path, cwd, python):
     ):
         raise ValueError("invalid collection execution closure")
     actual = inspect_events(paths["events"], job_digest=digest_file(paths["job"]))
+    verify_invocation(guard, paths["job"], actual["configuration"], receipt.get("command"))
     if (
         actual["nodes"] != receipt["expected_nodes"]
         or actual["configuration"] != receipt["configuration"]
@@ -254,6 +258,7 @@ def run_batch(cwd, python, directory, *, inventory, nodes, limits, resume_from=N
         "required_gates": {"guard": result.state},
         "guard": asdict(result),
         "command_sha256": result.command_sha256,
+        "command": list(_command(python, job)),
         "limits": asdict(limits),
     }
     if result.state == "PASSED" and result.cleanup_complete:
@@ -261,6 +266,9 @@ def run_batch(cwd, python, directory, *, inventory, nodes, limits, resume_from=N
             if execution_identity(cwd, python)[0] != current or result.source_tree_sha256 != tree:
                 raise ValueError("source/environment changed during batch")
             evidence = inspect_events(events, job_digest=digest_file(job), expected_nodes=nodes)
+            verify_invocation(
+                asdict(result), job, evidence["configuration"], list(_command(python, job))
+            )
             if evidence["configuration"] != inventory["configuration"]:
                 raise ValueError("actual pytest environment/plugin configuration changed")
             receipt["accounting"] = account_batch(

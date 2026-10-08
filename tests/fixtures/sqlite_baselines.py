@@ -11,7 +11,7 @@ import shutil
 import sqlite3
 import time
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -113,24 +113,22 @@ def _coherent_backup(source: Path, destination: Path):
     # Exclusive reservation avoids overwriting any existing database or evidence.
     with destination.open("xb"):
         pass
-    read = sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
-    write = sqlite3.connect(destination, timeout=5)
     deadline = time.monotonic() + 30
 
     def progress(status, remaining, total):
         if time.monotonic() > deadline:
             raise TimeoutError("SQLite backup did not complete within 30 seconds")
 
-    try:
+    with ExitStack() as stack:
+        read = sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        stack.callback(read.close)
+        write = sqlite3.connect(destination, timeout=5)
+        stack.callback(write.close)
         read.backup(write, pages=256, progress=progress, sleep=0.01)
-        # A backup from WAL may retain WAL mode in its header. Normalize only the
-        # private snapshot, close/checkpoint it, and never touch source mode.
+        # Normalize only the coherent private image, never the source mode.
         write.execute("PRAGMA journal_mode=DELETE")
         if write.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise ValueError("SQLite snapshot integrity failure")
-    finally:
-        write.close()
-        read.close()
     _closed_image(destination)
 
 

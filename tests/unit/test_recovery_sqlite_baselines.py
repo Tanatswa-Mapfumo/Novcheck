@@ -279,3 +279,37 @@ def test_timing_events_include_copy_and_native_validation_without_fake_builds(tm
     assert names.count("sqlite_backup") == 1
     assert names.count("database_copy") == 1
     assert all(event["outcome"] == "PASSED" and event["seconds"] >= 0 for event in events)
+
+
+def test_backup_constructor_failure_closes_already_open_source(tmp_path, monkeypatch):
+    from tests.fixtures import sqlite_baselines
+
+    source = tmp_path / "source.db"
+    seed(source).close()
+    original = sqlite3.connect
+    opened = []
+
+    class TrackedRead:
+        def __init__(self, connection):
+            self.connection = connection
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+            self.connection.close()
+
+    def fail_write(path, *args, **kwargs):
+        if kwargs.get("uri"):
+            result = TrackedRead(original(path, *args, **kwargs))
+            opened.append(result)
+            return result
+        raise sqlite3.OperationalError("write connection failed")
+
+    monkeypatch.setattr(sqlite_baselines.sqlite3, "connect", fail_write)
+    with pytest.raises(sqlite3.OperationalError):
+        sqlite_baselines.create_snapshot(
+            source, tmp_path / "baseline", identity=identity(), validate=validator(identity(), [])
+        )
+    assert len(opened) == 1
+    assert opened[0].closed
+    assert not (tmp_path / "baseline" / "ready.json").exists()
