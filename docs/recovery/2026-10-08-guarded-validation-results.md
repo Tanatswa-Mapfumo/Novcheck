@@ -1,6 +1,6 @@
 # Guarded recovery validation — 8 October 2026
 
-**Status: verified A+B partial rollout retained; focused Phase 8 readiness INCOMPLETE. Controlled Tasks 22–24 resumption is authorized after that gate; final recovered-baseline acceptance remains OPEN.**
+**Status: verified A+B partial rollout retained; focused Phase 8 readiness INCOMPLETE. Safe Task 22 implementation is authorized while native readiness is blocked; Tasks 23–24 await Task 22 completion gates; final recovered-baseline acceptance remains OPEN.**
 
 **Current storage policy:** Reviewed source uses existing GitHub; confidential forensic evidence stays encrypted on this Mac. The user explicitly accepted complete local device/storage-failure risk on 8 October 2026. Off-device forensic backup is no longer a recovery prerequisite. Earlier pending-destination entries below are historical and superseded by the accepted exception at the end of this report.
 
@@ -187,3 +187,8 @@ General A+B expansion is paused. The user authorizes completing Task 22 after a 
 At clean `562f63e`, 13 sequential supervised jobs passed **52 selected tests / 289.642s**. Essential native Phase 7 permission, dependency, graph-revocation and rollback checks and the transactional Phase 8 bundle primary passed. Selected plan/execution-audit/semantic/extraction contracts, legacy compatibility and two Task 22 boundary tests passed. Peak RSS **173,309,952 B**, native footprint peak **157,877,888 B**. The exact focused ledger has **69 required nodes: 52 pass, 17 pending**; the full collected inventory remains 2,541 required nodes plus five opt-in network exclusions. This is not a full gate pass or new speedup measurement.
 
 The input-only Task 22 capacity probe was REFUSED before launch at warning pressure. A minimum native-input partition probe subsequently ABORTED on approximately 50 MB/s output paging with headroom near 1.19 GB; cleanup completed. Neither produced capacity proof. The historical 9.7 GB Task 22 primary was not rerun unchanged. Pending accepted-report/native export coverage prevents development resumption; no production refactor or feature change was made. No retries bypassed the supervisor. Raw source-bound commands, nodes, phase times and hash-bound dependencies remain protected locally.
+
+
+## 9 October Task 22 partial implementation
+
+The latest user instruction supersedes the blanket implementation hold. The [focused readiness record](2026-10-08-phase8-focused-readiness.md#9-october-task-22-cleanup-increment-and-native-capacity-evidence) records reproduced export-fixture cleanup RED/GREEN, eight focused current-source passes, exact 2,547-node collection, qualified native-input timing/peaks, and a subsequent Q1 paging abort. Native export/retry/provenance assertions are strengthened but remain pending. The 17 required native readiness nodes, full acceptance and eight goldens remain open; no production optimization or Task 23–24 work began.

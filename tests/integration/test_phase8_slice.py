@@ -3,7 +3,9 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
+from pathlib import Path
 
 import httpx
 import pytest
@@ -59,24 +61,32 @@ def exported_source(acceptance_source):
 def exported_case(exported_source, tmp_path):
     source, report = exported_source
     destination = tmp_path / "accepted-copy.sqlite"
-    with sqlite3.connect(source.repository.engine.url.database) as origin:
-        with sqlite3.connect(destination) as target:
-            origin.backup(target)
-    repository = SqlAlchemyEvidenceGraphRepository(destination)
-    frozen = repository.load_frozen_adjudication(
-        source.frozen.assessment_id, adjudication_id=source.frozen.adjudication_id
-    )
-    bundle = repository.load_report_input_bundle(
-        frozen.assessment_id, adjudication_id=frozen.adjudication_id
-    )
+    repository = None
     try:
+        with closing(sqlite3.connect(source.repository.engine.url.database)) as origin:
+            with closing(sqlite3.connect(destination)) as target:
+                origin.backup(target)
+        repository = SqlAlchemyEvidenceGraphRepository(destination)
+        frozen = repository.load_frozen_adjudication(
+            source.frozen.assessment_id, adjudication_id=source.frozen.adjudication_id
+        )
+        bundle = repository.load_report_input_bundle(
+            frozen.assessment_id, adjudication_id=frozen.adjudication_id
+        )
         yield ReportCase(repository, frozen, bundle), report
     finally:
-        repository.close()
+        try:
+            if repository is not None:
+                repository.close()
+        finally:
+            for suffix in ("", "-journal", "-wal", "-shm"):
+                Path(str(destination) + suffix).unlink(missing_ok=True)
 
 
 @pytest.mark.asyncio
-async def test_real_slice_compiles_loaded_report_and_preserves_summary_only_branch(tmp_path):
+async def test_real_slice_compiles_loaded_report_and_preserves_summary_only_branch(
+    tmp_path, monkeypatch
+):
     from novelty_harness.application.models import ReportCompilationRequest
     from novelty_harness.application.vertical_slice import (
         Phase7VerticalSliceResult,
@@ -87,16 +97,61 @@ async def test_real_slice_compiles_loaded_report_and_preserves_summary_only_bran
     summary_only, _ = await _run_real_slice(tmp_path / "summary")
     assert type(summary_only) is Phase7VerticalSliceResult
     assert summary_only.summary.overall_verdict == summary_only.adjudication.overall_finding.verdict
+    # The compatibility assertions are complete; release this independent run
+    # before constructing the full-report branch on the 8 GB development Mac.
+    del summary_only
+    from novelty_harness.adjudication.models import Phase7RunState
+    from novelty_harness.application import vertical_slice
+
+    original_compile = vertical_slice.compile_assessment_report
+    observed = []
+
+    async def observe_compile(assessment_id, **kwargs):
+        repository = kwargs["repository"]
+        bundle = repository.load_report_input_bundle(
+            assessment_id, adjudication_id=kwargs["adjudication_id"]
+        )
+        frozen = bundle.frozen_adjudication
+        assert repository.load_phase7_run(frozen.run_id).state == Phase7RunState.FROZEN
+        case = ReportCase(repository, frozen, bundle)
+        before = upstream_rows(case)
+        scope, run_id, adjudication_id = bundle.scope, frozen.run_id, frozen.adjudication_id
+        del bundle, frozen, case
+        report = await original_compile(assessment_id, **kwargs)
+        reloaded = repository.load_report_input_bundle(
+            assessment_id, adjudication_id=adjudication_id
+        )
+        assert (
+            upstream_rows(ReportCase(repository, reloaded.frozen_adjudication, reloaded)) == before
+        )
+        assert report.scope == scope
+        assert report.compilation_id != run_id
+        observed.append((adjudication_id, report.compilation_id, kwargs["attempt_token"]))
+        return report
+
+    monkeypatch.setattr(vertical_slice, "compile_assessment_report", observe_compile)
     full, sink = await _run_real_slice(
         tmp_path / "full",
-        ReportCompilationRequest(ReportOptions(limits=ReportGenerationLimits(max_calls=0))),
+        ReportCompilationRequest(
+            ReportOptions(limits=ReportGenerationLimits(max_calls=0)),
+            attempt_token="task22-full-report",
+        ),
     )
+    assert observed == [
+        (full.adjudication.adjudication_id, full.report.compilation_id, "task22-full-report")
+    ]
     assert type(full) is Phase8VerticalSliceResult
     assert full.report.scope.adjudication_id == full.adjudication.adjudication_id
     assert full.report.ir.target_findings == full.adjudication.target_findings
     assert full.summary.overall_verdict == full.adjudication.overall_finding.verdict
     repository = SqlAlchemyEvidenceGraphRepository(full.run_dir / "phase5/evidence_graph.sqlite3")
     try:
+        with repository.engine.connect() as connection:
+            assert connection.exec_driver_sql(
+                "SELECT attempt_token,adjudication_id FROM report_compilations "
+                "WHERE compilation_id=?",
+                (full.report.compilation_id,),
+            ).one() == ("task22-full-report", full.adjudication.adjudication_id)
         assert (
             repository.load_compiled_report(
                 full.record.assessment_id, report_id=full.report.report_id
@@ -155,7 +210,7 @@ async def test_report_generation_or_export_failure_does_not_rewrite_adjudication
     database = next(tmp_path.rglob("evidence_graph.sqlite3"))
     repository = SqlAlchemyEvidenceGraphRepository(database)
     try:
-        with sqlite3.connect(database) as conn:
+        with closing(sqlite3.connect(database)) as conn:
             aid, fid = conn.execute(
                 "SELECT assessment_id,adjudication_id FROM phase7_frozen_manifests"
             ).fetchone()
@@ -169,16 +224,33 @@ async def test_report_generation_or_export_failure_does_not_rewrite_adjudication
         repository.close()
 
 
-def test_export_retry_uses_accepted_report_without_semantic_calls(exported_case, tmp_path):
+def test_export_retry_uses_accepted_report_without_semantic_calls(
+    exported_case, tmp_path, monkeypatch
+):
     from novelty_harness.application.phase8_exports import export_compiled_report
 
     case, report = exported_case
     before = upstream_rows(case)
     writer = RunArtifactWriter(tmp_path / "exports")
+    semantic_calls = []
+
+    def forbidden_semantic_call(*args, **kwargs):
+        semantic_calls.append((args, kwargs))
+        raise AssertionError("Export retry must not compile or dispatch semantic work")
+
+    for name in (
+        "novelty_harness.application.phase8.compile_assessment_report",
+        "novelty_harness.application.phase8.invoke_report_operation",
+        "novelty_harness.application.phase8_sections.invoke_report_operation",
+        "novelty_harness.runtime.semantic.structured.SemanticRunner.run",
+    ):
+        monkeypatch.setattr(name, forbidden_semantic_call)
 
     class FailingWriter(RunArtifactWriter):
         def write_text(self, assessment_id, relative_name, text):
-            raise OSError("recorded disk failure")
+            if relative_name.endswith("/report.yaml"):
+                raise OSError("recorded disk failure after JSON publication")
+            return super().write_text(assessment_id, relative_name, text)
 
     with pytest.raises(OSError):
         export_compiled_report(
@@ -187,6 +259,14 @@ def test_export_retry_uses_accepted_report_without_semantic_calls(exported_case,
             repository=case.repository,
             artifact_writer=FailingWriter(tmp_path / "failed"),
         )
+    partial = tmp_path / "failed" / case.frozen.assessment_id / "reports" / report.report_id
+    assert json.loads((partial / "report.json").read_text())["report_id"] == report.report_id
+    assert not (partial / "report.yaml").exists()
+    assert not (partial / "report.md").exists()
+    assert (
+        case.repository.load_compiled_report(case.frozen.assessment_id, report_id=report.report_id)
+        == report
+    )
     first = export_compiled_report(
         case.frozen.assessment_id,
         report_id=report.report_id,
@@ -202,6 +282,7 @@ def test_export_retry_uses_accepted_report_without_semantic_calls(exported_case,
     assert first == second and len(first) == 3
     assert json.loads(first[0].read_text())["report_id"] == report.report_id
     assert upstream_rows(case) == before
+    assert semantic_calls == []
 
 
 def test_full_report_operation_can_run_after_completed_phase7_lifecycle(tmp_path):
@@ -256,8 +337,14 @@ def test_corrupt_authority_prevents_any_report_export(exported_case, exported_so
     from novelty_harness.reporting.repository import ReportAuthorityError
 
     case, report = exported_case
-    source, _ = exported_source
+    source, baseline_report = exported_source
     source_before = upstream_rows(source)
+    assert (
+        source.repository.load_compiled_report(
+            source.frozen.assessment_id, report_id=baseline_report.report_id
+        )
+        == baseline_report
+    )
     with case.repository.engine.begin() as connection:
         result = connection.exec_driver_sql(
             "UPDATE phase7_artifacts SET document_json = '{}' WHERE kind = 'GATE_C'"
@@ -278,6 +365,12 @@ def test_corrupt_authority_prevents_any_report_export(exported_case, exported_so
             source.frozen.assessment_id, adjudication_id=source.frozen.adjudication_id
         )
         == source.frozen
+    )
+    assert (
+        source.repository.load_compiled_report(
+            source.frozen.assessment_id, report_id=baseline_report.report_id
+        )
+        == baseline_report
     )
 
 
