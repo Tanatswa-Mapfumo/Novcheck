@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to execute the preserved Native method task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Establish a confidentially backed-up, freshly validated recovery baseline and measured safe test execution without weakening evidence/report authority.
+**Goal:** Establish a freshly validated recovery baseline with reviewed source backed up to existing GitHub, forensic evidence encrypted locally under the user-accepted backup exception, and measured safe test execution without weakening evidence/report authority.
 
 **Architecture:** Audit immutable source identity first, then validate a separate resource supervisor, measure fixture and production stages independently, and apply only reproduced optimizations. Immutable native SQLite snapshots use private per-test copies and native revalidation. Substantial refactoring and unsafe/heavy runs require the user's review before execution.
 
@@ -13,7 +13,7 @@
 ## Global constraints
 
 - Work only in the persistent recovery worktree on `recovery/validation-performance-20261008`; preserve local/public `recovery/d058976`, stable branches and every forensic input. Source/worktrees never live in temporary directories.
-- Confidential backup requires an independently recoverable key and verified private off-device destination. No secret in chat, argv, Git or logs; no public forensic payload. No erase/reformat/retirement of originals.
+- Storage uses only the existing GitHub repository and this Mac. Reviewed source checkpoints go to GitHub after exact approval. Confidential forensic evidence remains encrypted locally; the user explicitly accepts loss on complete device/storage failure. Off-device forensic backup and destination restore are not prerequisites under this exception. No provider/destination search, public forensic payload or passphrase in chat, argv, Git or logs. Preserve original evidence and encrypted copies.
 - Phase 7/8 authority, mandatory material limitations, exact dependency closure, actual executions and all assertions remain unchanged. No caches confer authority or survive across input/accept/load transactions.
 - Missing goldens are unresolved until exact recovery or explicitly labeled, independently checked regeneration. Never manufacture original commit identities or transfer historical passes to reconstructed source.
 - Mac has 8 GB RAM. One intensive child process tree at a time; normal pressure and OS headroom required. Target approximately 2 GB, preempt at 2.5 GB, absolute RSS/physical footprint limit 3,000,000,000 bytes. Stop/abort means incomplete, not PASS.
@@ -36,11 +36,11 @@
 
 - [x] Audit 518 manifest paths with `scripts/recovery/audit_baseline.py`; 0 mismatches, 402 syntax checks; measurement is not functional verification.
 - [x] Preserve uncertainty: 125 reconstructed, two diff-only witnesses, one complete recorded projection without final hash; eight missing/partial goldens and five unimplemented later files.
-- [ ] Obtain private independent destination and encryption/key custody. There is currently no mounted external drive; destination is required, not inferred.
+- [x] Record the explicit user-accepted local-only forensic backup exception (8 October 2026). No off-device destination will be pursued; off-device restore was not performed and is not claimed. Preserve passphrase privacy and originals.
 - [x] Inventory both forensic directories, all evidence/archives/object stores/scripts/checkpoints and modes/hashes using streamed reads. Keep all sensitive manifests inside encryption or ignored local receipts.
-- [ ] Encrypt without logging a passphrase/private key. Copy/upload only to the approved confidential destination. Verify destination ciphertext hash, independently decrypt/restore, compare exact members/hashes/modes and tree closures; record receipt. No local-only file counts as off-device completion.
+- [x] Encrypt locally without logging a passphrase/private key; verify local ciphertext integrity and read-only decrypted archive/member hashes/modes. Completed local verification is recorded separately from the accepted absence of off-device protection. No confidential upload is authorized.
 
-Local AES-256 preparation and decrypted member verification completed; destination transfer/restore remains OPEN. See [guarded validation results](../../recovery/2026-10-08-guarded-validation-results.md).
+Local AES-256 preparation and decrypted member verification completed. The later explicit user decision replaces the destination/transfer prerequisite with an accepted local-only backup exception; no off-device restore is claimed. See [guarded validation results](../../recovery/2026-10-08-guarded-validation-results.md).
 
 ## RV2 — Tested resource supervisor
 
@@ -102,7 +102,7 @@ Local AES-256 preparation and decrypted member verification completed; destinati
 
 All must be evidenced:
 
-1. Confidential off-device evidence backup independently restored; source checkpoint/public backup and immutable manifests remain intact.
+1. Verified local encrypted forensic backup, preserved originals and immutable manifests, and reviewed source checkpoint/public backup remain intact. The user-accepted local-only forensic backup exception satisfies the storage decision; it does not establish off-device resilience or functional correctness.
 2. Eight goldens exactly recovered or regenerated with reviewed independent expected semantics; original commit equivalence remains unproved and alternative provenance accepted explicitly at final review.
 3. Locked dependencies, fresh Ruff/format/strict Pyright and contract/architecture gates pass.
 4. RV2 supervisor launch/stop/cleanup is verified; representative native workloads have measured safe local bounds or an approved suitable larger environment.
@@ -125,10 +125,12 @@ Avoid redundant post-commit reruns only when complete file/mode/config/test/gene
 
 Coverage includes every current recovery priority, confidential evidence, eight artifacts, identity uncertainty, native authority, fixture isolation, production memory, measured gates and checkpoint preservation. Scope is recovery/performance, not later-phase features. No optimization is claimed from static call counts. Before/after native measurements remain pending because OS pressure is warning level 2.
 
-Native execution method is preserved. The investigation/plan checkpoint can be committed now after scoped static/document checks. A confidential destination/key and exact remote backup checkpoints require input/approval. Regeneration is already authorized subject to safety and independent semantics checks. Report measured evidence before substantial refactoring/heavy execution; material contract deviations and remote provisioning require explicit decisions.
+Native execution method is preserved. The investigation/plan checkpoint can be committed now after scoped static/document checks. Passphrase privacy remains mandatory; exact remote source backup checkpoints require approval. No confidential destination will be sought under the accepted local-only exception. Regeneration is already authorized subject to safety and independent semantics checks. Report measured evidence before substantial refactoring/heavy execution; material contract deviations and remote provisioning require explicit decisions.
 
 RV3 partial: fifteen bounded real-contract representation probes completed with no authority fixture; native ReportIR/accept/load profiling, full static/type gates and optimization are still pending. Results/limits are recorded in the guarded validation report.
 
 Execution ruling: one diagnostics checkpoint groups the verified supervisor, bounded representation probe and public-safe measurement report; no production optimization is included. The RV2 commit step remains separate from future fixture/production refactors.
 
 Storage ruling, 8 October: user cancelled Google Drive; available storage is existing GitHub plus this Mac. Reviewed source e8006f2 is fresh-fetch verified on the approved branch. Confidential encrypted evidence remains local and unchanged; private off-device transfer/restore prerequisite remains OPEN, with no public evidence upload authorized. Native fixture gate REFUSED before child launch at warning pressure; retain the 26 earlier small passes and all held gates. See the guarded validation report for exact receipts and measurements.
+
+Explicit user decision, 8 October 2026: GitHub plus this Mac are the only storage destinations. The user accepts complete device/storage-failure risk for encrypted local forensic evidence. This supersedes the earlier OPEN off-device prerequisite and prevents repeated destination requests. All functional, security, provenance, memory, golden, comprehensive verification and independent acceptance requirements remain unchanged. Latest guarded native gate REFUSED before launch; resource safety remains enforced.
