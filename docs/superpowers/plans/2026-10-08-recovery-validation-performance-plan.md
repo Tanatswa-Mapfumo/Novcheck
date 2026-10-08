@@ -130,3 +130,5 @@ Native execution method is preserved. The investigation/plan checkpoint can be c
 RV3 partial: fifteen bounded real-contract representation probes completed with no authority fixture; native ReportIR/accept/load profiling, full static/type gates and optimization are still pending. Results/limits are recorded in the guarded validation report.
 
 Execution ruling: one diagnostics checkpoint groups the verified supervisor, bounded representation probe and public-safe measurement report; no production optimization is included. The RV2 commit step remains separate from future fixture/production refactors.
+
+Storage ruling, 8 October: user cancelled Google Drive; available storage is existing GitHub plus this Mac. Reviewed source e8006f2 is fresh-fetch verified on the approved branch. Confidential encrypted evidence remains local and unchanged; private off-device transfer/restore prerequisite remains OPEN, with no public evidence upload authorized. Native fixture gate REFUSED before child launch at warning pressure; retain the 26 earlier small passes and all held gates. See the guarded validation report for exact receipts and measurements.
