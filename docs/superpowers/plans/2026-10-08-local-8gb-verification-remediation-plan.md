@@ -1,6 +1,6 @@
 # Local 8 GB verification remediation proposal
 
-**Status: A+B controls and minimum native isolation gates pass; measured cache reuse is activated for two projection owners. Full-suite rollout and recovered-baseline acceptance remain OPEN. C/D/E production changes require separate approval. Current risk policy is in §11.**
+**Status: verified A+B partial rollout retained; general expansion paused. Focused Phase 8 recovery readiness is INCOMPLETE (52 passes, 17 pending); controlled Tasks 22–24 resumption is authorized after that gate. Final acceptance remains OPEN. Current risk policy is in §11; current development priority is in §12.**
 
 **Date:** 8 October 2026. **Source checkpoint:** `fa7feb5daad3ab340c96f04413bfe79e11abe3fe`.
 
@@ -259,3 +259,10 @@ Full strict typing, complete required inventory execution, eight golden integrit
 
 
 The first post-activation collection recheck was REFUSED before launching a child: estimated headroom fell 226 MB in three seconds with approximately 76 MB/s output paging. This is genuine concurrent system activity under the calibrated severe-paging stop, not an allocated-swap veto. The monitor was retained unchanged and work continued with static review. Public outgoing review covers only documentation, diagnostics and tests; no new forensic payload, credentials, production path or private execution receipt is included. Existing previously reviewed historical source records remain unchanged.
+
+
+## 12. Return to original Phase 8 development
+
+The user now authorizes controlled Task 22 completion after a focused recovery-readiness gate, followed by Tasks 23–24 under the approved implementation plan. This supersedes prior blanket feature holds and full-baseline readiness prerequisites for development resumption; it does not waive final acceptance gates. General cache expansion is paused unless directly needed for required Phase 8 coverage. Existing A+B routes, calibrated monitoring and checkpoint preservation remain.
+
+The [Task 22 assessment and focused gate](../../recovery/2026-10-08-phase8-focused-readiness.md) records the present source, exact pending cases, 52 fresh passes at `562f63e`, native capacity refusal and paging abort. The gate contains 69 exact nodes; 17 remain pending. No Task 22 feature implementation resumed and no targeted result is called full acceptance. Once it passes, continue Task 22 directly rather than opening another general optimization cycle. Eight golden provenance/regeneration, full strict typing, complete final verification, clean detached execution and independent review remain mandatory.

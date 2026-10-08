@@ -138,3 +138,10 @@ Explicit user decision, 8 October 2026: GitHub plus this Mac are the only storag
 ## Current local-only execution constraint
 
 The user now requires all development and full verification on the existing 8 GB Mac. No external test runner, cloud/Actions workflow, paid service or additional hardware may be proposed or configured. Prior larger-hardware contingencies above are superseded. Unsafe workloads stay blocked locally pending measured remediation. Heavyweight provisional limits are 1.5 GB soft / 2 GB hard, with stricter small-probe limits and unchanged normal-pressure/headroom/swap controls. The [local 8 GB remediation proposal](2026-10-08-local-8gb-verification-remediation-plan.md) is prepared for review; no production/fixture refactoring is authorized by that document.
+
+
+## Revised Phase 8 development-readiness ruling
+
+The user's latest instruction supersedes this plan's blanket Tasks 22–24 hold and comprehensive recovered-baseline prerequisites **for development resumption only**. General A+B expansion is paused. The [focused readiness gate and Task 22 assessment](../../recovery/2026-10-08-phase8-focused-readiness.md) define the current development gate: essential Phase 7 authority, recovered report integration and existing Task 22 behavior, with resource-safe execution and explicit pending coverage. When that targeted gate passes, Task 22 completion and then Tasks 23–24 are authorized without another general planning cycle.
+
+The focused gate currently remains INCOMPLETE: 52 fresh passes, 17 pending. Unqualified native compilation/export capacity and a genuine paging-related abort prevent claiming readiness. The existing 9.7 GB recipe is not eligible unchanged. Missing goldens and unproved original-tree identity remain separately documented final acceptance work. Complete functional/semantic/security/provenance/authority/adversarial verification, strict typing, a fresh clean detached gate and independent whole-phase review are unchanged final requirements.

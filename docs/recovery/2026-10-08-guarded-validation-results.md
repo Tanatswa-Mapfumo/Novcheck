@@ -1,6 +1,6 @@
 # Guarded recovery validation — 8 October 2026
 
-**Status: resource supervisor and small checks verified; recovered functional baseline OPEN. Task 22 feature work and Tasks 23–24 remain held.**
+**Status: verified A+B partial rollout retained; focused Phase 8 readiness INCOMPLETE. Controlled Tasks 22–24 resumption is authorized after that gate; final recovered-baseline acceptance remains OPEN.**
 
 **Current storage policy:** Reviewed source uses existing GitHub; confidential forensic evidence stays encrypted on this Mac. The user explicitly accepted complete local device/storage-failure risk on 8 October 2026. Off-device forensic backup is no longer a recovery prerequisite. Earlier pending-destination entries below are historical and superseded by the accepted exception at the end of this report.
 
@@ -178,3 +178,12 @@ A later standalone cached-profile attempt aborted on maximum collector latency, 
 
 
 The first post-activation collection recheck refused before any child because live output paging was approximately 76 MB/s with a 226 MB headroom drop over three seconds. This refusal is preserved, not counted as a test failure or pass; the supervisor was not bypassed. Static public-content review continued while execution was unsafe.
+
+
+## Focused Phase 8 readiness — revised development priority
+
+General A+B expansion is paused. The user authorizes completing Task 22 after a focused readiness gate, then Tasks 23–24 according to the approved plan. The [new assessment](2026-10-08-phase8-focused-readiness.md) supersedes earlier blanket feature holds, while preserving complete final acceptance and original/regenerated evidence distinctions.
+
+At clean `562f63e`, 13 sequential supervised jobs passed **52 selected tests / 289.642s**. Essential native Phase 7 permission, dependency, graph-revocation and rollback checks and the transactional Phase 8 bundle primary passed. Selected plan/execution-audit/semantic/extraction contracts, legacy compatibility and two Task 22 boundary tests passed. Peak RSS **173,309,952 B**, native footprint peak **157,877,888 B**. The exact focused ledger has **69 required nodes: 52 pass, 17 pending**; the full collected inventory remains 2,541 required nodes plus five opt-in network exclusions. This is not a full gate pass or new speedup measurement.
+
+The input-only Task 22 capacity probe was REFUSED before launch at warning pressure. A minimum native-input partition probe subsequently ABORTED on approximately 50 MB/s output paging with headroom near 1.19 GB; cleanup completed. Neither produced capacity proof. The historical 9.7 GB Task 22 primary was not rerun unchanged. Pending accepted-report/native export coverage prevents development resumption; no production refactor or feature change was made. No retries bypassed the supervisor. Raw source-bound commands, nodes, phase times and hash-bound dependencies remain protected locally.
