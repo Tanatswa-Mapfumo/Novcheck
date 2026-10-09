@@ -318,6 +318,9 @@ requirements:
     test_selectors:
       - "tests/unit/reporting/test_rendering.py::test_all_formats_preserve_questions_scope_permissions_and_limitations"
       - "tests/unit/reporting/test_rendering.py::test_changed_json_or_executable_yaml_fails_parity"
+      - "tests/golden/test_phase8_reports.py::test_rendering_projection_matches_raw_native_semantics"
+      - "tests/golden/test_phase8_reports.py::test_rendering_raw_checks_reject_divergent_native_projection"
+      - "tests/golden/test_phase8_reports.py::test_rendered_format_public_projection_golden"
       - "tests/integration/test_phase8_slice.py::test_two_reports_keep_separate_export_paths"
   -
     id: "RPT-21"
@@ -556,11 +559,11 @@ outstanding_integrated_named_cases:
     selector: "tests/adversarial/test_phase8_authority_semantics.py::test_hidden_heading_assertion_crosses_extraction_and_composition_boundary"
     status: "PRESENT_NATIVE_EXECUTION_PENDING"
 final_gates:
-  focused_readiness: "OPEN_15_NATIVE_NODES_PENDING_HISTORICAL_SELECTION_NOT_CURRENT_ACCEPTANCE"
+  focused_readiness: "OPEN_14_NATIVE_NODES_PENDING_HISTORICAL_SELECTION_NOT_CURRENT_ACCEPTANCE"
   tasks_22_23_24: "OPEN_REQUIRED_NATIVE_AND_REGRESSION_GATES"
   goldens: "SIX_REGENERATED_FALLBACK_REPLACEMENTS_VERIFIED_TWO_RENDERING_PROJECTIONS_UNRESOLVED"
   strict_typing: "OPEN_FULL_PROJECT_CHECK_REQUIRED"
-  complete_suite: "OPEN_FRESH_COLLECTED_INVENTORY_REQUIRED"
+  complete_suite: "OPEN_COMPLETE_REQUIRED_INVENTORY_EXECUTION_AND_FINAL_FRESH_COLLECTION"
   verify_command: "uv run python scripts/verify.py"
   clean_detached: "OPEN_EXACT_IMPLEMENTATION_SHA_REQUIRED"
   independent_whole_phase_review: "OPEN_PARTIAL_REVIEWS_ARE_NOT_FINAL_ACCEPTANCE"

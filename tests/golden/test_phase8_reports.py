@@ -304,7 +304,122 @@ def format_markdown_projection(markdown):
     return text
 
 
-def test_rendered_format_public_projection_golden(report_shape):
+def assert_rendering_native_semantics(case, report, data):
+    """Check native facts before display-ID normalization or candidate comparison."""
+    from novelty_harness.domain.reporting import CANONICAL_QUESTIONS
+    from novelty_harness.reporting.ir import validate_report_ir
+    from novelty_harness.reporting.uncertainty import project_uncertainty
+
+    bundle, frozen, ir = case.bundle, case.frozen, report.ir
+    compilation, native_sections, native_citations, artifacts = data
+    # Bind the actual rendered IR to the committed sections checked below.
+    # Display projections omit prose, claims, basis links and uncertainty.
+    for actual, native in zip(ir.sections, native_sections, strict=True):
+        assert actual.scope == native.scope and actual.compilation_id == native.compilation_id
+        assert tuple(block.draft_block for block in actual.blocks) == native.draft.blocks
+        assert tuple(claim for block in actual.blocks for claim in block.claims) == native.claims
+        assert (
+            tuple(link for block in actual.blocks for link in block.basis_links)
+            == native.basis_links
+        )
+    assert ir.material_claims == tuple(
+        claim for section in native_sections for claim in section.claims
+    )
+    assert ir.claim_basis_links == tuple(
+        link for section in native_sections for link in section.basis_links
+    )
+    assert ir.uncertainty_summary == project_uncertainty(bundle)
+    assert ir.citation_registry == native_citations
+    validate_report_ir(ir, bundle, compilation, artifacts)
+    assert_fallback_scenario_semantics(case, native_sections, "MIXED")
+    assert ir.scope == bundle.scope and ir.bundle_digest == bundle.bundle_digest
+    assert ir.as_of == bundle.as_of
+    assert ir.target_findings == frozen.target_findings
+    assert ir.overall_finding == frozen.overall_finding
+    assert ir.source_dependency_manifest == bundle.dependency_manifest
+    assert tuple(section.question_id for section in ir.sections) == tuple(range(1, 10))
+    assert tuple(section.question_label for section in ir.sections) == CANONICAL_QUESTIONS
+    assert ir.coverage_obligations == bundle.coverage_obligations
+    assert {home.obligation_id for home in ir.coverage_satisfaction} == {
+        obligation.obligation_id for obligation in bundle.coverage_obligations
+    }
+    assert ir.value_availability == bundle.value_projection
+    assert frozen.value_findings == frozen.novelty_significance == ()
+    assert all(value.maturity is None for value in ir.value_availability)
+    assert any(value.kind == "NO_VALUE_ASSESSMENT" for value in ir.value_availability)
+    assert all(limit in ir.report_limitations for limit in frozen.overall_finding.limiting_factors)
+    for envelope in bundle.language_envelopes:
+        assert all(limit in ir.report_limitations for limit in envelope.required_limitations)
+    assert ir.compact_summary is not None
+    assert ir.compact_summary.overall_finding == frozen.overall_finding
+    assert ir.compact_summary.value_availability == bundle.value_projection
+    assert ir.compact_summary.uncertainty == ir.uncertainty_summary
+    for envelope in bundle.language_envelopes:
+        target = next(item for item in ir.compact_summary.targets if item.target == envelope.target)
+        assert target.verdict == envelope.verdict
+        assert target.claim_scope == envelope.claim_scope
+        assert target.permitted_classes == envelope.permitted_classes
+        assert all(limit in target.limitations for limit in envelope.required_limitations)
+    # Nine references and their native ancestry precede the hash-masking golden
+    # projection. Metadata membership alone never establishes semantic support.
+    assert tuple(c.display_number for c in ir.citation_registry.citations) == tuple(range(1, 10))
+    for citation in ir.citation_registry.citations:
+        comparison = next(
+            item
+            for item in bundle.eligible_comparisons
+            if item.comparison.classification.classification_id == citation.comparison_id
+        )
+        chain = comparison.comparison.comparison.chain
+        passage = next(
+            item.passage
+            for item in comparison.cited_passages
+            if item.passage.passage_id == citation.passage_id
+        )
+        assert citation.scope == bundle.scope and citation.as_of == bundle.as_of
+        assert citation.commit_id == comparison.commit_id
+        assert citation.source_id == chain.source.source_id
+        assert citation.source_version_id == (chain.version.version_id if chain.version else None)
+        assert citation.locator == passage.locator
+        assert citation.passage_access_state == passage.access_state
+        assert citation.source_metadata.source == chain.source
+        assert citation.source_metadata.version == chain.version
+        assert citation.unversioned_authority == (passage.source_version_id is None)
+        assert citation.canonical_page_is_versionless == (chain.source.canonical_url is not None)
+        assert all(ref.scope == bundle.scope for ref in citation.basis_refs)
+
+
+def test_rendering_projection_matches_raw_native_semantics(report_shape, report_case, ir_case):
+    assert_rendering_native_semantics(report_case, report_shape, ir_case)
+
+
+@pytest.mark.parametrize("projection", ["uncertainty", "claim"])
+def test_rendering_raw_checks_reject_divergent_native_projection(
+    report_shape, report_case, ir_case, projection
+):
+    ir = report_shape.ir
+    if projection == "uncertainty":
+        assert ir.uncertainty_summary
+        changed_ir = ir.model_copy(update={"uncertainty_summary": ()})
+    else:
+        section = ir.sections[8]
+        block = next(block for block in section.blocks if block.claims)
+        original = block.claims[0]
+        claim = original.model_copy(update={"normalized_assertion": "Material uncertainty omitted"})
+        changed_block = block.model_copy(update={"claims": (claim, *block.claims[1:])})
+        changed_section = section.model_copy(
+            update={
+                "blocks": tuple(changed_block if item == block else item for item in section.blocks)
+            }
+        )
+        changed_ir = ir.model_copy(update={"sections": (*ir.sections[:8], changed_section)})
+    changed = report_shape.model_copy(update={"ir": changed_ir})
+    # A normalized public projection omits these values. The raw-native gate
+    # must reject their loss even when the checked fixture sections are intact.
+    with pytest.raises(AssertionError):
+        assert_rendering_native_semantics(report_case, changed, ir_case)
+
+
+def test_rendered_format_public_projection_golden(report_shape, report_case, ir_case):
     import yaml
 
     from novelty_harness.reporting.rendering import (
@@ -312,6 +427,7 @@ def test_rendered_format_public_projection_golden(report_shape):
         validate_rendition_parity,
     )
 
+    assert_rendering_native_semantics(report_case, report_shape, ir_case)
     rendered = render_compiled_report(report_shape)
     validate_rendition_parity(report_shape, rendered)
     directory = Path(__file__).parent / "phase8"
