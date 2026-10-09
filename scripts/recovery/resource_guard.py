@@ -27,6 +27,9 @@ class ResourceLimits:
     soft_bytes: int = 1_500_000_000
     hard_bytes: int = 2_000_000_000
     min_headroom_bytes: int = 1_500_000_000
+    # Zero preserves the original identical launch/runtime floor. An explicit
+    # calibrated recipe can reserve more before dispatch than during execution.
+    launch_headroom_bytes: int = 0
     max_swap_bytes: int = 2_000_000_000
     sample_seconds: float = 0.1
     timeout_seconds: float = 60
@@ -46,6 +49,8 @@ class ResourceLimits:
             raise ValueError("sample cadence must be at most 0.2 seconds")
         if min(self.min_headroom_bytes, self.timeout_seconds, self.grace_seconds) <= 0:
             raise ValueError("headroom, timeout and grace must be positive")
+        if self.launch_headroom_bytes < 0:
+            raise ValueError("launch headroom cannot be negative")
         if self.max_swap_bytes < 0:
             raise ValueError("swap limit cannot be negative")
         if self.policy_version not in (1, 2) or type(self.allow_warning) is not bool:
@@ -59,10 +64,15 @@ class ResourceLimits:
             if self.soft_bytes > 256_000_000 or self.hard_bytes > 384_000_000
             else 1_000_000_000
         )
+        calibrated_ir = self.launch_headroom_bytes >= 1_500_000_000
+        warning_soft = 640_000_000 if calibrated_ir else 384_000_000
+        warning_hard = 896_000_000 if calibrated_ir else 512_000_000
+        if calibrated_ir:
+            warning_headroom = 1_000_000_000
         if self.allow_warning and (
             self.policy_version != 2
-            or self.soft_bytes > 384_000_000
-            or self.hard_bytes > 512_000_000
+            or self.soft_bytes > warning_soft
+            or self.hard_bytes > warning_hard
             or self.min_headroom_bytes < warning_headroom
         ):
             raise ValueError("warning-pressure execution exceeds bounded profile or headroom")
@@ -205,8 +215,14 @@ def approved_local_limits(limits: ResourceLimits) -> bool:
         1_000_000_000
         if limits.policy_version == 2
         and limits.allow_warning
-        and limits.soft_bytes <= 256_000_000
-        and limits.hard_bytes <= 384_000_000
+        and (
+            (limits.soft_bytes <= 256_000_000 and limits.hard_bytes <= 384_000_000)
+            or (
+                limits.launch_headroom_bytes >= 1_500_000_000
+                and limits.soft_bytes <= 640_000_000
+                and limits.hard_bytes <= 896_000_000
+            )
+        )
         else 1_500_000_000
     )
     return (
@@ -436,6 +452,14 @@ def run_guarded(
                     samples.write(json.dumps(asdict(sample)) + "\n")
                     samples.flush()
                     reason = risk.check(sample)
+                    if (
+                        reason is None
+                        and process is None
+                        and limits.launch_headroom_bytes
+                        and sample.headroom_bytes is not None
+                        and sample.headroom_bytes < limits.launch_headroom_bytes
+                    ):
+                        reason = "LOW_HEADROOM"
                     if reason is None and time.monotonic() - before > 0.2:
                         reason = "MONITOR_TOO_SLOW"
                     if reason:

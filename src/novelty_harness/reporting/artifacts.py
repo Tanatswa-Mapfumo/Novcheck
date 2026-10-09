@@ -1,7 +1,7 @@
 """Attempt identities and a closed typed vocabulary for immutable report artifacts."""
 
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from pydantic import Field, JsonValue, model_validator
 
@@ -27,6 +27,7 @@ from novelty_harness.reporting.models import (
 )
 from novelty_harness.reporting.plan import ReportPlan, ReportPlanProposal
 from novelty_harness.reporting.repair import RepairCluster
+from novelty_harness.reporting.serialization import canonical_json_digest
 from novelty_harness.reporting.verification import (
     ClaimVerificationBatch,
     CompositionCheck,
@@ -238,15 +239,25 @@ def compilation_id(key: str, attempt_token: str) -> str:
 
 def report_artifact_id(artifact: ReportArtifact) -> str:
     artifact = ReportArtifact.model_validate(artifact.model_dump(mode="json"))
+    return _report_artifact_id_from_snapshot(artifact)
+
+
+def _report_artifact_id_from_snapshot(artifact: ReportArtifact) -> str:
+    """Hash a private reparsed snapshot; callers must validate before entering.
+
+    Public identity calculation and the IR boundary each reparse untrusted
+    callers. Revalidating the same isolated snapshot again only creates another
+    full document and normalized string collection.
+    """
     payload = artifact.model_dump(mode="json", exclude={"artifact_id"})
-    document = artifact.document.model_dump(mode="json")
+    document = cast(dict[str, JsonValue], payload["document"])
     if isinstance(artifact.document, ReportExecutionRecord):
         document.pop("observations")
     elif isinstance(artifact.document, ReportStatusEvent):
         document.pop("event_id")
         document.pop("observed_at")
     payload["document"] = document
-    return "p8artifact_" + canonical_hash(payload)
+    return "p8artifact_" + canonical_json_digest(payload)
 
 
 def report_status_event_id(event: ReportStatusEvent) -> str:
@@ -301,7 +312,7 @@ def make_report_artifact(
 def report_artifact_semantic_content(artifact: ReportArtifact) -> dict[str, JsonValue]:
     """Exact replay ignores only observations and preserves the stored original."""
     content = artifact.model_dump(mode="json")
-    document = artifact.document.model_dump(mode="json")
+    document = cast(dict[str, JsonValue], content["document"])
     if isinstance(artifact.document, ReportExecutionRecord):
         document.pop("observations")
     elif isinstance(artifact.document, ReportStatusEvent):

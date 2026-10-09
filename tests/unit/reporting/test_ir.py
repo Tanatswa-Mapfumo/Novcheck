@@ -27,28 +27,35 @@ def ir_case(report_case):
         attempt_token="canonical-ir",
     )
     plan = build_coverage_plan(report_case.bundle, c)
-    documents = [(ReportArtifactKind.PLAN, plan, "p8-plan-firewall-v1")]
-    sections = tuple(
-        render_fallback_section(report_case.bundle, c, question_id=q) for q in range(1, 10)
+    artifact = make_report_artifact(
+        c, ReportArtifactKind.PLAN, plan, method_version="p8-plan-firewall-v1"
     )
-    documents.extend(
-        (
-            ReportArtifactKind.FALLBACK,
-            FallbackRecord(
-                scope=c.scope,
-                compilation_id=c.compilation_id,
-                question_id=s.draft.question_id,
-                bundle_digest=report_case.bundle.bundle_digest,
-                section=s,
-            ),
-            "p8-fallback-v1",
+    report_case.repository.record_report_artifact(c.compilation_id, artifact)
+    del artifact, plan
+    # Preserve all nine native transformations; release construction inputs
+    # before reloading the committed closure rather than retaining two copies.
+    for question in range(1, 10):
+        section = render_fallback_section(report_case.bundle, c, question_id=question)
+        document = FallbackRecord(
+            scope=c.scope,
+            compilation_id=c.compilation_id,
+            question_id=question,
+            bundle_digest=report_case.bundle.bundle_digest,
+            section=section,
         )
-        for s in sections
-    )
-    for kind, document, version in documents:
-        artifact = make_report_artifact(c, kind, document, method_version=version)
+        artifact = make_report_artifact(
+            c, ReportArtifactKind.FALLBACK, document, method_version="p8-fallback-v1"
+        )
         report_case.repository.record_report_artifact(c.compilation_id, artifact)
+        del artifact, document, section
     artifacts = report_case.repository.load_report_artifacts(c.compilation_id)
+    sections = tuple(
+        sorted(
+            (a.document.section for a in artifacts if isinstance(a.document, FallbackRecord)),
+            key=lambda section: section.draft.question_id,
+        )
+    )
+    assert tuple(section.draft.question_id for section in sections) == tuple(range(1, 10))
     return c, sections, build_citation_registry(sections, report_case.bundle), artifacts
 
 

@@ -272,7 +272,11 @@ async def compile_assessment_report(
         accepted_at=datetime.now(UTC),
     )
     proposed = proposed.model_copy(update={"report_id": report_id(proposed)})
+    # Native acceptance reloads its exact closure. These construction inputs
+    # must not overlap that independent validation and the authoritative reload.
+    del artifacts, sections, citations, plan, ir, provenance, bundle
     accepted_id = repository.accept_compiled_report(compilation.compilation_id, proposed)
+    del proposed
     loaded = repository.load_compiled_report(assessment_id, report_id=accepted_id)
     _publish_trace(compilation.compilation_id, repository, selected)
     return loaded

@@ -482,3 +482,110 @@ class QualifiedMediumPolicyTests(unittest.TestCase):
             RiskMonitor(self.limits()).check(replace(base, headroom_bytes=1_499_999_999)),
             "LOW_HEADROOM",
         )
+
+
+class CalibratedIRPolicyTests(unittest.TestCase):
+    def limits(self):
+        return ResourceLimits(
+            soft_bytes=640_000_000,
+            hard_bytes=896_000_000,
+            min_headroom_bytes=1_000_000_000,
+            launch_headroom_bytes=1_500_000_000,
+            allow_warning=True,
+            timeout_seconds=5,
+        )
+
+    def test_calibration_requires_explicit_launch_margin_and_keeps_caps(self):
+        from scripts.recovery.resource_guard import approved_local_limits
+
+        limits = self.limits()
+        self.assertTrue(approved_local_limits(limits))
+        for change in (
+            {"launch_headroom_bytes": 1_499_999_999},
+            {"min_headroom_bytes": 999_999_999},
+            {"soft_bytes": 640_000_001},
+            {"hard_bytes": 896_000_001},
+        ):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                replace(limits, **change)
+
+    def test_launch_floor_is_enforced_before_any_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "launched"
+            result = run_guarded(
+                (sys.executable, "-I", "-S", "-c", f"open({str(marker)!r},'w').close()"),
+                cwd=Path.cwd(),
+                limits=self.limits(),
+                output=root / "receipt.json",
+                lock_path=root / "lock",
+                collector=lambda pgid: replace(
+                    safe_sample(),
+                    pressure=2,
+                    headroom_bytes=1_499_999_999,
+                    pageins_bytes=0,
+                    pageouts_bytes=0,
+                    swapins_bytes=0,
+                    swapouts_bytes=0,
+                ),
+            )
+            self.assertEqual((result.state, result.reason), ("REFUSED", "LOW_HEADROOM"))
+            self.assertFalse(marker.exists())
+
+    def test_qualified_child_may_use_capacity_between_launch_and_runtime_floors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clock = 10
+
+            def collect(pgid):
+                nonlocal clock
+                clock += 1
+                return replace(
+                    safe_sample(),
+                    monotonic_seconds=clock,
+                    pressure=2,
+                    headroom_bytes=1_200_000_000 if pgid else 1_600_000_000,
+                    pageins_bytes=0,
+                    pageouts_bytes=0,
+                    swapins_bytes=0,
+                    swapouts_bytes=0,
+                )
+
+            result = run_guarded(
+                (sys.executable, "-I", "-S", "-c", "pass"),
+                cwd=Path.cwd(),
+                limits=self.limits(),
+                output=root / "receipt.json",
+                lock_path=root / "lock",
+                collector=collect,
+            )
+            self.assertEqual(result.state, "PASSED")
+            self.assertTrue(result.cleanup_complete)
+
+    def test_runtime_danger_still_stops_calibrated_profile(self):
+        from scripts.recovery.resource_guard import RiskMonitor
+
+        base = replace(
+            safe_sample(),
+            pressure=2,
+            headroom_bytes=1_600_000_000,
+            monotonic_seconds=10,
+            pageins_bytes=0,
+            pageouts_bytes=0,
+            swapins_bytes=0,
+            swapouts_bytes=0,
+        )
+        for change, reason in (
+            ({"headroom_bytes": 999_999_999}, "LOW_HEADROOM"),
+            ({"pressure": 4}, "MEMORY_PRESSURE"),
+            ({"footprint_bytes": 640_000_000}, "SOFT_MEMORY_LIMIT"),
+            ({"rss_bytes": 896_000_000}, "HARD_MEMORY_LIMIT"),
+        ):
+            with self.subTest(reason=reason):
+                self.assertEqual(RiskMonitor(self.limits()).check(replace(base, **change)), reason)
+        monitor = RiskMonitor(self.limits())
+        self.assertIsNone(monitor.check(base))
+        self.assertEqual(
+            monitor.check(replace(base, monotonic_seconds=13, swapouts_bytes=192_000_000)),
+            "SUSTAINED_PAGING",
+        )
