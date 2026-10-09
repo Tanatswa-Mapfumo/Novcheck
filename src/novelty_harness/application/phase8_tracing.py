@@ -1,5 +1,7 @@
 """Retryable delivery of committed reporting metadata; trace is never authority."""
 
+from itertools import chain
+
 from pydantic import JsonValue
 
 from novelty_harness.domain.enums import AssessmentStage, TraceStatus
@@ -7,6 +9,7 @@ from novelty_harness.reporting.artifacts import ReportArtifact, ReportStatusEven
 from novelty_harness.reporting.execution import ReportExecutionRecord, ReportRoleConfiguration
 from novelty_harness.reporting.fallback import FallbackRecord
 from novelty_harness.reporting.firewall import FirewallResult
+from novelty_harness.reporting.ir import CompiledAssessmentReport
 from novelty_harness.reporting.repository import ReportAuthorityError, ReportRepository
 from novelty_harness.reporting.verification import ClaimVerificationBatch, CompositionCheck
 from novelty_harness.runtime.tracing.hashing import canonical_hash
@@ -39,6 +42,7 @@ def publish_report_events(
         for a in artifacts
         if isinstance(a.document, ReportRoleConfiguration)
     }
+    accepted_events: tuple[TraceEvent, ...] = ()
     # Accepted status alone is insufficient: reload the exact accepted report
     # before delivering ANY events for an accepted attempt.
     for artifact in artifacts:
@@ -47,15 +51,21 @@ def publish_report_events(
             prefix = "Accepted compiled report "
             if not document.reason.startswith(prefix):
                 raise ReportAuthorityError("accepted trace lacks exact report locator")
-            report = repository.load_compiled_report(
-                start.scope.assessment_id, report_id=document.reason[len(prefix) :]
-            )
-            if report.compilation_id != compilation_id or report.scope != start.scope:
+            locator = document.reason[len(prefix) :]
+            report = repository.load_compiled_report(start.scope.assessment_id, report_id=locator)
+            if (
+                report.report_id != locator
+                or report.compilation_id != compilation_id
+                or report.scope != start.scope
+            ):
                 raise ReportAuthorityError("accepted trace report belongs to another attempt")
+            accepted_events = _accepted_report_events(report)
             del report
     failed = []
-    for artifact in sorted(artifacts, key=lambda a: a.artifact_id):
-        event = _event(artifact, start, configurations)
+    events = (
+        _event(a, start, configurations) for a in sorted(artifacts, key=lambda a: a.artifact_id)
+    )
+    for event in chain(events, accepted_events):
         try:
             sink.emit(event)
         except Exception:
@@ -181,3 +191,67 @@ def _event(
         reason_code=reason,
         data=data,
     )
+
+
+def _accepted_report_events(report: CompiledAssessmentReport) -> tuple[TraceEvent, ...]:
+    """Project only locator/ancestry metadata from a native revalidated report.
+
+    Event observations refer to the committed acceptance, not a fabricated new
+    semantic execution. Neither the ancestry hash nor a delivery receipt is an
+    authority certificate. Raw source text and URLs never enter these events.
+    """
+    common: dict[str, JsonValue] = {
+        "report_id": report.report_id,
+        "compilation_id": report.compilation_id,
+        "adjudication_id": report.scope.adjudication_id,
+        "assessment_context_id": report.scope.assessment_context_id,
+        "phase6_snapshot_id": report.scope.phase6_snapshot_id,
+    }
+    ancestry: list[JsonValue] = [
+        {
+            "citation_id": citation.citation_id,
+            "display_number": citation.display_number,
+            "source_id": citation.source_id,
+            "source_version_id": citation.source_version_id,
+            "passage_id": citation.passage_id,
+            "comparison_id": citation.comparison_id,
+            "commit_id": citation.commit_id,
+            "commitment_ids": list(citation.commitment_ids),
+            "claim_ids": list(citation.claim_ids),
+        }
+        for citation in report.ir.citation_registry.citations
+    ]
+    events: list[TraceEvent] = []
+    projections: tuple[tuple[str, dict[str, JsonValue]], ...] = (
+        ("REPORT_ACCEPTED_REPORT_RELOADED", common),
+        (
+            "REPORT_CITATIONS_RESOLVED",
+            {
+                **common,
+                "citation_method_version": report.ir.citation_registry.method_version,
+                "citation_ancestry": ancestry,
+                "citation_ancestry_hash": canonical_hash(ancestry),
+            },
+        ),
+    )
+    for reason, data in projections:
+        events.append(
+            TraceEvent(
+                event_id="trace_"
+                + canonical_hash(
+                    {
+                        "projection": "p8-accepted-trace-v1",
+                        "report_id": report.report_id,
+                        "reason": reason,
+                    }
+                ),
+                assessment_id=report.scope.assessment_id,
+                occurred_at=report.accepted_at,
+                stage=AssessmentStage.REPORTED,
+                component="phase8",
+                status=TraceStatus.SUCCESS,
+                reason_code=reason,
+                data=data,
+            )
+        )
+    return tuple(events)

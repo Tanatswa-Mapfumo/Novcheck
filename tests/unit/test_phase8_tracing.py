@@ -252,7 +252,7 @@ def test_committed_verification_rejection_is_not_reported_as_success(disposition
     assert "Untrusted verification prose" not in str(event)
 
 
-@pytest.mark.parametrize("revoked", [False, True])
+@pytest.mark.parametrize("revoked", [False, True, "foreign-report"])
 def test_accepted_trace_reloads_exact_native_locator_before_any_delivery(revoked):
     from novelty_harness.application.phase8_tracing import publish_report_events
 
@@ -280,10 +280,18 @@ def test_accepted_trace_reloads_exact_native_locator_before_any_delivery(revoked
             assert assessment_id == compilation.scope.assessment_id
             assert report_id == "report-exact"
             loads.append(report_id)
-            if revoked:
+            if revoked is True:
                 raise ReportAuthorityError("Accepted closure was revoked")
             return SimpleNamespace(
-                scope=compilation.scope, compilation_id=compilation.compilation_id
+                scope=compilation.scope,
+                compilation_id=compilation.compilation_id,
+                report_id="report-foreign" if revoked == "foreign-report" else report_id,
+                accepted_at=OBSERVED,
+                ir=SimpleNamespace(
+                    citation_registry=SimpleNamespace(
+                        method_version="p8-citations-v1", citations=()
+                    )
+                ),
             )
 
     repository = AcceptedRepository(compilation, (*artifacts, artifact))
@@ -299,3 +307,92 @@ def test_accepted_trace_reloads_exact_native_locator_before_any_delivery(revoked
         event = next(e for e in sink.events if e.reason_code == "REPORT_STATUS_ACCEPTED")
         assert event.data["report_id"] == "report-exact"
     assert loads == ["report-exact"]
+
+
+def test_accepted_citation_projection_is_retryable_metadata_after_native_load():
+    from novelty_harness.application.phase8_tracing import publish_report_events
+
+    compilation, artifacts = committed_shapes()
+    accepted = ReportStatusEvent(
+        scope=compilation.scope,
+        compilation_id=compilation.compilation_id,
+        event_id="pending",
+        expected_state="VERIFIED",
+        next_state="ACCEPTED",
+        reason="Accepted compiled report report-citations",
+        observed_at=OBSERVED,
+        predecessor_id=artifacts[0].document.event_id,
+    )
+    accepted = accepted.model_copy(update={"event_id": report_status_event_id(accepted)})
+    artifact = make_report_artifact(
+        compilation, ReportArtifactKind.STATUS, accepted, method_version="p8-bundle-v1"
+    )
+    citation = SimpleNamespace(
+        citation_id="cite-native",
+        display_number=1,
+        source_id="source-native",
+        source_version_id="version-native",
+        passage_id="passage-native",
+        comparison_id="comparison-native",
+        commit_id="commit-native",
+        commitment_ids=("commitment-native",),
+        claim_ids=("claim-native",),
+        external_link="https://example.invalid/secret",
+        limitations=("Private evidence prose",),
+    )
+    sink = InMemoryTraceSink()
+    before_delivery = [0]
+
+    class AcceptedRepository(ReadOnlyRepository):
+        def load_compiled_report(self, assessment_id, *, report_id):
+            assert len(sink.events) == before_delivery[0]
+            assert assessment_id == compilation.scope.assessment_id
+            assert report_id == "report-citations"
+            return SimpleNamespace(
+                scope=compilation.scope,
+                compilation_id=compilation.compilation_id,
+                report_id=report_id,
+                accepted_at=OBSERVED,
+                ir=SimpleNamespace(
+                    citation_registry=SimpleNamespace(
+                        method_version="p8-citations-v1", citations=(citation,)
+                    )
+                ),
+            )
+
+    repository = AcceptedRepository(compilation, (*artifacts, artifact))
+    assert publish_report_events(compilation.compilation_id, repository=repository, sink=sink) == ()
+    first = sink.events
+    event = next(e for e in first if e.reason_code == "REPORT_CITATIONS_RESOLVED")
+    assert event.data["report_id"] == "report-citations"
+    assert event.data["citation_method_version"] == "p8-citations-v1"
+    assert event.data["citation_ancestry"] == [
+        {
+            "citation_id": "cite-native",
+            "display_number": 1,
+            "source_id": "source-native",
+            "source_version_id": "version-native",
+            "passage_id": "passage-native",
+            "comparison_id": "comparison-native",
+            "commit_id": "commit-native",
+            "commitment_ids": ["commitment-native"],
+            "claim_ids": ["claim-native"],
+        }
+    ]
+    assert "Private evidence prose" not in str(first)
+    assert "example.invalid" not in str(first)
+    assert any(e.reason_code == "REPORT_ACCEPTED_REPORT_RELOADED" for e in first)
+    before_delivery[0] = len(first)
+    assert publish_report_events(compilation.compilation_id, repository=repository, sink=sink) == ()
+    assert sink.events[len(first) :] == first
+
+    class FailingCitationSink:
+        def emit(self, value):
+            if value.reason_code == "REPORT_CITATIONS_RESOLVED":
+                raise OSError("private failure prose")
+
+    before_delivery[0] = len(sink.events)
+    failed = publish_report_events(
+        compilation.compilation_id, repository=repository, sink=FailingCitationSink()
+    )
+    assert failed == (event.event_id,)

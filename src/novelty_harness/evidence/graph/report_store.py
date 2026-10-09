@@ -747,46 +747,60 @@ def _validate_repair_document(
             )
 
 
+def _read_report_artifact_documents(
+    session: Session, compilation_locator: str
+) -> tuple[ReportArtifact, ...]:
+    # Keep the complete typed closure, but release each serialized row after
+    # strict decoding and exact byte/column comparison. The cursor is closed
+    # before native cross-artifact validation uses this same transaction.
+    documents: list[ReportArtifact] = []
+    statement = (
+        select(ReportArtifactRow)
+        .where(ReportArtifactRow.compilation_id == compilation_locator)
+        .order_by(ReportArtifactRow.artifact_id)
+        .execution_options(yield_per=1)
+    )
+    with session.scalars(statement) as rows:
+        for row in rows:
+            artifact = ReportArtifact.model_validate_json(row.document_json)
+            scope = artifact.scope
+            if (
+                artifact.artifact_id,
+                artifact.compilation_id,
+                scope.assessment_id,
+                scope.adjudication_id,
+                scope.assessment_context_id,
+                scope.phase6_snapshot_id,
+                artifact.kind.value,
+                artifact.question_id,
+                artifact.cluster_origin_id,
+                artifact.execution_ref,
+                canonical_json(artifact),
+            ) != (
+                row.artifact_id,
+                row.compilation_id,
+                row.assessment_id,
+                row.adjudication_id,
+                row.context_id,
+                row.snapshot_id,
+                row.kind,
+                row.question_id,
+                row.cluster_origin_id,
+                row.execution_artifact_id,
+                row.document_json,
+            ):
+                raise ReportAuthorityError("persisted report artifact columns or content differ")
+            documents.append(artifact)
+            del row
+    return tuple(documents)
+
+
 def load_report_artifacts_in_session(
     session: Session, compilation: ReportCompilationRecord, bundle: ReportInputBundle
 ) -> tuple[ReportArtifact, ...]:
-    rows = tuple(
-        session.scalars(
-            select(ReportArtifactRow)
-            .where(ReportArtifactRow.compilation_id == compilation.compilation_id)
-            .order_by(ReportArtifactRow.artifact_id)
-        )
-    )
-    artifacts = tuple(ReportArtifact.model_validate_json(row.document_json) for row in rows)
+    artifacts = _read_report_artifact_documents(session, compilation.compilation_id)
     accepted_id = _accepted_header_id(session, compilation)
-    for row, artifact in zip(rows, artifacts, strict=True):
-        scope = artifact.scope
-        if (
-            artifact.artifact_id,
-            artifact.compilation_id,
-            scope.assessment_id,
-            scope.adjudication_id,
-            scope.assessment_context_id,
-            scope.phase6_snapshot_id,
-            artifact.kind.value,
-            artifact.question_id,
-            artifact.cluster_origin_id,
-            artifact.execution_ref,
-            canonical_json(artifact),
-        ) != (
-            row.artifact_id,
-            row.compilation_id,
-            row.assessment_id,
-            row.adjudication_id,
-            row.context_id,
-            row.snapshot_id,
-            row.kind,
-            row.question_id,
-            row.cluster_origin_id,
-            row.execution_artifact_id,
-            row.document_json,
-        ):
-            raise ReportAuthorityError("persisted report artifact columns or content differ")
+    for artifact in artifacts:
         _validate_artifact_bindings(
             compilation, artifact, artifacts, bundle, accepted_report_id=accepted_id
         )
