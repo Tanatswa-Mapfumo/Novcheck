@@ -1,7 +1,7 @@
 """Canonical report proposals with exact proof joins; repository acceptance is separate."""
 
 from datetime import date
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, JsonValue, create_model
 
@@ -18,8 +18,8 @@ from novelty_harness.evidence.graph.assessment_ledger import Phase6CoverageLedge
 from novelty_harness.reporting.artifacts import (
     ReportArtifact,
     ReportCompilationRecord,
-    _report_artifact_id_from_snapshot,
     report_artifact_semantic_content,
+    report_artifact_snapshot_id,
 )
 from novelty_harness.reporting.bundle import ReportInputBundle
 from novelty_harness.reporting.citations import CitationRegistry, validate_citation_registry
@@ -56,7 +56,7 @@ from novelty_harness.reporting.recommendations import (
     ValidationRequirement,
     minimum_validation_requirements,
 )
-from novelty_harness.reporting.serialization import _share_validated_strings, canonical_json_digest
+from novelty_harness.reporting.serialization import canonical_json_digest, share_validated_strings
 from novelty_harness.reporting.uncertainty import UncertaintyItem, project_uncertainty
 from novelty_harness.reporting.value import ValueProjection
 from novelty_harness.reporting.verification import (
@@ -155,41 +155,53 @@ class ReportIR(ReportScoped):
 # Cache schemas only, never validated report content or authority decisions.
 # FieldInfo carries the original metadata once; rebuilding an Annotated type
 # as well would apply that metadata a second time in the installed Pydantic.
-_IR_FIELD_MODELS = {
+_IR_FIELD_MODELS: dict[str, type[BaseModel]] = {
     name: create_model(
         "_ReportIRField_" + name,
         __config__=ReportIR.model_config,
-        **{name: (field.annotation, field)},
+        **cast(dict[str, Any], {name: (field.annotation, field)}),
     )
     for name, field in ReportIR.model_fields.items()
 }
 
 
-_CITATION_FIELD_MODELS = {
+_CITATION_FIELD_MODELS: dict[str, type[BaseModel]] = {
     name: create_model(
         "_CitationRegistryField_" + name,
         __config__=CitationRegistry.model_config,
-        **{name: (field.annotation, field)},
+        **cast(dict[str, Any], {name: (field.annotation, field)}),
     )
     for name, field in CitationRegistry.model_fields.items()
 }
 
 
 def _snapshot_basis_links(
-    links: tuple[ClaimBasisLink, ...], basis: dict[str, ClaimBasisLink]
+    links: tuple[ClaimBasisLink, ...],
+    basis: dict[str, ClaimBasisLink],
+    *,
+    strict: bool | None = True,
 ) -> tuple[ClaimBasisLink, ...]:
     """Validate every item; preserve every ordered occurrence and divergence."""
     snapshots: list[ClaimBasisLink] = []
     for proposed in links:
-        link = ClaimBasisLink.model_validate_json(proposed.model_dump_json(), strict=True)
+        link = ClaimBasisLink.model_validate_json(proposed.model_dump_json(), strict=strict)
         candidate = basis.get(canonical_json_digest(link.model_dump(mode="json")))
         snapshots.append(candidate if candidate is not None and candidate == link else link)
     return tuple(snapshots)
 
 
 def _snapshot_citation_registry(
-    registry: CitationRegistry, basis: dict[str, ClaimBasisLink]
+    registry: CitationRegistry,
+    basis: dict[str, ClaimBasisLink],
+    *,
+    strict: bool | None = True,
 ) -> CitationRegistry:
+    if any(
+        name not in registry.__dict__
+        for name, field in CitationRegistry.model_fields.items()
+        if field.is_required()
+    ):
+        return CitationRegistry.model_validate_json(registry.model_dump_json(), strict=strict)
     values: dict[str, object] = {}
     for name, schema in _CITATION_FIELD_MODELS.items():
         if (
@@ -197,26 +209,32 @@ def _snapshot_citation_registry(
             and type(registry.claim_basis_links) is tuple
             and all(type(link) is ClaimBasisLink for link in registry.claim_basis_links)
         ):
-            values[name] = _snapshot_basis_links(registry.claim_basis_links, basis)
+            values[name] = _snapshot_basis_links(registry.claim_basis_links, basis, strict=strict)
         else:
             field = schema.model_validate_json(
-                registry.model_dump_json(include={name}), strict=True
+                registry.model_dump_json(include={name}), strict=strict
             )
             values[name] = getattr(field, name)
-    return CitationRegistry.model_validate(values, strict=True)
+    return CitationRegistry.model_validate(values, strict=strict)
 
 
-def _revalidate_report_ir(ir: ReportIR) -> ReportIR:
+def _revalidate_report_ir(ir: ReportIR, *, strict: bool | None = True) -> ReportIR:
     """Strict serialized snapshots without retaining a complete wire copy.
 
     The closed IR has field schemas and no JSON-specific root transform. Every
     field uses the original serializer, metadata/config and nested validators;
     normal strict model construction then applies the complete root contract.
+    The default remains strict for native IR validation; strict=None preserves
+    the original field-level coercion policy at the enclosing report boundary.
     Subclasses retain the original full roundtrip so added serialized fields
     cannot disappear through projection.
     """
-    if type(ir) is not ReportIR:
-        return ReportIR.model_validate_json(ir.model_dump_json(), strict=True)
+    if type(ir) is not ReportIR or any(
+        name not in ir.__dict__
+        for name, field in ReportIR.model_fields.items()
+        if field.is_required()
+    ):
+        return ReportIR.model_validate_json(ir.model_dump_json(), strict=strict)
     values: dict[str, object] = {}
     basis: dict[str, ClaimBasisLink] = {}
     strings: dict[str, str] = {}
@@ -238,8 +256,8 @@ def _revalidate_report_ir(ir: ReportIR) -> ReportIR:
             value = tuple(
                 cast(
                     ReportSection,
-                    _share_validated_strings(
-                        ReportSection.model_validate_json(section.model_dump_json(), strict=True),
+                    share_validated_strings(
+                        ReportSection.model_validate_json(section.model_dump_json(), strict=strict),
                         section,
                         strings,
                     ),
@@ -251,11 +269,11 @@ def _revalidate_report_ir(ir: ReportIR) -> ReportIR:
             and type(ir.claim_basis_links) is tuple
             and all(type(link) is ClaimBasisLink for link in ir.claim_basis_links)
         ):
-            value = _snapshot_basis_links(ir.claim_basis_links, basis)
+            value = _snapshot_basis_links(ir.claim_basis_links, basis, strict=strict)
         elif name == "citation_registry" and type(ir.citation_registry) is CitationRegistry:
-            value = _snapshot_citation_registry(ir.citation_registry, basis)
+            value = _snapshot_citation_registry(ir.citation_registry, basis, strict=strict)
         else:
-            field = schema.model_validate_json(ir.model_dump_json(include={name}), strict=True)
+            field = schema.model_validate_json(ir.model_dump_json(include={name}), strict=strict)
             value = getattr(field, name)
             del field
         if name == "material_claims":
@@ -268,7 +286,7 @@ def _revalidate_report_ir(ir: ReportIR) -> ReportIR:
             if value == projected:
                 value = projected
         values[name] = value
-    return ReportIR.model_validate(values, strict=True)
+    return ReportIR.model_validate(values, strict=strict)
 
 
 class CompiledAssessmentReport(ReportScoped):
@@ -282,6 +300,45 @@ class CompiledAssessmentReport(ReportScoped):
     configuration_refs: tuple[NonBlank, ...]
     execution_refs: tuple[NonBlank, ...]
     accepted_at: UTCDateTime
+
+
+# Schemas only; each proposal is independently serialized and revalidated.
+_COMPILED_FIELD_MODELS: dict[str, type[BaseModel]] = {
+    name: create_model(
+        "_CompiledReportField_" + name,
+        __config__=CompiledAssessmentReport.model_config,
+        **cast(dict[str, Any], {name: (field.annotation, field)}),
+    )
+    for name, field in CompiledAssessmentReport.model_fields.items()
+}
+
+
+def snapshot_compiled_report(report: CompiledAssessmentReport) -> CompiledAssessmentReport:
+    """The original JSON boundary, with only one field/section wire retained.
+
+    Preserve the original default coercion policy, including explicitly strict
+    nested fields. Closed models have no JSON-specific root transform. Unknown
+    subclasses and missing fields retain the original enclosing roundtrip.
+    Native authority validation remains the repository's responsibility.
+    """
+    if (
+        type(report) is not CompiledAssessmentReport
+        or any(
+            name not in report.__dict__
+            for name, field in CompiledAssessmentReport.model_fields.items()
+            if field.is_required()
+        )
+        or type(report.ir) is not ReportIR
+    ):
+        return CompiledAssessmentReport.model_validate_json(report.model_dump_json())
+    values: dict[str, object] = {}
+    for name, schema in _COMPILED_FIELD_MODELS.items():
+        if name == "ir":
+            values[name] = _revalidate_report_ir(report.ir, strict=None)
+        else:
+            field = schema.model_validate_json(report.model_dump_json(include={name}))
+            values[name] = getattr(field, name)
+    return CompiledAssessmentReport.model_validate(values)
 
 
 def report_id(report: CompiledAssessmentReport) -> str:
@@ -531,10 +588,10 @@ def _validated_ir_artifacts(
     identities: set[str] = set()
     for proposed in artifacts:
         artifact = ReportArtifact.model_validate_json(proposed.model_dump_json(), strict=True)
-        artifact = cast(ReportArtifact, _share_validated_strings(artifact, proposed, strings))
+        artifact = cast(ReportArtifact, share_validated_strings(artifact, proposed, strings))
         if (
             artifact.artifact_id in identities
-            or artifact.artifact_id != _report_artifact_id_from_snapshot(artifact)
+            or artifact.artifact_id != report_artifact_snapshot_id(artifact)
             or (artifact.scope, artifact.compilation_id)
             != (compilation.scope, compilation.compilation_id)
         ):
@@ -775,3 +832,7 @@ def validate_report_ir(
         raise ReportProposalError(
             "IR differs from exact frozen projections, actual proofs or deterministic summary"
         )
+
+
+# Preserve the prepared internal entrypoint; snapshots never confer authority.
+_revalidate_compiled_report = snapshot_compiled_report

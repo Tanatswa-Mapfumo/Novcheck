@@ -22,7 +22,7 @@ def canonical_json_digest(value: JsonValue) -> str:
     return digest.hexdigest()
 
 
-def _share_validated_strings(
+def share_validated_strings(
     value: object, original: object, strings: dict[str, str] | None = None
 ) -> object:
     """Reuse equal immutable strings only AFTER a complete schema validation.
@@ -34,8 +34,8 @@ def _share_validated_strings(
     if strings is None:
         strings = {}
     if type(value) is str:
-        text = cast(str, value)
-        selected = cast(str, original) if type(original) is str and original == text else text
+        text = value
+        selected = original if type(original) is str and original == text else text
         return strings.setdefault(selected, selected)
     if type(value) is not type(original):
         return value
@@ -44,33 +44,37 @@ def _share_validated_strings(
         updates: dict[str, object] = {}
         for name in type(value).model_fields:
             validated = getattr(value, name)
-            shared = _share_validated_strings(validated, getattr(source, name, None), strings)
+            shared = share_validated_strings(validated, getattr(source, name, None), strings)
             if shared is not validated:
                 updates[name] = shared
         return value.model_copy(update=updates) if updates else value
     if type(value) is tuple:
         items, source_items = cast(tuple[object, ...], value), cast(tuple[object, ...], original)
         if len(items) != len(source_items):
-            return value
+            return items
         return tuple(
-            _share_validated_strings(item, source, strings)
+            share_validated_strings(item, source, strings)
             for item, source in zip(items, source_items, strict=True)
         )
     if type(value) is list:
         items, source_items = cast(list[object], value), cast(list[object], original)
         if len(items) != len(source_items):
-            return value
+            return items
         return [
-            _share_validated_strings(item, source, strings)
+            share_validated_strings(item, source, strings)
             for item, source in zip(items, source_items, strict=True)
         ]
     if type(value) is dict:
         mapping = cast(dict[object, object], value)
         source_mapping = cast(dict[object, object], original)
         if not all(type(key) is str for key in source_mapping):
-            return value
+            return mapping
         return {
-            key: _share_validated_strings(item, source_mapping.get(key), strings)
+            key: share_validated_strings(item, source_mapping.get(key), strings)
             for key, item in mapping.items()
         }
     return value
+
+
+# Preserve the existing internal name; neither entrypoint certifies authority.
+_share_validated_strings = share_validated_strings

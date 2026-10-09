@@ -1,8 +1,13 @@
 """Deterministic inert exports of one report; rendition bytes confer no authority."""
 
+import codecs
+import hashlib
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
+from mmap import ACCESS_READ, mmap
+from tempfile import TemporaryFile
 from typing import Literal, cast
 
 import yaml
@@ -11,7 +16,11 @@ from pydantic import JsonValue
 from novelty_harness.domain.reporting import CANONICAL_QUESTIONS
 from novelty_harness.reporting.citations import ReportCitation, resolve_citation_link
 from novelty_harness.reporting.drafts import DraftBlock
-from novelty_harness.reporting.ir import CompiledAssessmentReport, report_id
+from novelty_harness.reporting.ir import (
+    CompiledAssessmentReport,
+    report_id,
+    snapshot_compiled_report,
+)
 from novelty_harness.reporting.models import ReportProposalError, ReportScope
 from novelty_harness.runtime.tracing.hashing import canonical_hash, canonical_json
 
@@ -319,23 +328,65 @@ def _markdown(report: CompiledAssessmentReport) -> str:
 
 
 def _digest(report: CompiledAssessmentReport, version: str, kind: str, content: str) -> str:
-    return canonical_hash(
-        {
-            "report_id": report.report_id,
-            "renderer_version": version,
-            "format": kind,
-            "content": content,
-        }
-    )
+    metadata: dict[str, JsonValue] = {
+        "report_id": report.report_id,
+        "renderer_version": version,
+        "format": kind,
+    }
+    if type(content) is not str:
+        # Preserve the generic encoder's behavior outside this private helper's
+        # declared text contract. Do not coerce caller values into report text.
+        return canonical_hash({**metadata, "content": content})
+    digest = hashlib.sha256(b'{"content":"')
+    for offset in range(0, len(content), 65536):
+        # Encode complete Unicode code points with the original standard JSON
+        # string encoder. Removing only each chunk's quotes preserves escaping,
+        # including astral code points, control characters and lone surrogates.
+        encoded = json.encoder.encode_basestring_ascii(content[offset : offset + 65536])
+        digest.update(encoded[1:-1].encode("utf-8"))
+    digest.update(b'",')
+    # Sorted canonical metadata follows the lexically first content key. Keep
+    # the existing encoder for every remaining value and its finite/type rules.
+    digest.update(canonical_json(metadata).encode("utf-8")[1:])
+    return digest.hexdigest()
 
 
-def render_compiled_report(
-    report: CompiledAssessmentReport, *, renderer_version: str = "p8-render-v1"
-) -> ReportRenditions:
+def _rendition_payload(report: CompiledAssessmentReport, json_text: str) -> JsonValue:
+    """Project the renderer's revalidated closed report without parsing text twice.
+
+    JSON-mode serializers produce the same scalar/container projection as its
+    canonical JSON; strings are immutable, and dumped containers are private.
+    Preserve the previous parser path for unknown standalone subclasses.
+    """
+    if type(report) is not CompiledAssessmentReport:
+        return cast(JsonValue, json.loads(json_text))
+    return cast(JsonValue, report.model_dump(mode="json"))
+
+
+def _yaml_text(payload: JsonValue) -> str:
+    # Use the same SafeDumper and options. Its nodes/emitter are disposed before
+    # reading the completed output, so a complete StringIO and the final text
+    # do not coexist with those temporary representations. The private unnamed
+    # file closes on emission, I/O or read failure; no rendition path is exposed.
+    with TemporaryFile(mode="w+t", encoding="utf-16-le", newline="") as stream:
+        yaml.safe_dump(
+            payload, stream=stream, allow_unicode=True, sort_keys=True, default_flow_style=False
+        )
+        stream.flush()
+        # Decode the read-only buffer directly. The private UTF-16 code units
+        # avoid a complete UTF-8 bytes buffer and its variable-width decoder
+        # over-allocation. Returned text and externally written bytes stay exact.
+        with mmap(stream.fileno(), 0, access=ACCESS_READ) as encoded:
+            return codecs.decode(encoded, "utf-16-le")
+
+
+def _validated_render_report(
+    report: CompiledAssessmentReport, renderer_version: str
+) -> CompiledAssessmentReport:
     if renderer_version != "p8-render-v1":
         raise ReportProposalError("unknown or withdrawn report renderer")
     try:
-        report = CompiledAssessmentReport.model_validate_json(report.model_dump_json())
+        report = snapshot_compiled_report(report)
     except ValueError as error:
         raise ReportProposalError("rendered report fails strict serialization") from error
     if (
@@ -349,29 +400,105 @@ def render_compiled_report(
         or tuple(s.question_label for s in report.ir.sections) != CANONICAL_QUESTIONS
     ):
         raise ReportProposalError("rendered report lacks exact canonical questions")
+    return report
+
+
+def _rendition_parts(
+    report: CompiledAssessmentReport, renderer_version: str
+) -> Iterator[tuple[str, str, str]]:
+    """Render every exact format from the private serialized snapshot in order."""
     json_text = canonical_json(report)
-    payload = cast(JsonValue, json.loads(json_text))
-    yaml_text = yaml.safe_dump(
-        payload, allow_unicode=True, sort_keys=True, default_flow_style=False
-    )
+    yield "json", json_text, _digest(report, renderer_version, "json", json_text)
+    payload = _rendition_payload(report, json_text)
+    del json_text
+    yaml_text = _yaml_text(payload)
+    del payload
+    yield "yaml", yaml_text, _digest(report, renderer_version, "yaml", yaml_text)
+    del yaml_text
     markdown = _markdown(report)
+    yield "markdown", markdown, _digest(report, renderer_version, "markdown", markdown)
+
+
+def render_compiled_report(
+    report: CompiledAssessmentReport, *, renderer_version: str = "p8-render-v1"
+) -> ReportRenditions:
+    report = _validated_render_report(report, renderer_version)
+    formats = {
+        kind: (text, digest) for kind, text, digest in _rendition_parts(report, renderer_version)
+    }
     return ReportRenditions(
         scope=report.scope,
         compilation_id=report.compilation_id,
-        json=json_text,
-        yaml=yaml_text,
-        markdown=markdown,
-        json_digest=_digest(report, renderer_version, "json", json_text),
-        yaml_digest=_digest(report, renderer_version, "yaml", yaml_text),
-        markdown_digest=_digest(report, renderer_version, "markdown", markdown),
+        json=formats["json"][0],
+        yaml=formats["yaml"][0],
+        markdown=formats["markdown"][0],
+        json_digest=formats["json"][1],
+        yaml_digest=formats["yaml"][1],
+        markdown_digest=formats["markdown"][1],
         renderer_version=renderer_version,
     )
+
+
+def _expected_json_matches(
+    report: CompiledAssessmentReport, version: str, content: str, identity: str
+) -> bool:
+    """Compare every expected canonical character and exact digest in chunks."""
+    if type(content) is not str:
+        expected = canonical_json(report)
+        return content == expected and identity == _digest(report, version, "json", expected)
+    encoder = json.JSONEncoder(
+        sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    )
+    digest = hashlib.sha256(b'{"content":"')
+    offset, same = 0, True
+    # The private strict closed report's JSON-mode projection is the exact
+    # canonical scalar/container projection, independently differential-tested.
+    for chunk in encoder.iterencode(report.model_dump(mode="json")):
+        end = offset + len(chunk)
+        same = (content[offset:end] == chunk) and same
+        offset = end
+        escaped = json.encoder.encode_basestring_ascii(chunk)
+        digest.update(escaped[1:-1].encode("utf-8"))
+    digest.update(b'",')
+    metadata: dict[str, JsonValue] = {
+        "report_id": report.report_id,
+        "renderer_version": version,
+        "format": "json",
+    }
+    digest.update(canonical_json(metadata).encode("utf-8")[1:])
+    return same and offset == len(content) and identity == digest.hexdigest()
 
 
 def validate_rendition_parity(
     report: CompiledAssessmentReport, renditions: ReportRenditions
 ) -> None:
-    expected = render_compiled_report(report, renderer_version=renditions.renderer_version)
+    validated = _validated_render_report(report, renditions.renderer_version)
+    json_same = _expected_json_matches(
+        validated, renditions.renderer_version, renditions.json, renditions.json_digest
+    )
+    same = (
+        json_same
+        and type(renditions) is ReportRenditions
+        and renditions.scope == validated.scope
+        and renditions.compilation_id == validated.compilation_id
+        and renditions.contract_kind == "phase8-report-renditions-v1"
+    )
+    # Compare every exact expected string and digest, releasing each before the
+    # next format. Retain a boolean, never a complete second rendition bundle.
+    for kind in ("yaml", "markdown"):
+        text = (
+            _yaml_text(cast(JsonValue, validated.model_dump(mode="json")))
+            if kind == "yaml"
+            else _markdown(validated)
+        )
+        digest = _digest(validated, renditions.renderer_version, kind, text)
+        same = (
+            getattr(renditions, kind) == text and getattr(renditions, kind + "_digest") == digest
+        ) and same
+        del text, digest
+    del validated
+    # Both original safe parses and complete visible mapping equality remain
+    # mandatory even when an earlier byte/digest/metadata comparison differed.
     try:
         json_value = json.loads(renditions.json)
         yaml_value = yaml.safe_load(renditions.yaml)
@@ -379,9 +506,5 @@ def validate_rendition_parity(
         raise ReportProposalError(
             "report rendition is not safe structured serialization"
         ) from error
-    if (
-        json_value != report.model_dump(mode="json")
-        or yaml_value != json_value
-        or renditions != expected
-    ):
+    if json_value != report.model_dump(mode="json") or yaml_value != json_value or not same:
         raise ReportProposalError("report rendition omits or changes canonical visible content")

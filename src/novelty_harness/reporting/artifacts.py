@@ -239,10 +239,10 @@ def compilation_id(key: str, attempt_token: str) -> str:
 
 def report_artifact_id(artifact: ReportArtifact) -> str:
     artifact = ReportArtifact.model_validate(artifact.model_dump(mode="json"))
-    return _report_artifact_id_from_snapshot(artifact)
+    return report_artifact_snapshot_id(artifact)
 
 
-def _report_artifact_id_from_snapshot(artifact: ReportArtifact) -> str:
+def report_artifact_snapshot_id(artifact: ReportArtifact) -> str:
     """Hash a private reparsed snapshot; callers must validate before entering.
 
     Public identity calculation and the IR boundary each reparse untrusted
@@ -312,10 +312,21 @@ def make_report_artifact(
 def report_artifact_semantic_content(artifact: ReportArtifact) -> dict[str, JsonValue]:
     """Exact replay ignores only observations and preserves the stored original."""
     content = artifact.model_dump(mode="json")
-    document = cast(dict[str, JsonValue], content["document"])
+    # Closed native documents use the already dumped projection. Preserve the
+    # original standalone serializer for unsupported caller subclasses; this
+    # helper is not a validation or authority boundary.
+    document = (
+        cast(dict[str, JsonValue], content["document"])
+        if type(artifact.document) in _DOCUMENT_KINDS
+        else artifact.document.model_dump(mode="json")
+    )
     if isinstance(artifact.document, ReportExecutionRecord):
         document.pop("observations")
     elif isinstance(artifact.document, ReportStatusEvent):
         document.pop("observed_at")
     content["document"] = document
     return content
+
+
+# Backward-compatible internal alias for the already validated snapshot helper.
+_report_artifact_id_from_snapshot = report_artifact_snapshot_id

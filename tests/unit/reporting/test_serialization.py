@@ -218,3 +218,20 @@ def test_validated_string_pool_has_operation_local_lifetime():
     second_shared = _share_validated_strings(second, second)
     assert first_shared is first
     assert second_shared is second
+
+
+def test_artifact_semantic_projection_preserves_standalone_subclass_wire():
+    from novelty_harness.reporting.artifacts import (
+        ReportStatusEvent,
+        report_artifact_semantic_content,
+    )
+
+    class ExtraStatus(ReportStatusEvent):
+        extra_prose: str = "standalone caller projection retains this field"
+
+    _, artifacts = _status_artifacts()
+    extra = ExtraStatus.model_validate(artifacts[0].document.model_dump())
+    proposed = artifacts[0].model_copy(update={"document": extra})
+    expected = proposed.model_dump(mode="json")
+    expected["document"] = extra.model_dump(mode="json", exclude={"observed_at"})
+    assert report_artifact_semantic_content(proposed) == expected

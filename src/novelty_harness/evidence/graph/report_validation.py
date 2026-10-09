@@ -11,7 +11,12 @@ from novelty_harness.reporting.artifacts import (
     ReportStatusEvent,
 )
 from novelty_harness.reporting.bundle import ReportInputBundle
-from novelty_harness.reporting.ir import CompiledAssessmentReport, report_id, validate_report_ir
+from novelty_harness.reporting.ir import (
+    CompiledAssessmentReport,
+    report_id,
+    snapshot_compiled_report,
+    validate_report_ir,
+)
 from novelty_harness.reporting.rendering import render_compiled_report, validate_rendition_parity
 from novelty_harness.reporting.repository import ReportAuthorityError
 
@@ -86,4 +91,4 @@ def validate_compiled_report_in_session(
 def _revalidate_proposal(value: object) -> CompiledAssessmentReport:
     if not isinstance(value, CompiledAssessmentReport):
         raise ReportAuthorityError("an export or caller receipt is not a compiled proposal")
-    return CompiledAssessmentReport.model_validate_json(value.model_dump_json())
+    return snapshot_compiled_report(value)

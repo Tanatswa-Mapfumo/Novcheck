@@ -328,3 +328,32 @@ def test_ir_roundtrip_bounds_section_array_wire_retention(record_property):
         actual.model_dump_json()
         == ReportIR.model_validate_json(proposed.model_dump_json(), strict=True).model_dump_json()
     )
+
+
+@pytest.mark.parametrize("field", ["sections", "claim_basis_links", "citation_registry"])
+def test_ir_missing_required_caller_fields_keep_strict_rejection(field):
+    from novelty_harness.reporting.ir import _revalidate_report_ir, validate_report_ir
+    from novelty_harness.reporting.models import ReportProposalError
+
+    proposed = shape_ir()
+    proposed.__dict__.pop(field)  # Deliberately malformed untrusted caller.
+    with pytest.raises(ValidationError):
+        ReportIR.model_validate_json(proposed.model_dump_json(), strict=True)
+    with pytest.raises(ValidationError):
+        _revalidate_report_ir(proposed)
+    with pytest.raises(ReportProposalError, match="strict serialized validation"):
+        validate_report_ir(proposed, None, None, ())
+
+
+def test_ir_missing_nested_citation_basis_keeps_strict_rejection():
+    from novelty_harness.reporting.ir import _revalidate_report_ir, validate_report_ir
+    from novelty_harness.reporting.models import ReportProposalError
+
+    proposed = shape_ir()
+    proposed.citation_registry.__dict__.pop("claim_basis_links")
+    with pytest.raises(ValidationError):
+        ReportIR.model_validate_json(proposed.model_dump_json(), strict=True)
+    with pytest.raises(ValidationError):
+        _revalidate_report_ir(proposed)
+    with pytest.raises(ReportProposalError, match="strict serialized validation"):
+        validate_report_ir(proposed, None, None, ())

@@ -1,10 +1,10 @@
 """Deterministic passage ancestry and inert links; citations do not prove meaning."""
 
 from datetime import date
-from typing import Literal
+from typing import Any, Literal, cast
 from urllib.parse import quote, urlsplit
 
-from pydantic import Field, JsonValue
+from pydantic import BaseModel, Field, JsonValue, create_model
 
 from novelty_harness.domain.base import UTCDateTime
 from novelty_harness.domain.ids import ClassificationId, PassageId, SourceId, SourceVersionId
@@ -19,6 +19,7 @@ from novelty_harness.reporting.models import (
     ReportProposalError,
     ReportScoped,
 )
+from novelty_harness.reporting.serialization import share_validated_strings
 from novelty_harness.reporting.verification import VerifiedSection, section_extraction
 from novelty_harness.runtime.tracing.hashing import canonical_hash
 
@@ -51,6 +52,58 @@ class CitationRegistry(ReportScoped):
     method_version: Literal["p8-citations-v1"] = "p8-citations-v1"
     citations: tuple[ReportCitation, ...]
     claim_basis_links: tuple[ClaimBasisLink, ...]
+
+
+# Schemas only: no content or native authority is cached across operations.
+_CITATION_SNAPSHOT_FIELDS: dict[str, type[BaseModel]] = {
+    name: create_model(
+        "_CitationSnapshotField_" + name,
+        __config__=CitationRegistry.model_config,
+        **cast(dict[str, Any], {name: (field.annotation, field)}),
+    )
+    for name, field in CitationRegistry.model_fields.items()
+}
+
+
+def _revalidate_citation_registry(registry: CitationRegistry) -> CitationRegistry:
+    """Preserve the strict wire contract with one basis occurrence in flight.
+
+    The closed registry has no JSON-specific root transform. Subclasses keep
+    the original complete roundtrip, including rejection of serialized extras.
+    Every basis occurrence parses before equal immutable text may be shared;
+    duplicates, order and differing propositions remain available for rejection.
+    """
+    if type(registry) is not CitationRegistry or any(
+        name not in registry.__dict__
+        for name, field in CitationRegistry.model_fields.items()
+        if field.is_required()
+    ):
+        return CitationRegistry.model_validate_json(registry.model_dump_json(), strict=True)
+    values: dict[str, object] = {}
+    strings: dict[str, str] = {}
+    for name, schema in _CITATION_SNAPSHOT_FIELDS.items():
+        if (
+            name == "claim_basis_links"
+            and type(registry.claim_basis_links) is tuple
+            and all(type(link) is ClaimBasisLink for link in registry.claim_basis_links)
+        ):
+            values[name] = tuple(
+                cast(
+                    ClaimBasisLink,
+                    share_validated_strings(
+                        ClaimBasisLink.model_validate_json(link.model_dump_json(), strict=True),
+                        link,
+                        strings,
+                    ),
+                )
+                for link in registry.claim_basis_links
+            )
+        else:
+            field = schema.model_validate_json(
+                registry.model_dump_json(include={name}), strict=True
+            )
+            values[name] = getattr(field, name)
+    return CitationRegistry.model_validate(values, strict=True)
 
 
 def report_citation_id(citation: ReportCitation) -> str:
@@ -309,7 +362,7 @@ def validate_citation_registry(
     registry: CitationRegistry, sections: tuple[VerifiedSection, ...], bundle: ReportInputBundle
 ) -> None:
     try:
-        registry = CitationRegistry.model_validate_json(registry.model_dump_json(), strict=True)
+        registry = _revalidate_citation_registry(registry)
     except ValueError as error:
         raise ReportProposalError("citation registry fails serialized validation") from error
     if registry != build_citation_registry(sections, bundle):
