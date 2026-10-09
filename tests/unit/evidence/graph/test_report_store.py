@@ -1,5 +1,7 @@
 """Report persistence starts with additive migration, never authority backfill."""
 
+from contextlib import closing
+
 import pytest
 from sqlalchemy import event, inspect, text
 from sqlalchemy.exc import IntegrityError
@@ -615,7 +617,10 @@ def _report_candidate(case, *, token="candidate", failed=False, generative=False
         snapshot, compilation_id, serialized = cached
         # No open transaction is retained across the SQLite backup.
         case.repository.engine.dispose()
-        with sqlite3.connect(snapshot) as source, sqlite3.connect(database) as target:
+        with (
+            closing(sqlite3.connect(snapshot)) as source,
+            closing(sqlite3.connect(database)) as target,
+        ):
             source.backup(target)
         artifacts = case.repository.load_report_artifacts(compilation_id)
         with Session(case.repository.engine) as session:
@@ -629,7 +634,10 @@ def _report_candidate(case, *, token="candidate", failed=False, generative=False
     )
     if empty:
         snapshot = database.with_name("preacceptance-" + compilation.compilation_id + ".db")
-        with sqlite3.connect(database) as source, sqlite3.connect(snapshot) as target:
+        with (
+            closing(sqlite3.connect(database)) as source,
+            closing(sqlite3.connect(snapshot)) as target,
+        ):
             source.backup(target)
         _candidate_snapshots[key] = (
             snapshot,
@@ -895,7 +903,10 @@ def _accepted_report(case, *, failed=False, generative=False):
     if cached is not None and all(n == 0 for n in _report_counts(case.repository).values()):
         snapshot, serialized = cached
         case.repository.engine.dispose()
-        with sqlite3.connect(snapshot) as source, sqlite3.connect(database) as target:
+        with (
+            closing(sqlite3.connect(snapshot)) as source,
+            closing(sqlite3.connect(database)) as target,
+        ):
             source.backup(target)
         return CompiledAssessmentReport.model_validate_json(serialized)
     compilation, proposed, _ = _report_candidate(case, failed=failed, generative=generative)
@@ -908,7 +919,7 @@ def _accepted_report(case, *, failed=False, generative=False):
         row = session.get(CompiledReportRow, proposed.report_id)
         accepted = CompiledAssessmentReport.model_validate_json(row.document_json)
     snapshot = database.with_name("accepted-" + accepted.report_id + ".db")
-    with sqlite3.connect(database) as source, sqlite3.connect(snapshot) as target:
+    with closing(sqlite3.connect(database)) as source, closing(sqlite3.connect(snapshot)) as target:
         source.backup(target)
     _accepted_snapshots[key] = snapshot, accepted.model_dump_json()
     return accepted

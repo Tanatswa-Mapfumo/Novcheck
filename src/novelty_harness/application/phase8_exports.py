@@ -3,6 +3,8 @@
 import logging
 from pathlib import Path
 
+from pydantic import JsonValue
+
 from novelty_harness.domain.enums import AssessmentStage, TraceStatus
 from novelty_harness.domain.ids import AssessmentId
 from novelty_harness.reporting.ir import CompiledAssessmentReport
@@ -30,7 +32,7 @@ def export_compiled_report(
     renditions: ReportRenditions | None = None
     directory = f"reports/{report.report_id}"
     paths: list[Path] = []
-    completed: list[str] = []
+    completed: list[JsonValue] = []
     try:
         renditions = render_compiled_report(report)
         for format_name, filename, content in (
@@ -54,14 +56,14 @@ def export_compiled_report(
 def _trace_export(
     report: CompiledAssessmentReport,
     renditions: ReportRenditions | None,
-    completed: list[str],
+    completed: list[JsonValue],
     sink: TraceSink,
     *,
     failed: bool,
 ) -> None:
     # Export/trace delivery never certifies authority or changes report identity.
     reason = "REPORT_EXPORT_FAILED" if failed else "REPORT_EXPORT_COMPLETE"
-    digests = (
+    digests: list[JsonValue] | None = (
         [renditions.json_digest, renditions.yaml_digest, renditions.markdown_digest]
         if renditions is not None
         else None

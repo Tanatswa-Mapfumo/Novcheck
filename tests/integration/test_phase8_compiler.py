@@ -757,3 +757,83 @@ def test_begin_and_resume_trace_precedes_semantic_dispatch(
 
     finally:
         case.repository.close()
+
+
+@pytest.mark.parametrize("planner_fails", [False, True])
+def test_native_trace_retry_preserves_committed_execution_without_dispatch(tmp_path, planner_fails):
+    """Native execution delivery needs no accepted report or another semantic call."""
+    from novelty_harness.application.phase8_tracing import publish_report_events
+    from novelty_harness.domain.enums import TraceStatus
+    from novelty_harness.reporting.execution import ReportExecutionRecord
+    from novelty_harness.runtime.tracing.sinks import InMemoryTraceSink
+    from tests.unit.evidence.graph.test_report_store import _report_counts
+
+    case = make_report_scenario(tmp_path, "POTENTIAL")
+    try:
+        before_upstream = upstream_rows(case)
+        planner = RecordedCompilerPort(failures={"plan"} if planner_fails else ())
+        repository = ObservedRepository(
+            case, port=planner, crash_after=(ReportArtifactKind.EXECUTION, None)
+        )
+        with pytest.raises(SimulatedCrash):
+            compile_report(
+                case,
+                token="native-trace-execution-retry",
+                ports=ReportPorts(planner=planner),
+                options=generous_options(),
+                repository=repository,
+            )
+        assert planner.calls == [("plan", None)]
+        with case.repository.engine.connect() as connection:
+            compilation_id = connection.exec_driver_sql(
+                "SELECT compilation_id FROM report_compilations"
+            ).scalar_one()
+        committed = case.repository.load_report_artifacts(compilation_id)
+        executions = [a for a in committed if isinstance(a.document, ReportExecutionRecord)]
+        assert len(executions) == 1
+        execution = executions[0]
+        expected_outcome = "PROVIDER_FAILURE" if planner_fails else "VALIDATED"
+        assert execution.document.outcome == expected_outcome
+        assert not any(a.kind == ReportArtifactKind.PLAN for a in committed)
+        before_counts = _report_counts(case.repository)
+        assert before_counts["compiled_reports"] == before_counts["report_dependencies"] == 0
+        calls = tuple(planner.calls)
+
+        class FailingExecutionSink(InMemoryTraceSink):
+            def emit(self, event):
+                super().emit(event)
+                if event.data.get("artifact_id") == execution.artifact_id:
+                    raise OSError("recorded execution trace delivery failure")
+
+        failed_sink = FailingExecutionSink()
+        failed = publish_report_events(compilation_id, repository=case.repository, sink=failed_sink)
+        events = failed_sink.events
+        load = events[0]
+        assert load.reason_code == "REPORT_ATTEMPT_RELOADED"
+        assert load.data["current_state"] == "STARTED"
+        assert set(load.data["committed_artifact_ids"]) == {a.artifact_id for a in committed}
+        projected = next(e for e in events if e.data.get("artifact_id") == execution.artifact_id)
+        assert failed == (projected.event_id,)
+        assert projected.reason_code == "REPORT_EXECUTION_" + expected_outcome
+        assert projected.status == (TraceStatus.FAILURE if planner_fails else TraceStatus.SUCCESS)
+        assert projected.request_hash == execution.document.request_hash
+        assert projected.response_hash == execution.document.raw_response_hash
+        assert projected.data["proposal_hash"] == execution.document.validated_proposal_hash
+        assert projected.data["instruction_hash"] == execution.document.actual_instruction_hash
+        assert projected.data["configuration_id"] == execution.document.configuration_id
+        assert projected.data["invocation_id"] == execution.document.invocation_id
+        assert all(e.data["compilation_id"] == compilation_id for e in events)
+        assert all(e.assessment_id == case.bundle.scope.assessment_id for e in events)
+        assert not any(e.reason_code == "REPORT_ACCEPTED_REPORT_RELOADED" for e in events)
+        for _ in range(2):
+            sink = InMemoryTraceSink()
+            assert (
+                publish_report_events(compilation_id, repository=case.repository, sink=sink) == ()
+            )
+            assert sink.events == events
+            assert tuple(planner.calls) == calls
+            assert case.repository.load_report_artifacts(compilation_id) == committed
+            assert _report_counts(case.repository) == before_counts
+            assert upstream_rows(case) == before_upstream
+    finally:
+        case.repository.close()

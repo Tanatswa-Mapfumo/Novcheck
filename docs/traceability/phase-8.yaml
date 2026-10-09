@@ -511,6 +511,7 @@ inherited_requirements:
     test_selectors:
       - "tests/adversarial/test_phase8_authority_semantics.py::test_report_success_trace_follows_commit_and_cannot_authorize_text"
       - "tests/integration/test_phase8_compiler.py::test_begin_and_resume_trace_precedes_semantic_dispatch"
+      - "tests/integration/test_phase8_compiler.py::test_native_trace_retry_preserves_committed_execution_without_dispatch"
       - "tests/unit/test_phase8_tracing.py::test_attempt_reload_projects_complete_committed_closure_with_stable_retry_id"
       - "tests/unit/test_phase8_tracing.py::test_attempt_reload_sink_failure_preserves_artifact_delivery"
     verification: "PENDING_FULL_NATIVE_DELIVERY_RESUME_AND_CITATION_GATE"
