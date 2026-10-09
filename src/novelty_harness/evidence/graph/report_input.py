@@ -45,6 +45,7 @@ from novelty_harness.reporting.bundle import (
 from novelty_harness.reporting.models import (
     AuthorityKind,
     AuthorityRef,
+    BundlePolicyVersion,
     ReportDependency,
     ReportScope,
     authority_dependency_id,
@@ -68,11 +69,17 @@ def load_report_input_bundle_in_session(
     assessment_id: AssessmentId,
     *,
     adjudication_id: str,
+    bundle_version: BundlePolicyVersion = "p8-bundle-v2",
 ) -> ReportInputBundle:
     """Reuse upstream validation; this reader has no mutation or semantic capabilities."""
     try:
+        if bundle_version not in ("p8-bundle-v1", "p8-bundle-v2"):
+            raise ReportAuthorityError("report bundle policy is unsupported")
         frozen = load_frozen_adjudication_in_session(
-            session, load_view_in_session, assessment_id, adjudication_id=adjudication_id
+            session,
+            load_view_in_session,
+            assessment_id,
+            adjudication_id=adjudication_id,
         )
         load_view = partial(load_view_in_session, session)
         context = load_phase7_context_in_session(
@@ -272,6 +279,12 @@ def load_report_input_bundle_in_session(
             for identity, ref in sorted(refs.items())
         )
         bundle = ReportInputBundle(
+            contract_kind=(
+                "phase8-report-input-bundle-v1"
+                if bundle_version == "p8-bundle-v1"
+                else "phase8-report-input-bundle-v2"
+            ),
+            bundle_version=bundle_version,
             scope=scope,
             as_of=view.as_of,
             bundle_digest="0" * 64,
@@ -341,11 +354,16 @@ def load_report_input_bundle(
     assessment_id: AssessmentId,
     *,
     adjudication_id: str,
+    bundle_version: BundlePolicyVersion = "p8-bundle-v2",
 ) -> ReportInputBundle:
     with Session(engine) as session:
         session.connection().exec_driver_sql("BEGIN")
         bundle = load_report_input_bundle_in_session(
-            session, load_view_in_session, assessment_id, adjudication_id=adjudication_id
+            session,
+            load_view_in_session,
+            assessment_id,
+            adjudication_id=adjudication_id,
+            bundle_version=bundle_version,
         )
         session.commit()
         return bundle

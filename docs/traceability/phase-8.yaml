@@ -38,6 +38,9 @@ requirements:
       - "evidence/graph/report_store.py"
     test_selectors:
       - "tests/unit/reporting/test_bundle.py::test_bundle_revalidates_one_exact_authority_closure"
+      - "tests/unit/reporting/test_bundle_identity.py::test_real_native_bundle_digest_is_stable_across_process_hash_seeds"
+      - "tests/unit/reporting/test_bundle_policy.py::test_native_v1_and_v2_preserve_full_projection_and_original_v1_algorithm"
+      - "tests/unit/reporting/test_bundle_policy.py::test_bundle_policy_rejects_missing_ambiguous_or_unapproved_registry"
       - "tests/integration/test_phase8_slice.py::test_fixture_report_cannot_masquerade_as_real_report"
   -
     id: "RPT-02"
@@ -296,6 +299,9 @@ requirements:
     test_selectors:
       - "tests/integration/test_phase8_compiler.py::test_all_semantic_ports_unavailable_produces_full_report"
       - "tests/unit/reporting/test_fallback.py::test_fallback_alone_answers_all_nine_questions_without_inventing_value"
+      - "tests/unit/reporting/test_record_projection_policy.py::test_v2_record_projection_is_stable_across_hash_seeds_and_retains_order"
+      - "tests/unit/reporting/test_record_projection_policy.py::test_legacy_record_projection_keeps_original_json_mode_bytes"
+      - "tests/unit/reporting/test_record_projection_policy.py::test_v2_projection_retains_json_field_serializers_and_all_nested_values"
       - "tests/golden/test_phase8_reports.py::test_fallback_real_scenario_golden"
   -
     id: "RPT-20"
@@ -492,6 +498,8 @@ inherited_requirements:
       - "tests/unit/test_phase8_architecture_guards.py"
       - "tests/unit/test_import_boundaries.py"
       - "tests/unit/reporting/test_rendering.py"
+    test_selectors:
+      - "tests/unit/reporting/test_execution.py::test_prompt_injection_and_fake_verifier_instruction_are_untrusted"
     verification: "PENDING_FULL_SECURITY_AND_ADVERSARIAL_GATE"
   -
     ids:
@@ -502,7 +510,10 @@ inherited_requirements:
       - "application/phase8_exports.py"
     test_selectors:
       - "tests/adversarial/test_phase8_authority_semantics.py::test_report_success_trace_follows_commit_and_cannot_authorize_text"
-    verification: "PENDING_NATIVE_DELIVERY_RESUME_AND_CITATION_GATE"
+      - "tests/integration/test_phase8_compiler.py::test_begin_and_resume_trace_precedes_semantic_dispatch"
+      - "tests/unit/test_phase8_tracing.py::test_attempt_reload_projects_complete_committed_closure_with_stable_retry_id"
+      - "tests/unit/test_phase8_tracing.py::test_attempt_reload_sink_failure_preserves_artifact_delivery"
+    verification: "PENDING_FULL_NATIVE_DELIVERY_RESUME_AND_CITATION_GATE"
 versions:
   approved_registry: "p8-approved-methods-v1"
   semantic:
@@ -520,8 +531,10 @@ versions:
     - "p8-render-v1"
     - "p8-summary-v1"
     - "p8-lens-v1"
-    - "p8-bundle-v1"
+    - "p8-bundle-v2"
     - "p8-obligations-v1"
+  supported_legacy_bundle_policy: "p8-bundle-v1"
+  bundle_identity_decision: "docs/architecture/decisions/ADR-041-phase8-deterministic-bundle-identity.md"
   source:
     - "src/novelty_harness/reporting/execution.py"
     - "src/novelty_harness/reporting/prompts.py"

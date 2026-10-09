@@ -117,7 +117,10 @@ def test_sink_failure_returns_exact_retry_ids_and_keeps_delivering():
     assert failed == tuple(
         e.event_id for e in delivered if e.reason_code == "REPORT_EXECUTION_VALIDATED"
     )
-    assert len(delivered) == len(artifacts)
+    assert len(delivered) == len(artifacts) + 1
+    assert {e.data["artifact_id"] for e in delivered if "artifact_id" in e.data} == {
+        a.artifact_id for a in artifacts
+    }
     assert repository.artifacts == artifacts
 
 
@@ -396,3 +399,57 @@ def test_accepted_citation_projection_is_retryable_metadata_after_native_load():
         compilation.compilation_id, repository=repository, sink=FailingCitationSink()
     )
     assert failed == (event.event_id,)
+
+
+def test_attempt_reload_projects_complete_committed_closure_with_stable_retry_id():
+    from novelty_harness.application.phase8_tracing import publish_report_events
+
+    compilation, artifacts = committed_shapes()
+    repository = ReadOnlyRepository(compilation, artifacts)
+    sink = InMemoryTraceSink()
+    publish_report_events(compilation.compilation_id, repository=repository, sink=sink)
+    loads = [e for e in sink.events if e.reason_code == "REPORT_ATTEMPT_RELOADED"]
+    assert len(loads) == 1
+    event = loads[0]
+    assert event.status == TraceStatus.SUCCESS
+    assert event.data["compilation_id"] == compilation.compilation_id
+    assert event.data["current_state"] == "STARTED"
+    assert event.data["status_event_id"] == artifacts[0].document.event_id
+    assert event.data["committed_artifact_ids"] == sorted(a.artifact_id for a in artifacts)
+    assert event.occurred_at == OBSERVED
+    assert "Secret prose" not in str(event)
+    repository.artifacts = tuple(reversed(artifacts))
+    publish_report_events(compilation.compilation_id, repository=repository, sink=sink)
+    assert [e for e in sink.events if e.reason_code == "REPORT_ATTEMPT_RELOADED"] == [event, event]
+    # A later committed closure is a distinct load observation; retrying the
+    # same closure must not mint new semantic execution or delivery identities.
+    repository.artifacts = artifacts[:2]
+    publish_report_events(compilation.compilation_id, repository=repository, sink=sink)
+    latest = [e for e in sink.events if e.reason_code == "REPORT_ATTEMPT_RELOADED"][-1]
+    assert latest.event_id != event.event_id
+    assert latest.data["committed_artifact_ids"] == sorted(a.artifact_id for a in artifacts[:2])
+
+
+def test_attempt_reload_sink_failure_preserves_artifact_delivery():
+    from novelty_harness.application.phase8_tracing import publish_report_events
+
+    compilation, artifacts = committed_shapes()
+    delivered = []
+
+    class FailingLoadSink:
+        def emit(self, event):
+            delivered.append(event)
+            if event.reason_code == "REPORT_ATTEMPT_RELOADED":
+                raise OSError("load projection delivery failed")
+
+    failed = publish_report_events(
+        compilation.compilation_id,
+        repository=ReadOnlyRepository(compilation, artifacts),
+        sink=FailingLoadSink(),
+    )
+    loads = [e for e in delivered if e.reason_code == "REPORT_ATTEMPT_RELOADED"]
+    assert len(loads) == 1
+    assert failed == (loads[0].event_id,)
+    assert {e.data["artifact_id"] for e in delivered if "artifact_id" in e.data} == {
+        a.artifact_id for a in artifacts
+    }

@@ -7,6 +7,7 @@ from pydantic import Field, JsonValue, model_validator
 
 from novelty_harness.domain.base import UTCDateTime
 from novelty_harness.reporting.models import (
+    BundlePolicyVersion,
     Digest,
     NonBlank,
     ReportContract,
@@ -31,7 +32,7 @@ DETERMINISTIC_VERSIONS = (
     "p8-render-v1",
     "p8-summary-v1",
     "p8-lens-v1",
-    "p8-bundle-v1",
+    "p8-bundle-v2",
     "p8-obligations-v1",
 )
 
@@ -166,6 +167,17 @@ class ReportCompilationConfiguration(ReportContract):
         if len(set(self.deterministic_versions)) != len(self.deterministic_versions):
             raise ValueError("duplicate deterministic policy version")
         return self
+
+
+def bundle_policy_version(configuration: ReportCompilationConfiguration) -> BundlePolicyVersion:
+    """Select the exact persisted registry; never guess a stored attempt's policy."""
+    selected = set(configuration.deterministic_versions)
+    if selected == set(DETERMINISTIC_VERSIONS):
+        return "p8-bundle-v2"
+    legacy = (set(DETERMINISTIC_VERSIONS) - {"p8-bundle-v2"}) | {"p8-bundle-v1"}
+    if selected == legacy:
+        return "p8-bundle-v1"
+    raise ValueError("report deterministic policies are unapproved or incomplete")
 
 
 def approved_role_configuration(

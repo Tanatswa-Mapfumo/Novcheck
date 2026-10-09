@@ -145,7 +145,7 @@ from novelty_harness.reporting.artifacts import ReportArtifact, ReportCompilatio
 from novelty_harness.reporting.bundle import ReportInputBundle
 from novelty_harness.reporting.execution import ReportCompilationConfiguration
 from novelty_harness.reporting.ir import CompiledAssessmentReport
-from novelty_harness.reporting.models import ReportOptions
+from novelty_harness.reporting.models import BundlePolicyVersion, ReportOptions
 from novelty_harness.runtime.tracing.hashing import canonical_hash, canonical_json
 
 
@@ -264,13 +264,18 @@ class SqlAlchemyEvidenceGraphRepository:
         return self._engine
 
     def load_report_input_bundle(
-        self, assessment_id: AssessmentId, *, adjudication_id: str
+        self,
+        assessment_id: AssessmentId,
+        *,
+        adjudication_id: str,
+        bundle_version: BundlePolicyVersion = "p8-bundle-v2",
     ) -> ReportInputBundle:
         return _load_report_input_bundle(
             self._engine,
             self._load_phase6_assessment_in_session,
             assessment_id,
             adjudication_id=adjudication_id,
+            bundle_version=bundle_version,
         )
 
     def begin_report_compilation(

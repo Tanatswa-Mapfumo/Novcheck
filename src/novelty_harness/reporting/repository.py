@@ -7,7 +7,7 @@ from novelty_harness.reporting.artifacts import ReportArtifact, ReportCompilatio
 from novelty_harness.reporting.bundle import ReportInputBundle
 from novelty_harness.reporting.execution import ReportCompilationConfiguration
 from novelty_harness.reporting.ir import CompiledAssessmentReport
-from novelty_harness.reporting.models import ReportOptions
+from novelty_harness.reporting.models import BundlePolicyVersion, ReportOptions
 
 
 class ReportAuthorityError(ValueError):
@@ -16,7 +16,11 @@ class ReportAuthorityError(ValueError):
 
 class ReportRepository(Protocol):
     def load_report_input_bundle(
-        self, assessment_id: AssessmentId, *, adjudication_id: str
+        self,
+        assessment_id: AssessmentId,
+        *,
+        adjudication_id: str,
+        bundle_version: BundlePolicyVersion = "p8-bundle-v2",
     ) -> ReportInputBundle: ...
 
     def begin_report_compilation(

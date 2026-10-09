@@ -38,13 +38,13 @@ from novelty_harness.reporting.drafts import (
     build_section_context,
 )
 from novelty_harness.reporting.execution import (
-    DETERMINISTIC_VERSIONS,
     ReportCompilationConfiguration,
     ReportExecutionRecord,
     ReportMethodRegistration,
     ReportRoleConfiguration,
     approved_role_configuration,
     bind_compilation_configuration,
+    bundle_policy_version,
     validate_method_registration,
 )
 from novelty_harness.reporting.fallback import FallbackRecord, validate_fallback_section
@@ -83,8 +83,10 @@ from novelty_harness.runtime.tracing.hashing import canonical_hash, canonical_js
 def _validate_configuration(
     configuration: ReportCompilationConfiguration, scope: ReportScope
 ) -> None:
-    if set(configuration.deterministic_versions) != set(DETERMINISTIC_VERSIONS):
-        raise ReportAuthorityError("report deterministic policies are unapproved or incomplete")
+    try:
+        bundle_policy_version(configuration)
+    except ValueError as exc:
+        raise ReportAuthorityError(str(exc)) from exc
     for role in configuration.roles:
         if role.scope != scope or role != approved_role_configuration(
             scope, role.compilation_id, role.role, role.port, method_version=role.method_version
@@ -522,10 +524,9 @@ def _validate_artifact_bindings(
             raise ReportAuthorityError("section proposal method differs")
         _validate_repair_document(compilation, artifact, artifacts, bundle, plans[0])
     else:
-        if (
-            document.event_id != report_status_event_id(document)
-            or artifact.method_version != "p8-bundle-v1"
-        ):
+        if document.event_id != report_status_event_id(
+            document
+        ) or artifact.method_version != bundle_policy_version(compilation.configuration):
             raise ReportAuthorityError("status identity or method differs")
         _validate_stage_records(document, artifacts, accepted_report_id=accepted_report_id)
 
@@ -812,7 +813,11 @@ def revalidate_report_bundle_in_session(
     session: Session, loader: Callable[..., Phase6AssessmentView], record: ReportCompilationRecord
 ) -> ReportInputBundle:
     bundle = load_report_input_bundle_in_session(
-        session, loader, record.scope.assessment_id, adjudication_id=record.scope.adjudication_id
+        session,
+        loader,
+        record.scope.assessment_id,
+        adjudication_id=record.scope.adjudication_id,
+        bundle_version=bundle_policy_version(record.configuration),
     )
     if bundle.scope != record.scope or bundle.bundle_digest != record.bundle_digest:
         raise ReportAuthorityError("report upstream bundle or scope changed")
@@ -837,7 +842,11 @@ def begin_report_compilation(
         with Session(engine) as session:
             session.execute(text("BEGIN IMMEDIATE"))
             bundle = load_report_input_bundle_in_session(
-                session, loader, assessment_id, adjudication_id=adjudication_id
+                session,
+                loader,
+                assessment_id,
+                adjudication_id=adjudication_id,
+                bundle_version=bundle_policy_version(configuration),
             )
             _validate_configuration(configuration, bundle.scope)
             if options.render_policy_version != "p8-render-v1":
@@ -895,7 +904,10 @@ def begin_report_compilation(
             session.add(
                 _artifact_row(
                     make_report_artifact(
-                        record, ReportArtifactKind.STATUS, initial, method_version="p8-bundle-v1"
+                        record,
+                        ReportArtifactKind.STATUS,
+                        initial,
+                        method_version=bundle_policy_version(record.configuration),
                     )
                 )
             )
@@ -1078,7 +1090,7 @@ def accept_compiled_report(
                         compilation,
                         ReportArtifactKind.STATUS,
                         status,
-                        method_version="p8-bundle-v1",
+                        method_version=bundle_policy_version(compilation.configuration),
                     )
                 )
             )

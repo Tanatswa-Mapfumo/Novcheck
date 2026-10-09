@@ -654,3 +654,106 @@ def test_retry_reuses_committed_planner_proposal(acceptance_case, failed):
         )
     assert port.calls.count(("plan", None)) == 1
     assert port.calls.count(("write", 1)) == 1
+
+
+@pytest.mark.parametrize("sink_fails", [False, True])
+@pytest.mark.parametrize("resume_state", ["STARTED", "PLANNED"])
+def test_begin_and_resume_trace_precedes_semantic_dispatch(
+    tmp_path, monkeypatch, sink_fails, resume_state
+):
+    from novelty_harness.application.phase8 import (
+        _advance,
+        _configuration,
+        compile_assessment_report,
+    )
+    from novelty_harness.reporting.artifacts import ReportAttemptState, make_report_artifact
+    from novelty_harness.reporting.plan import build_coverage_plan
+    from novelty_harness.runtime.tracing.sinks import InMemoryTraceSink
+
+    class StopBeforeRegistration(BaseException):
+        pass
+
+    attempts = []
+
+    class RecordedFailingSink(InMemoryTraceSink):
+        def emit(self, event):
+            super().emit(event)
+            if sink_fails:
+                raise OSError("recorded trace delivery failure")
+
+    case = make_report_scenario(tmp_path, "POTENTIAL")
+    try:
+        sink = RecordedFailingSink()
+        planner = RecordedCompilerPort()
+        before = upstream_rows(case)
+        if resume_state == "PLANNED":
+            compilation = case.repository.begin_report_compilation(
+                case.bundle.scope.assessment_id,
+                adjudication_id=case.frozen.adjudication_id,
+                options=generous_options(),
+                configuration=_configuration(case.bundle, ReportPorts(planner=planner)),
+                attempt_token="trace-before-dispatch",
+            )
+            plan = build_coverage_plan(case.bundle, compilation)
+            artifact = make_report_artifact(
+                compilation, ReportArtifactKind.PLAN, plan, method_version="p8-plan-firewall-v1"
+            )
+            case.repository.record_report_artifact(compilation.compilation_id, artifact)
+            _advance(compilation, case.repository, ReportAttemptState.PLANNED)
+            del plan, artifact
+
+        def stop_before_registration(compilation_id, artifact):
+            # The first post-begin write is METHOD registration. Stop here to
+            # isolate load/resume delivery from later semantic/report capacity.
+            assert artifact.kind == ReportArtifactKind.METHOD
+            loads = [e for e in sink.events if e.reason_code == "REPORT_ATTEMPT_RELOADED"]
+            assert len(loads) == len(attempts) + 1
+            event = loads[-1]
+            assert event.data["compilation_id"] == compilation_id
+            assert event.data["assessment_context_id"] == case.bundle.scope.assessment_context_id
+            assert event.data["current_state"] == resume_state
+            committed = case.repository.load_report_artifacts(compilation_id)
+            assert event.data["committed_artifact_ids"] == sorted(a.artifact_id for a in committed)
+            terminal = [
+                a.document
+                for a in committed
+                if isinstance(a.document, ReportStatusEvent)
+                and a.document.next_state == resume_state
+            ]
+            assert len(terminal) == 1
+            assert event.data["status_event_id"] == terminal[0].event_id
+            attempts.append(event)
+            raise StopBeforeRegistration()
+
+        monkeypatch.setattr(case.repository, "record_report_artifact", stop_before_registration)
+        for _ in range(3):
+            with pytest.raises(StopBeforeRegistration):
+                asyncio.run(
+                    compile_assessment_report(
+                        case.bundle.scope.assessment_id,
+                        adjudication_id=case.frozen.adjudication_id,
+                        repository=case.repository,
+                        ports=ReportPorts(planner=planner, trace_sink=sink),
+                        options=generous_options(),
+                        attempt_token="trace-before-dispatch",
+                    )
+                )
+            assert upstream_rows(case) == before
+        assert len(attempts) == 3 and len({e.event_id for e in attempts}) == 1
+        assert planner.calls == []
+        committed = case.repository.load_report_artifacts(attempts[0].data["compilation_id"])
+        assert not any(a.kind == ReportArtifactKind.EXECUTION for a in committed)
+        if resume_state == "STARTED":
+            assert len(committed) == 1 and committed[0].kind == ReportArtifactKind.STATUS
+        else:
+            assert len(committed) == 3
+            assert {a.kind for a in committed} == {
+                ReportArtifactKind.STATUS,
+                ReportArtifactKind.PLAN,
+            }
+            assert next(
+                a.document for a in committed if a.kind == ReportArtifactKind.PLAN
+            ).questions
+
+    finally:
+        case.repository.close()

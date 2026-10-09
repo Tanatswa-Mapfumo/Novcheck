@@ -13,6 +13,7 @@ from novelty_harness.runtime.tracing.hashing import canonical_hash
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 Digest = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
 QuestionId = Literal[1, 2, 3, 4, 5, 6, 7, 8, 9]
+BundlePolicyVersion = Literal["p8-bundle-v1", "p8-bundle-v2"]
 
 
 class ReportContract(ContractModel):

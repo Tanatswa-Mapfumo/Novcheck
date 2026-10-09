@@ -62,6 +62,7 @@ def method_artifact(compilation):
 
 def status_artifact(compilation, predecessor, state, *, reason="Operational failure"):
     from novelty_harness.reporting.artifacts import make_report_artifact, report_status_event_id
+    from novelty_harness.reporting.execution import bundle_policy_version
 
     proposal = ReportStatusEvent(
         scope=compilation.scope,
@@ -75,7 +76,10 @@ def status_artifact(compilation, predecessor, state, *, reason="Operational fail
     )
     proposal = proposal.model_copy(update={"event_id": report_status_event_id(proposal)})
     return make_report_artifact(
-        compilation, ReportArtifactKind.STATUS, proposal, method_version="p8-bundle-v1"
+        compilation,
+        ReportArtifactKind.STATUS,
+        proposal,
+        method_version=bundle_policy_version(compilation.configuration),
     )
 
 

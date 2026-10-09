@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Literal
+from functools import partial
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, JsonValue
 
@@ -23,6 +24,7 @@ from novelty_harness.reporting.drafts import CitationToken, DraftBlock, SectionD
 from novelty_harness.reporting.models import (
     AuthorityKind,
     AuthorityRef,
+    BundlePolicyVersion,
     Digest,
     QuestionId,
     ReportClaimCategory,
@@ -71,7 +73,25 @@ def attributed_text(label: str, text: str) -> str:
     return f'{label} (quoted record): "{inert}"'
 
 
-def _record_text(label: str, document: BaseModel) -> str:
+def _ordered_record_sets(native: object, wire: JsonValue) -> JsonValue:
+    """Sort native set projections while preserving the original JSON serializers."""
+    if isinstance(native, (set, frozenset)) and isinstance(wire, list):
+        return sorted(wire, key=lambda item: json.dumps(item, sort_keys=True, allow_nan=False))
+    if isinstance(native, dict) and isinstance(wire, dict):
+        mapping = cast(dict[str, object], native)
+        return {key: _ordered_record_sets(mapping.get(key), value) for key, value in wire.items()}
+    if isinstance(native, (list, tuple)) and isinstance(wire, list):
+        sequence = cast(list[object] | tuple[object, ...], native)
+        if len(sequence) == len(wire):
+            return [
+                _ordered_record_sets(value, projected) for value, projected in zip(sequence, wire)
+            ]
+    return wire
+
+
+def _record_text(
+    label: str, document: BaseModel, *, bundle_version: BundlePolicyVersion = "p8-bundle-v1"
+) -> str:
     """Display public recorded fields, never execution or observational provenance."""
     excluded = {
         "schema_version",
@@ -99,7 +119,17 @@ def _record_text(label: str, document: BaseModel) -> str:
             return [public(v) for v in value]
         return value
 
-    data = public(document.model_dump(mode="json"))
+    if bundle_version == "p8-bundle-v1":
+        # Persisted v1 transformations retain their exact original byte path.
+        data = public(document.model_dump(mode="json"))
+    else:
+        # Sort only projections whose native type is a set. Retain original
+        # JSON field serializers, every scalar and ordered record sequence.
+        data = public(
+            _ordered_record_sets(
+                document.model_dump(mode="python"), document.model_dump(mode="json")
+            )
+        )
     return attributed_text(label, json.dumps(data, ensure_ascii=False, sort_keys=True))
 
 
@@ -143,6 +173,7 @@ def _render_fallback_for_run(
     question_id: QuestionId,
     obligation_ids: tuple[str, ...] | None = None,
 ) -> VerifiedSection:
+    record_text = partial(_record_text, bundle_version=bundle.bundle_version)
     obligations = tuple(o for o in bundle.coverage_obligations if question_id in o.question_ids)
     if obligation_ids is not None and not set(obligation_ids) <= {
         o.obligation_id for o in obligations
@@ -232,13 +263,13 @@ def _render_fallback_for_run(
     )
     if question_id == 1:
         add(
-            _record_text("Sealed input", bundle.cir),
+            record_text("Sealed input", bundle.cir),
             (native_ref(bundle, AuthorityKind.CIR),),
             ReportClaimCategory.INPUT_DESCRIPTION,
             use=ClaimUse.ATTRIBUTED_INPUT_CLAIM,
         )
         add(
-            _record_text("Reconciled configuration", bundle.graph_or_version),
+            record_text("Reconciled configuration", bundle.graph_or_version),
             (next(r for r in catalog if r.kind == AuthorityKind.GRAPH),),
             ReportClaimCategory.INPUT_DESCRIPTION,
             use=ClaimUse.ATTRIBUTED_INPUT_CLAIM,
@@ -254,7 +285,7 @@ def _render_fallback_for_run(
                 and o.target.id == profile.target_id
             )
             add(
-                _record_text("Assessed input target", profile),
+                record_text("Assessed input target", profile),
                 (ref,),
                 ReportClaimCategory.INPUT_DESCRIPTION,
                 obligation_links=oid,
@@ -312,15 +343,15 @@ def _render_fallback_for_run(
             text = (
                 f"Recorded comparison {cls.classification_id}: {cls.relation.value}; "
                 f"projection {comparison.projection_status}. "
-                + _record_text("Classification and complete residual", cls)
+                + record_text("Classification and complete residual", cls)
                 + " "
-                + _record_text("Chronology", verification.chronology)
+                + record_text("Chronology", verification.chronology)
                 + " "
-                + _record_text(
+                + record_text(
                     "Verified support and unsupported remainder", verification.chain.verification
                 )
                 + " "
-                + _record_text(
+                + record_text(
                     "Proposition and relationship topology", verification.chain.proposition
                 )
             )
@@ -341,10 +372,10 @@ def _render_fallback_for_run(
         for metadata in bundle.source_metadata:
             refs = (metadata.source_ref, *((metadata.version_ref,) if metadata.version_ref else ()))
             text = (
-                _record_text("Stored source metadata", metadata.source)
+                record_text("Stored source metadata", metadata.source)
                 + " "
                 + (
-                    _record_text("Stored version metadata", metadata.version)
+                    record_text("Stored version metadata", metadata.version)
                     if metadata.version
                     else "Versionless page; no version record is available."
                 )
@@ -358,13 +389,13 @@ def _render_fallback_for_run(
             if question_id == 6 and gate.contract_kind != "phase7-gate-d-finding-v1":
                 continue
             add(
-                _record_text("Accepted Gate state (not measured advantage)", gate),
+                record_text("Accepted Gate state (not measured advantage)", gate),
                 (native_ref(bundle, AuthorityKind.GATE, native_id=gate.gate_id),),
                 ReportClaimCategory.NOVELTY_INTERPRETATION,
             )
         for counterfactual in sorted(bundle.counterfactuals, key=lambda c: c.target_id):
             add(
-                _record_text(
+                record_text(
                     "Counterfactual diagnostic; unresolved fields remain unresolved", counterfactual
                 ),
                 (
@@ -399,7 +430,7 @@ def _render_fallback_for_run(
                         f"Recorded defense disposition: {point.disposition}. "
                         + attributed_text("Recorded defense", point.thesis)
                         + " "
-                        + _record_text("Defense position and attached limits", point),
+                        + record_text("Defense position and attached limits", point),
                         (ref,),
                         ReportClaimCategory.NOVELTY_INTERPRETATION,
                     )
@@ -407,7 +438,7 @@ def _render_fallback_for_run(
                 continue
             ref = native_ref(bundle, AuthorityKind.ROLE, native_id=case.case_id)
             add(
-                _record_text(
+                record_text(
                     "Prosecution position; accepted challenge IDs "
                     + str(sorted(accepted))
                     + "; other arguments are not promoted to accepted",
@@ -433,7 +464,7 @@ def _render_fallback_for_run(
                 )
             else:
                 add(
-                    _record_text("Submitter's claimed advantage; no assessed maturity", value),
+                    record_text("Submitter's claimed advantage; no assessed maturity", value),
                     value.basis_refs,
                     ReportClaimCategory.VALUE_CLAIM,
                     use=ClaimUse.ATTRIBUTED_INPUT_CLAIM,
@@ -444,7 +475,7 @@ def _render_fallback_for_run(
             key=lambda r: (r.target_ids, r.purpose, r.proposed_method),
         ):
             add(
-                _record_text(
+                record_text(
                     "Prospective validation recommendation; no result is established", requirement
                 ),
                 requirement.basis_refs,
@@ -489,7 +520,7 @@ def _render_fallback_for_run(
         view = bundle.judge_resolutions_and_limitations.phase6_view
         refs = (native_ref(bundle, AuthorityKind.COVERAGE),)
         add(
-            _record_text("Actual coverage matrix; no saturation inference", view.coverage),
+            record_text("Actual coverage matrix; no saturation inference", view.coverage),
             refs,
             ReportClaimCategory.COVERAGE_CLAIM,
         )
@@ -500,7 +531,7 @@ def _render_fallback_for_run(
                 if r.kind == AuthorityKind.CANDIDATE and r.digest == canonical_hash(candidate)
             )
             add(
-                _record_text("Candidate assessment state", candidate),
+                record_text("Candidate assessment state", candidate),
                 (ref,),
                 ReportClaimCategory.COVERAGE_CLAIM,
             )
@@ -511,7 +542,7 @@ def _render_fallback_for_run(
         if homes[obligation.obligation_id]:
             continue
         if obligation.requirement_kind == "COVERAGE_STATE":
-            text = _record_text("Actual coverage state", bundle.research_state)
+            text = record_text("Actual coverage state", bundle.research_state)
         elif obligation.requirement_kind == "ACCEPTED_CHALLENGE":
             role = next(
                 c
@@ -528,21 +559,21 @@ def _render_fallback_for_run(
             )
             if argument is None:
                 raise ReportProposalError("accepted challenge lacks its exact argument")
-            text = _record_text("Independently accepted challenge", argument)
+            text = record_text("Independently accepted challenge", argument)
         elif obligation.requirement_kind == "MISSING_ASSESSED_VALUE":
             text = "No authoritative value assessment is available. M1 remains deferred."
         elif obligation.requirement_kind == "LANGUAGE_CEILING":
             ref = obligation.materiality_origin
             if ref.kind == AuthorityKind.GATE:
                 record = next(g for g in bundle.gate_findings if g.gate_id == ref.native_id)
-                text = _record_text("Accepted target Gate and language constraint", record)
+                text = record_text("Accepted target Gate and language constraint", record)
             elif ref.kind == AuthorityKind.JUDGE_RESOLUTION:
                 resolution = next(
                     r
                     for r in bundle.judge_resolutions_and_limitations.judge_resolutions
                     if r.resolution_id == ref.native_id
                 )
-                text = _record_text("Accepted judge resolution and language constraint", resolution)
+                text = record_text("Accepted judge resolution and language constraint", resolution)
             else:
                 raise ReportProposalError("fallback language constraint lacks known native record")
         else:

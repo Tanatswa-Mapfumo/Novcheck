@@ -61,16 +61,56 @@ def publish_report_events(
                 raise ReportAuthorityError("accepted trace report belongs to another attempt")
             accepted_events = _accepted_report_events(report)
             del report
-    failed = []
+    failed: list[str] = []
     events = (
         _event(a, start, configurations) for a in sorted(artifacts, key=lambda a: a.artifact_id)
     )
-    for event in chain(events, accepted_events):
+    for event in chain((_attempt_load_event(artifacts, start),), events, accepted_events):
         try:
             sink.emit(event)
         except Exception:
             failed.append(event.event_id)
     return tuple(failed)
+
+
+def _attempt_load_event(
+    artifacts: tuple[ReportArtifact, ...], start: ReportStatusEvent
+) -> TraceEvent:
+    """Describe a revalidated committed closure, never a new semantic call."""
+    statuses = tuple(a.document for a in artifacts if isinstance(a.document, ReportStatusEvent))
+    predecessors = {s.predecessor_id for s in statuses if s.predecessor_id is not None}
+    terminal = tuple(s for s in statuses if s.event_id not in predecessors)
+    if len(terminal) != 1:
+        raise ReportAuthorityError("report trace requires one current committed status")
+    current = terminal[0]
+    artifact_ids: list[JsonValue] = [
+        a.artifact_id for a in sorted(artifacts, key=lambda a: a.artifact_id)
+    ]
+    identity: dict[str, JsonValue] = {
+        "projection": "p8-attempt-load-trace-v1",
+        "compilation_id": start.compilation_id,
+        "committed_artifact_ids": artifact_ids,
+    }
+    data: dict[str, JsonValue] = {
+        "compilation_id": start.compilation_id,
+        "adjudication_id": start.scope.adjudication_id,
+        "assessment_context_id": start.scope.assessment_context_id,
+        "phase6_snapshot_id": start.scope.phase6_snapshot_id,
+        "artifact_kind": "COMMITTED_ATTEMPT_LOAD",
+        "status_event_id": current.event_id,
+        "current_state": current.next_state.value,
+        "committed_artifact_ids": artifact_ids,
+    }
+    return TraceEvent(
+        event_id="trace_" + canonical_hash(identity),
+        assessment_id=start.scope.assessment_id,
+        occurred_at=current.observed_at,
+        stage=AssessmentStage.REPORTED,
+        component="phase8",
+        status=TraceStatus.FAILURE if current.next_state == "FAILED" else TraceStatus.SUCCESS,
+        reason_code="REPORT_ATTEMPT_RELOADED",
+        data=data,
+    )
 
 
 def _event(

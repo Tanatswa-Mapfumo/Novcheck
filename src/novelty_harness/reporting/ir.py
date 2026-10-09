@@ -26,11 +26,11 @@ from novelty_harness.reporting.citations import CitationRegistry, validate_citat
 from novelty_harness.reporting.claims import ClaimBasisLink, ClaimExtractionProposal, ReportClaim
 from novelty_harness.reporting.drafts import DraftBlock, SectionDraft, SectionDraftFragment
 from novelty_harness.reporting.execution import (
-    DETERMINISTIC_VERSIONS,
     ReportCompilationConfiguration,
     ReportExecutionRecord,
     ReportMethodRegistration,
     ReportRoleConfiguration,
+    bundle_policy_version,
     validate_method_registration,
 )
 from novelty_harness.reporting.fallback import FallbackRecord, validate_fallback_section
@@ -611,11 +611,12 @@ def build_report_ir(
     if (compilation.scope, compilation.bundle_digest) != (bundle.scope, bundle.bundle_digest):
         raise ReportProposalError("IR compilation does not match its upstream bundle")
     artifacts = _validated_ir_artifacts(artifacts, compilation)
-    if any(
-        version not in DETERMINISTIC_VERSIONS
-        for version in compilation.configuration.deterministic_versions
-    ):
-        raise ReportProposalError("IR policy version is not approved")
+    try:
+        policy = bundle_policy_version(compilation.configuration)
+    except ValueError as exc:
+        raise ReportProposalError("IR policy version is not approved") from exc
+    if policy != bundle.bundle_version:
+        raise ReportProposalError("IR bundle policy differs from its pinned configuration")
     plans = tuple(a.document for a in artifacts if isinstance(a.document, ReportPlan))
     if len(plans) != 1:
         raise ReportProposalError("IR requires one committed coverage-validated plan")

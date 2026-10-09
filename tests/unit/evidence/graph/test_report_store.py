@@ -274,16 +274,18 @@ def acceptance_case(acceptance_source, tmp_path):
     # SQLite backup makes each attack independent while preserving genuine
     # committed Phase 6/7 authority, not a deserialized frozen caller shape.
     import sqlite3
+    from contextlib import closing
     from pathlib import Path
 
     from tests.fixtures.phase8 import ReportCase
 
     destination = tmp_path / "report-authority.db"
-    with sqlite3.connect(acceptance_source.repository.engine.url.database) as source:
-        with sqlite3.connect(destination) as target:
-            source.backup(target)
-    repository = SqlAlchemyEvidenceGraphRepository(Path(destination))
+    repository = None
     try:
+        with closing(sqlite3.connect(acceptance_source.repository.engine.url.database)) as source:
+            with closing(sqlite3.connect(destination)) as target:
+                source.backup(target)
+        repository = SqlAlchemyEvidenceGraphRepository(Path(destination))
         frozen = repository.load_frozen_adjudication(
             acceptance_source.bundle.scope.assessment_id,
             adjudication_id=acceptance_source.frozen.adjudication_id,
@@ -293,9 +295,12 @@ def acceptance_case(acceptance_source, tmp_path):
         )
         yield ReportCase(repository, frozen, bundle)
     finally:
-        repository.close()
-        for suffix in ("", "-journal", "-wal", "-shm"):
-            Path(str(destination) + suffix).unlink(missing_ok=True)
+        try:
+            if repository is not None:
+                repository.close()
+        finally:
+            for suffix in ("", "-journal", "-wal", "-shm"):
+                Path(str(destination) + suffix).unlink(missing_ok=True)
 
 
 class FailedReportWriter:

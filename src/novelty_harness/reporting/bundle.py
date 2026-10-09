@@ -47,6 +47,7 @@ from novelty_harness.mcu.overrides import MCUVersion
 from novelty_harness.reporting.models import (
     AuthorityKind,
     AuthorityRef,
+    BundlePolicyVersion,
     Digest,
     NonBlank,
     ReportContract,
@@ -109,10 +110,12 @@ class AdjudicationReportingClosure(ReportContract):
 
 
 class ReportInputBundle(ReportContract):
-    contract_kind: Literal["phase8-report-input-bundle-v1"] = "phase8-report-input-bundle-v1"
+    contract_kind: Literal["phase8-report-input-bundle-v1", "phase8-report-input-bundle-v2"] = (
+        "phase8-report-input-bundle-v2"
+    )
     scope: ReportScope
     as_of: date
-    bundle_version: Literal["p8-bundle-v1"] = "p8-bundle-v1"
+    bundle_version: BundlePolicyVersion = "p8-bundle-v2"
     bundle_digest: Digest
     frozen_adjudication: FrozenAdjudication
     input_manifest_ref: AuthorityRef
@@ -140,6 +143,13 @@ class ReportInputBundle(ReportContract):
 
     @model_validator(mode="after")
     def exact_projections(self) -> "ReportInputBundle":
+        expected_kind = (
+            "phase8-report-input-bundle-v1"
+            if self.bundle_version == "p8-bundle-v1"
+            else "phase8-report-input-bundle-v2"
+        )
+        if self.contract_kind != expected_kind:
+            raise ValueError("bundle contract and policy versions differ")
         frozen = self.frozen_adjudication
         if (
             frozen.assessment_id,
@@ -178,7 +188,14 @@ class ReportInputBundle(ReportContract):
 
 
 def report_bundle_digest(bundle: ReportInputBundle) -> str:
-    return canonical_hash(bundle.model_dump(mode="json", exclude={"bundle_digest"}))
+    if bundle.bundle_version == "p8-bundle-v1":
+        # Preserve the original algorithm exactly for persisted v1 attempts.
+        return canonical_hash(bundle.model_dump(mode="json", exclude={"bundle_digest"}))
+    if bundle.bundle_version != "p8-bundle-v2":
+        raise ValueError("report bundle policy is unsupported")
+    # Preserve set semantics until canonical serialization; ordered sequences
+    # retain their order. The policy/contract version is part of the identity.
+    return canonical_hash(bundle.model_dump(mode="python", exclude={"bundle_digest"}))
 
 
 def project_source_metadata(

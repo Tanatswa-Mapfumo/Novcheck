@@ -26,9 +26,11 @@ from novelty_harness.reporting.bundle import ReportInputBundle
 from novelty_harness.reporting.citations import build_citation_registry
 from novelty_harness.reporting.drafts import build_section_context
 from novelty_harness.reporting.execution import (
+    DETERMINISTIC_VERSIONS,
     ReportCompilationConfiguration,
     ReportExecutionRecord,
     approved_role_configuration,
+    bundle_policy_version,
 )
 from novelty_harness.reporting.ir import CompiledAssessmentReport, build_report_ir, report_id
 from novelty_harness.reporting.models import (
@@ -84,7 +86,11 @@ def _advance(
     )
     event = event.model_copy(update={"event_id": report_status_event_id(event)})
     record_section_artifact(
-        compilation, repository, ReportArtifactKind.STATUS, event, "p8-bundle-v1"
+        compilation,
+        repository,
+        ReportArtifactKind.STATUS,
+        event,
+        bundle_policy_version(compilation.configuration),
     )
 
 
@@ -103,7 +109,11 @@ def _configuration(bundle: ReportInputBundle, ports: ReportPorts) -> ReportCompi
                 bundle.scope, "pending", role, actual_port_configuration(port)
             )
             for role, port in selected.items()
-        )
+        ),
+        deterministic_versions=tuple(
+            bundle.bundle_version if version.startswith("p8-bundle-") else version
+            for version in DETERMINISTIC_VERSIONS
+        ),
     )
 
 
@@ -203,6 +213,9 @@ async def compile_assessment_report(
         )
         _publish_trace(compilation.compilation_id, repository, selected)
         return loaded
+    # Observe the freshly committed begin/resume closure before registration or
+    # semantic dispatch. Delivery failure remains independent of compilation.
+    _publish_trace(compilation.compilation_id, repository, selected)
     if current.next_state == ReportAttemptState.FAILED:
         raise ReportAuthorityError("failed compilation requires a new attempt token")
     for role in compilation.configuration.roles:

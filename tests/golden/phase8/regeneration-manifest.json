@@ -295,5 +295,23 @@
     "two rendering goldens",
     "complete owning/golden suites at final implementation source",
     "full Phase 8 acceptance"
-  ]
+  ],
+  "fresh_v2_compatibility_check": {
+    "status": "SIX_EXISTING_FALLBACK_BYTES_PASS_FRESH_NATIVE_V2_OWNERS_NOT_FULL_ACCEPTANCE",
+    "policy": "p8-bundle-v2",
+    "source_tree_sha256": "ee0c6aaea5086bca4e8b661c84831da2968b7f4b59b67743b40e78338ff78b8e",
+    "receipt": "task24-bundle-v2-fallback-goldens-07",
+    "receipt_sha256": "e4ecd0b6125fb7ee3ce6183f3b1786c67cb7eca507fe1cd731f816b7ed08e5ed",
+    "passed_nodes": [
+      "tests/golden/test_phase8_reports.py::test_fallback_real_scenario_golden[DIRECT]",
+      "tests/golden/test_phase8_reports.py::test_fallback_real_scenario_golden[PARTIAL_NEGATIVE]",
+      "tests/golden/test_phase8_reports.py::test_fallback_real_scenario_golden[POTENTIAL]",
+      "tests/golden/test_phase8_reports.py::test_fallback_real_scenario_golden[MIXED]",
+      "tests/golden/test_phase8_reports.py::test_fallback_real_scenario_golden[UNASSESSABLE]",
+      "tests/golden/test_phase8_reports.py::test_fallback_real_scenario_golden[M1]"
+    ],
+    "candidate_provenance_preserved": true,
+    "golden_bytes_changed": false,
+    "limits": "These owning nodes perform fresh native freeze/reload, all nine fallback recomputations, independent raw semantic checks and existing normalized comparison. They do not prove original-tree equivalence, accepted-v1 compatibility, complete report acceptance or rendering parity."
+  }
 }
