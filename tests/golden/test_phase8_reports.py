@@ -33,6 +33,156 @@ def fallback_golden(sections):
     return normalized
 
 
+def assert_fallback_scenario_semantics(case, sections, scenario):
+    """Independent scenario expectations precede normalized prose comparison."""
+    from novelty_harness.adjudication.roles import DefenseCase
+    from novelty_harness.reporting.fallback import attributed_text
+    from novelty_harness.reporting.uncertainty import project_uncertainty
+
+    bundle, frozen = case.bundle, case.frozen
+    texts = [public_text(section) for section in sections]
+    assert tuple(section.draft.question_id for section in sections) == tuple(range(1, 10))
+    assert {
+        home.obligation_id for section in sections for home in section.obligation_satisfaction
+    } == {obligation.obligation_id for obligation in bundle.coverage_obligations}
+    assert frozen.value_findings == frozen.novelty_significance == ()
+    assert all(value.maturity is None for value in bundle.value_projection)
+    assert "No authoritative value assessment is available" in texts[5]
+    assert "Prospective validation recommendation; no result is established" in texts[6]
+    assert "Unsupported example to avoid:" in texts[7]
+    assert "This wording is not permitted" in texts[7]
+    assert f"Cutoff: {bundle.as_of.isoformat()}" in texts[1]
+
+    for finding in frozen.target_findings:
+        claims = [
+            claim
+            for claim in sections[7].claims
+            if claim.normalized_assertion.startswith(
+                f"Accepted target {finding.target_id}: {finding.verdict.value}."
+            )
+        ]
+        assert len(claims) == 1
+        assert any(
+            scope.target.id == finding.target_id and scope.claim_scope == finding.claim_scope
+            for scope in claims[0].target_scopes
+        )
+        envelope = next(
+            item for item in bundle.language_envelopes if item.target.id == finding.target_id
+        )
+        for limitation in envelope.required_limitations:
+            assert (
+                attributed_text("Attached limitation", limitation) in claims[0].normalized_assertion
+            )
+        assert set(envelope.permitted_classes) == set(finding.language_permission)
+
+    # Compare raw IDs, target/scope joins and actual states BEFORE normalization
+    # masks display hashes. This does not trust normalized prose as authority.
+    q9 = sections[8]
+    for item in project_uncertainty(bundle):
+        prefix = (
+            f"Uncertainty {item.uncertainty_id}: {item.upstream_kind}; "
+            f"state {item.state}; historical={item.historical}. "
+        )
+        claims = [claim for claim in q9.claims if claim.normalized_assertion.startswith(prefix)]
+        assert len(claims) == 1
+        claim = claims[0]
+        assert attributed_text("Recorded limitation", item.reason) in claim.normalized_assertion
+        links = [link for link in q9.basis_links if link.claim_id == claim.claim_id]
+        assert tuple(link.authority_ref for link in links) == item.authority_refs
+        assert all(link.authority_ref.scope == bundle.scope for link in links)
+        expected_scopes = tuple(
+            (envelope.target, envelope.claim_scope)
+            for envelope in bundle.language_envelopes
+            if any(ref.target == envelope.target for ref in item.authority_refs)
+        )
+        assert (
+            tuple((scope.target, scope.claim_scope) for scope in claim.target_scopes)
+            == expected_scopes
+        )
+
+    gates = {gate.gate_id: gate for gate in bundle.gate_findings}
+    verdicts = {finding.target_id: finding.verdict.value for finding in frozen.target_findings}
+    if scenario in {"PARTIAL_NEGATIVE", "POTENTIAL"}:
+        assert len(frozen.target_findings) == 1
+        finding = frozen.target_findings[0]
+        assert verdicts[finding.target_id] == (
+            "NOT_NOVEL_AT_CLAIMED_LEVEL" if scenario == "PARTIAL_NEGATIVE" else "POTENTIALLY_NOVEL"
+        )
+        assert gates[finding.gate_c_id].state == "SUBSTANTIALLY_REPRODUCED_WITH_RESIDUAL_DELTA"
+        assert gates[finding.gate_d_id].state == (
+            "NON_SUBSTANTIVE" if scenario == "PARTIAL_NEGATIVE" else "SUBSTANTIVE"
+        )
+        classification = bundle.eligible_comparisons[0].comparison.classification
+        assert classification.relation.value == "STRONG_PARTIAL_PRECEDENT"
+        residual = {
+            *classification.missing_elements,
+            *classification.missing_relationships,
+            *((classification.configuration_gap,) if classification.configuration_gap else ()),
+        }
+        assert residual
+        for difference in residual:
+            assert difference in texts[2]
+        assert bundle.counterfactuals
+        for localization in bundle.counterfactuals:
+            assert localization.target_id == finding.target_id
+            assert localization.removed_element in residual
+            assert set(localization.remaining_differences) == residual - {
+                localization.removed_element
+            }
+            assert localization.removed_element in texts[3]
+            assert localization.substantial_equivalence_after_removal is True
+    elif scenario == "UNASSESSABLE":
+        assert set(verdicts.values()) == {"UNASSESSABLE"}
+        assert "phase2_insufficient" in texts[8]
+        assert all(
+            gates[finding.gate_a_id].state == "INSUFFICIENT" for finding in frozen.target_findings
+        )
+        assert all(
+            gates[finding.gate_d_id].state == "UNRESOLVED" for finding in frozen.target_findings
+        )
+    else:
+        combinations = [
+            profile for profile in bundle.target_profiles if profile.target_kind == "COMBINATION"
+        ]
+        assert len(combinations) == 1
+        combination = combinations[0]
+        assert set(combination.combination_members) == {"mcu_control", "mcu_status"}
+        combination_finding = next(
+            f for f in frozen.target_findings if f.target_id == combination.target_id
+        )
+        assert combination_finding.target_kind == "COMBINATION"
+        assert combination_finding.claim_scope == combination.statement
+        assert verdicts == {
+            "mcu_control": "NOT_NOVEL_AT_CLAIMED_LEVEL",
+            "mcu_status": "UNASSESSABLE",
+            combination.target_id: "UNASSESSABLE",
+        }
+        assert (
+            gates[
+                next(f.gate_c_id for f in frozen.target_findings if f.target_id == "mcu_control")
+            ].state
+            == "DIRECT_ESTABLISHED"
+        )
+        defenses = [
+            point
+            for role in bundle.judge_resolutions_and_limitations.role_cases
+            if isinstance(role, DefenseCase)
+            for point in role.points
+        ]
+        expected_disposition = "CONCESSION" if scenario == "DIRECT" else "OBJECTION"
+        assert any(point.disposition == expected_disposition for point in defenses)
+        assert f"Recorded defense disposition: {expected_disposition}." in texts[4]
+        if scenario == "M1":
+            advantages = [
+                value for value in bundle.value_projection if value.kind == "ATTRIBUTED_INPUT_CLAIM"
+            ]
+            assert advantages and all(
+                value.attributed_maturity_label.value == "DEMONSTRATED" for value in advantages
+            )
+            assert "Submitter's claimed advantage; no assessed maturity" in texts[5]
+            assert "DEMONSTRATED" in texts[5]
+
+
 @pytest.mark.parametrize(
     "scenario",
     [
@@ -67,6 +217,7 @@ def test_fallback_real_scenario_golden(tmp_path, scenario):
             assert case.bundle.eligible_comparisons[0].comparison.classification.relation.value == (
                 "STRONG_PARTIAL_PRECEDENT"
             )
+        assert_fallback_scenario_semantics(case, sections, scenario)
         golden = Path(__file__).parent / "phase8" / (scenario.lower() + ".json")
         actual = fallback_golden(sections)
         expected = json.loads(golden.read_text())

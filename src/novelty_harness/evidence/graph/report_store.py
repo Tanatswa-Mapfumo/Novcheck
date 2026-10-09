@@ -1022,14 +1022,12 @@ def accept_compiled_report(
     try:
         with Session(engine) as session:
             session.execute(text("BEGIN IMMEDIATE"))
-            _, artifacts = validate_compiled_report_in_session(
-                session, loader, compilation_id, proposed
-            )
+            current = validate_compiled_report_in_session(session, loader, compilation_id, proposed)
             existing = session.scalar(
                 select(CompiledReportRow).where(CompiledReportRow.compilation_id == compilation_id)
             )
             if existing is not None:
-                if report_attempt_state(artifacts).next_state != ReportAttemptState.ACCEPTED:
+                if current.next_state != ReportAttemptState.ACCEPTED:
                     raise ReportAuthorityError("accepted report lacks its terminal receipt")
                 original = CompiledAssessmentReport.model_validate_json(existing.document_json)
                 if original.report_id != proposed.report_id or report_id(original) != report_id(
@@ -1041,7 +1039,6 @@ def accept_compiled_report(
                 _validate_dependency_rows(session, original)
                 session.commit()
                 return original.report_id
-            current = report_attempt_state(artifacts)
             if current.next_state != ReportAttemptState.VERIFIED:
                 raise ReportAuthorityError("only VERIFIED can atomically accept a report")
             accepted = proposed.model_copy(update={"accepted_at": datetime.now(UTC)})
@@ -1132,10 +1129,10 @@ def load_compiled_report_in_session(
     compilation = load_report_compilation_in_session(session, row.compilation_id)
     if _accepted_header_id(session, compilation) != report_id:
         raise ReportAuthorityError("accepted report locator differs from its immutable manifest")
-    _, artifacts = validate_compiled_report_in_session(
+    current = validate_compiled_report_in_session(
         session, load_view_in_session, compilation.compilation_id, stored
     )
-    if report_attempt_state(artifacts).next_state != ReportAttemptState.ACCEPTED:
+    if current.next_state != ReportAttemptState.ACCEPTED:
         raise ReportAuthorityError("accepted report lacks its terminal receipt")
     _validate_dependency_rows(session, stored)
     return stored

@@ -64,11 +64,21 @@ class ResourceLimits:
             if self.soft_bytes > 256_000_000 or self.hard_bytes > 384_000_000
             else 1_000_000_000
         )
+        calibrated_small_report = (
+            self.launch_headroom_bytes >= 1_400_000_000
+            and self.soft_bytes <= 320_000_000
+            and self.hard_bytes <= 448_000_000
+            and (self.soft_bytes > 256_000_000 or self.hard_bytes > 384_000_000)
+        )
         calibrated_ir = self.launch_headroom_bytes >= 1_500_000_000
         warning_soft = 640_000_000 if calibrated_ir else 384_000_000
         warning_hard = 896_000_000 if calibrated_ir else 512_000_000
         if calibrated_ir:
             warning_headroom = 1_000_000_000
+        elif calibrated_small_report:
+            # Measured smaller native report load: narrower caps, explicit
+            # launch reserve, and more runtime reserve than the IR profile.
+            warning_headroom = 1_100_000_000
         if self.allow_warning and (
             self.policy_version != 2
             or self.soft_bytes > warning_soft
@@ -225,6 +235,15 @@ def approved_local_limits(limits: ResourceLimits) -> bool:
         )
         else 1_500_000_000
     )
+    if (
+        limits.policy_version == 2
+        and limits.allow_warning
+        and 1_400_000_000 <= limits.launch_headroom_bytes < 1_500_000_000
+        and limits.soft_bytes <= 320_000_000
+        and limits.hard_bytes <= 448_000_000
+        and (limits.soft_bytes > 256_000_000 or limits.hard_bytes > 384_000_000)
+    ):
+        headroom = 1_100_000_000
     return (
         limits.soft_bytes <= 1_500_000_000
         and limits.hard_bytes <= 2_000_000_000
