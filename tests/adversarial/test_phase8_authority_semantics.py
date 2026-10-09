@@ -231,8 +231,7 @@ def _rewrite_accepted_report(case, original, changed):
     return changed
 
 
-@pytest.mark.parametrize("kind", ["CONTEXT", "SOURCE_VERSION"])
-def test_canonical_dependency_transplant_fails_load(acceptance_case, foreign_report_case, kind):
+def _canonical_dependency_transplant(acceptance_case, foreign_report_case, kind):
     from novelty_harness.reporting.models import ReportDependency, authority_dependency_id
     from tests.unit.evidence.graph.test_report_store import _accepted_report
 
@@ -284,6 +283,12 @@ def test_canonical_dependency_transplant_fails_load(acceptance_case, foreign_rep
             }
         ),
     )
+    return report, attack
+
+
+@pytest.mark.parametrize("kind", ["CONTEXT", "SOURCE_VERSION"])
+def test_canonical_dependency_transplant_fails_load(acceptance_case, foreign_report_case, kind):
+    report, attack = _canonical_dependency_transplant(acceptance_case, foreign_report_case, kind)
     with pytest.raises(
         ReportAuthorityError, match="closure failed authoritative validation"
     ) as failure:
@@ -791,3 +796,385 @@ def test_full_generative_report_repair_acceptance_replay_and_revocation(acceptan
         )
     assert tuple(path.read_bytes() for path in paths) == original_bytes
     assert (tuple(port.calls), tuple(port.localized.calls)) == calls
+
+
+def test_complete_fallback_cannot_hide_missing_value_or_uncertainty(acceptance_case, tmp_path):
+    """Native compiler/load/export closure; execution remains a required gate."""
+    import json
+
+    import yaml
+
+    from novelty_harness.application.phase8_exports import export_compiled_report
+    from novelty_harness.reporting.models import ReportProposalError
+    from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
+    from tests.integration.test_phase8_compiler import (
+        assert_complete,
+        compile_report,
+        upstream_rows,
+    )
+
+    before = upstream_rows(acceptance_case)
+    report = compile_report(acceptance_case, token="fallback-material-closure")
+    assert_complete(acceptance_case, report)
+    assert all(
+        block.origin == "DETERMINISTIC_FALLBACK"
+        for section in report.ir.sections
+        for block in section.blocks
+    )
+    assert not report.execution_refs
+    assert not acceptance_case.frozen.value_findings
+    assert any(item.kind == "NO_VALUE_ASSESSMENT" for item in report.ir.value_availability)
+    assert all(
+        item.kind != "AUTHORITATIVE_VALUE_FINDING" and item.maturity is None
+        for item in report.ir.value_availability
+    )
+    assert report.ir.uncertainty_summary
+    assert all(
+        item.scope == report.scope and item.authority_refs for item in report.ir.uncertainty_summary
+    )
+    summary = report.ir.compact_summary
+    assert summary is not None
+    assert summary.value_availability == report.ir.value_availability
+    assert summary.uncertainty == report.ir.uncertainty_summary
+    for envelope in acceptance_case.bundle.language_envelopes:
+        target = next(target for target in summary.targets if target.target == envelope.target)
+        assert target.verdict == envelope.verdict
+        assert target.claim_scope == envelope.claim_scope
+        assert target.permitted_classes == envelope.permitted_classes
+        assert target.limitations == envelope.required_limitations
+
+    paths = export_compiled_report(
+        report.scope.assessment_id,
+        report_id=report.report_id,
+        repository=acceptance_case.repository,
+        artifact_writer=RunArtifactWriter(tmp_path / "fallback-exports"),
+    )
+    assert len(paths) == 3 and all(path.is_file() for path in paths)
+    for path, parser in ((paths[0], json.load), (paths[1], yaml.safe_load)):
+        with path.open() as stream:
+            exported = parser(stream)
+        assert exported["report_id"] == report.report_id
+        assert exported["ir"]["value_availability"] == [
+            item.model_dump(mode="json") for item in report.ir.value_availability
+        ]
+        assert exported["ir"]["uncertainty_summary"] == [
+            item.model_dump(mode="json") for item in report.ir.uncertainty_summary
+        ]
+        assert tuple(section["question_id"] for section in exported["ir"]["sections"]) == tuple(
+            range(1, 10)
+        )
+        del exported
+    # Inspect the public Markdown projections independently, reading only their
+    # lines rather than retaining another complete rendition beside the IR.
+    projections = {"Value availability": [], "Uncertainty": []}
+    active = None
+    with paths[2].open() as stream:
+        for line in stream:
+            if line.startswith("## "):
+                title = line[3:].strip()
+                active = title if title in projections else None
+            elif active is not None:
+                projections[active].append(line.replace("\\_", "_"))
+    value_text = "".join(projections["Value availability"])
+    assert "NO_VALUE_ASSESSMENT" in value_text
+    assert "AUTHORITATIVE_VALUE_FINDING" not in value_text
+    uncertainty_text = "".join(projections["Uncertainty"])
+    assert all(item.uncertainty_id in uncertainty_text for item in report.ir.uncertainty_summary)
+    del projections, value_text, uncertainty_text
+
+    # Rehash both the full IR and summary consistently; matching hashes cannot
+    # excuse a missing native projection, even when Q6/Q9 prose stays intact.
+    for field in ("value_availability", "uncertainty_summary"):
+        summary_field = "uncertainty" if field == "uncertainty_summary" else field
+        changed_ir = report.ir.model_copy(
+            update={
+                field: (),
+                "compact_summary": summary.model_copy(update={summary_field: ()}),
+            }
+        )
+        forged = _rehash_report(report.model_copy(update={"ir": changed_ir}))
+        assert forged.report_id != report.report_id
+        with pytest.raises(
+            ReportAuthorityError, match="closure failed authoritative validation"
+        ) as failure:
+            acceptance_case.repository.accept_compiled_report(report.compilation_id, forged)
+        assert isinstance(failure.value.__cause__, ReportProposalError)
+        assert str(failure.value.__cause__) == (
+            "IR differs from exact frozen projections, actual proofs or deterministic summary"
+        )
+        assert _accepted_count(
+            acceptance_case, type("Run", (), {"compilation_id": report.compilation_id})()
+        ) == (1, 1)
+        del failure, changed_ir, forged
+    assert upstream_rows(acceptance_case) == before
+    assert (
+        acceptance_case.repository.load_compiled_report(
+            report.scope.assessment_id, report_id=report.report_id
+        )
+        == report
+    )
+
+
+@pytest.mark.parametrize("kind", ["CONTEXT", "SOURCE_VERSION"])
+def test_consistent_hashes_do_not_rescue_wrong_version_or_context(
+    acceptance_case, foreign_report_case, tmp_path, kind
+):
+    """Canonical rows and valid FKs cannot authorize a foreign native closure."""
+    from novelty_harness.application.phase8_exports import export_compiled_report
+    from novelty_harness.reporting.models import ReportProposalError
+    from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
+    from tests.integration.test_phase8_compiler import upstream_rows
+
+    before = upstream_rows(acceptance_case)
+    report, attack = _canonical_dependency_transplant(acceptance_case, foreign_report_case, kind)
+    destination = tmp_path / "denied-exports"
+    with pytest.raises(
+        ReportAuthorityError, match="closure failed authoritative validation"
+    ) as failure:
+        acceptance_case.repository.load_compiled_report(
+            report.scope.assessment_id, report_id=attack.report_id
+        )
+    assert isinstance(failure.value.__cause__, ReportProposalError)
+    assert "exact frozen projections" in str(failure.value.__cause__)
+    del failure
+    with pytest.raises(
+        ReportAuthorityError, match="closure failed authoritative validation"
+    ) as failure:
+        export_compiled_report(
+            report.scope.assessment_id,
+            report_id=attack.report_id,
+            repository=acceptance_case.repository,
+            artifact_writer=RunArtifactWriter(destination),
+        )
+    assert isinstance(failure.value.__cause__, ReportProposalError)
+    assert "exact frozen projections" in str(failure.value.__cause__)
+    del failure
+    assert not any(path.is_file() for path in destination.rglob("*"))
+    assert upstream_rows(acceptance_case) == before
+    assert _accepted_count(
+        acceptance_case, type("Run", (), {"compilation_id": report.compilation_id})()
+    ) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    "votes", [("SUPPORTED", "SUPPORTED", "REJECTED"), ("REJECTED", "SUPPORTED", "SUPPORTED")]
+)
+def test_ordered_model_votes_cannot_accept_rejected_material_claim(acceptance_case, votes):
+    """Ordered support prose cannot override an exact typed material rejection."""
+    from novelty_harness.reporting.verification import ClaimVerificationBatch
+    from tests.integration.test_phase8_compiler import (
+        RecordedCompilerPort,
+        assert_complete,
+        compile_report,
+        generous_options,
+        upstream_rows,
+    )
+
+    class VotingProsePort(RecordedCompilerPort):
+        async def verify(self, context):
+            batch = await super().verify(context)
+            if context.question_id != 1:
+                return batch
+            first = context.extraction.claims[0]
+            reason = "Ordered recorded model opinions: " + ", ".join(votes)
+            return batch.model_copy(
+                update={
+                    "dispositions": tuple(
+                        disposition.model_copy(
+                            update={
+                                "disposition": "REJECTED",
+                                "reason_codes": ("UNSUPPORTED_PROPOSITION",),
+                                "reason": reason,
+                            }
+                        )
+                        if disposition.claim_id == first.claim_id
+                        else disposition
+                        for disposition in batch.dispositions
+                    ),
+                }
+            )
+
+        async def repair(self, context):
+            self.operation("repair", context.cluster.question_id)
+            raise RuntimeError("recorded repair unavailable; votes cannot supply a repair")
+
+    before = upstream_rows(acceptance_case)
+    port = VotingProsePort()
+    report = compile_report(
+        acceptance_case, token="ordered-votes", port=port, options=generous_options()
+    )
+    assert_complete(acceptance_case, report)
+    artifacts = acceptance_case.repository.load_report_artifacts(report.compilation_id)
+    rejected = tuple(
+        artifact
+        for artifact in artifacts
+        if isinstance(artifact.document, ClaimVerificationBatch)
+        and artifact.question_id == 1
+        and not artifact.document.accepted
+    )
+    assert rejected
+    assert votes.count("SUPPORTED") > votes.count("REJECTED")
+    for artifact in rejected:
+        # A completeness rejection must not mask a missing claim-disposition guard.
+        assert all(block.disposition == "SUPPORTED" for block in artifact.document.blocks)
+        dispositions = tuple(
+            item for item in artifact.document.dispositions if item.disposition == "REJECTED"
+        )
+        assert dispositions
+        assert all(
+            item.reason == "Ordered recorded model opinions: " + ", ".join(votes)
+            for item in dispositions
+        )
+    first = report.ir.sections[0]
+    assert all(block.origin == "DETERMINISTIC_FALLBACK" for block in first.blocks)
+    assert any(
+        block.origin == "GENERATIVE_ACCEPTED"
+        for section in report.ir.sections[1:]
+        for block in section.blocks
+    )
+    rejected_ids = {artifact.artifact_id for artifact in rejected}
+    assert rejected_ids <= {item.report_artifact_id for item in report.dependencies}
+    assert not rejected_ids & {
+        reference for block in first.blocks for reference in block.verification_refs
+    }
+    assert upstream_rows(acceptance_case) == before
+
+
+@pytest.mark.parametrize("boundary", ["EXTRACTION", "COMPOSITION"])
+def test_hidden_heading_assertion_crosses_extraction_and_composition_boundary(
+    acceptance_case, boundary
+):
+    """Actual heading text crosses both semantic boundaries before native acceptance."""
+    from novelty_harness.reporting.claims import TextSpan
+    from novelty_harness.reporting.verification import ClaimVerificationBatch, CompositionCheck
+    from tests.integration.test_phase8_compiler import (
+        RecordedCompilerPort,
+        assert_complete,
+        compile_report,
+        generous_options,
+        upstream_rows,
+    )
+
+    assertion = "Together, the known components establish universal novelty for the whole proposal."
+
+    class HiddenHeadingPort(RecordedCompilerPort):
+        async def write(self, context):
+            draft = await super().write(context)
+            if context.question_id == 1:
+                heading = draft.blocks[0].model_copy(update={"kind": "HEADING", "text": assertion})
+                draft = draft.model_copy(update={"blocks": (heading, *draft.blocks[1:])})
+                self.drafts[1] = draft
+            return draft
+
+        async def extract(self, context):
+            proposal = await super().extract(context)
+            if context.question_id != 1 or boundary != "EXTRACTION":
+                return proposal
+            heading_id = context.draft.blocks[0].block_id
+            omitted = {claim.claim_id for claim in proposal.claims if claim.block_id == heading_id}
+            assert omitted
+            return proposal.model_copy(
+                update={
+                    "claims": tuple(
+                        claim for claim in proposal.claims if claim.claim_id not in omitted
+                    ),
+                    "basis_links": tuple(
+                        link for link in proposal.basis_links if link.claim_id not in omitted
+                    ),
+                    "block_accounts": tuple(
+                        account.model_copy(
+                            update={"claim_ids": (), "non_material_reason": "Decorative heading"}
+                        )
+                        if account.block_id == heading_id
+                        else account
+                        for account in proposal.block_accounts
+                    ),
+                }
+            )
+
+        async def verify(self, context):
+            batch = await super().verify(context)
+            if context.question_id != 1 or boundary != "EXTRACTION":
+                return batch
+            heading = context.draft.blocks[0]
+            return batch.model_copy(
+                update={
+                    "blocks": tuple(
+                        block.model_copy(
+                            update={
+                                "disposition": "REJECTED",
+                                "missing_assertion_spans": (
+                                    TextSpan(start=0, end=len(heading.text)),
+                                ),
+                                "reason_codes": ("MISSING_MATERIAL_ASSERTION",),
+                            }
+                        )
+                        if block.block_id == heading.block_id
+                        else block
+                        for block in batch.blocks
+                    ),
+                }
+            )
+
+        async def repair(self, context):
+            self.operation("repair", context.cluster.question_id)
+            raise RuntimeError("recorded repair unavailable; hidden heading must fall back")
+
+        async def check_composition(self, context):
+            if boundary == "EXTRACTION":
+                return await super().check_composition(context)
+            self.operation("composition")
+            heading = context.drafts[0].blocks[0]
+            assert heading.kind == "HEADING" and heading.text == assertion
+            assert any(
+                claim.normalized_assertion == assertion for claim in context.extractions[0].claims
+            )
+            return CompositionCheck(
+                scope=context.scope,
+                compilation_id=context.compilation_id,
+                narrative_digest=context.narrative_digest,
+                claims_digest=context.claims_digest,
+                permission_digest=context.permission_digest,
+                disposition="REJECTED",
+                implicated_block_ids=(heading.block_id,),
+                implicated_question_ids=(1,),
+                indeterminate_scope=False,
+                reason_codes=("WHOLE_SCOPE_DRIFT",),
+                reason="Recorded heading implies a stronger whole than the frozen permission",
+            )
+
+    before = upstream_rows(acceptance_case)
+    port = HiddenHeadingPort()
+    report = compile_report(
+        acceptance_case, token="hidden-heading-" + boundary, port=port, options=generous_options()
+    )
+    assert_complete(acceptance_case, report)
+    artifacts = acceptance_case.repository.load_report_artifacts(report.compilation_id)
+    local = tuple(
+        artifact.document
+        for artifact in artifacts
+        if isinstance(artifact.document, ClaimVerificationBatch) and artifact.question_id == 1
+    )
+    assert local
+    if boundary == "EXTRACTION":
+        assert any(
+            "MISSING_MATERIAL_ASSERTION" in block.reason_codes and block.missing_assertion_spans
+            for check in local
+            for block in check.blocks
+        )
+    else:
+        assert all(check.accepted for check in local)
+        assert any(
+            isinstance(artifact.document, CompositionCheck)
+            and not artifact.document.accepted
+            and artifact.document.implicated_question_ids == (1,)
+            and "WHOLE_SCOPE_DRIFT" in artifact.document.reason_codes
+            for artifact in artifacts
+        )
+    assert all(block.origin == "DETERMINISTIC_FALLBACK" for block in report.ir.sections[0].blocks)
+    assert all(
+        block.draft_block.text != assertion
+        for section in report.ir.sections
+        for block in section.blocks
+    )
+    assert upstream_rows(acceptance_case) == before
