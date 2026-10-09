@@ -52,13 +52,20 @@ class ResourceLimits:
             raise ValueError("invalid risk policy")
         if self.max_paging_bytes_per_second <= 0 or self.paging_window_seconds < 1:
             raise ValueError("paging policy requires a positive rate and one-second window")
+        # Medium warning execution is calibrated only after a measured small
+        # attempt; require extra native headroom while retaining runtime stops.
+        warning_headroom = (
+            1_500_000_000
+            if self.soft_bytes > 256_000_000 or self.hard_bytes > 384_000_000
+            else 1_000_000_000
+        )
         if self.allow_warning and (
             self.policy_version != 2
-            or self.soft_bytes > 256_000_000
-            or self.hard_bytes > 384_000_000
-            or self.min_headroom_bytes < 1_000_000_000
+            or self.soft_bytes > 384_000_000
+            or self.hard_bytes > 512_000_000
+            or self.min_headroom_bytes < warning_headroom
         ):
-            raise ValueError("warning-pressure execution is limited to bounded small workloads")
+            raise ValueError("warning-pressure execution exceeds bounded profile or headroom")
 
 
 @dataclass(frozen=True)
@@ -195,7 +202,12 @@ class RiskMonitor:
 
 def approved_local_limits(limits: ResourceLimits) -> bool:
     headroom = (
-        1_000_000_000 if limits.policy_version == 2 and limits.allow_warning else 1_500_000_000
+        1_000_000_000
+        if limits.policy_version == 2
+        and limits.allow_warning
+        and limits.soft_bytes <= 256_000_000
+        and limits.hard_bytes <= 384_000_000
+        else 1_500_000_000
     )
     return (
         limits.soft_bytes <= 1_500_000_000
@@ -494,7 +506,13 @@ def main() -> int:
     parser.add_argument("--soft-bytes", type=int, default=256_000_000)
     parser.add_argument("--hard-bytes", type=int, default=384_000_000)
     parser.add_argument("--timeout", type=float, default=60)
-    parser.add_argument("--small-workload", action="store_true")
+    profile = parser.add_mutually_exclusive_group()
+    profile.add_argument("--small-workload", action="store_true")
+    profile.add_argument(
+        "--qualified-medium",
+        action="store_true",
+        help="Measured medium recipe only; requires 1.5 GB native headroom",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = tuple(args.command[1:] if args.command[:1] == ["--"] else args.command)
@@ -506,7 +524,7 @@ def main() -> int:
             hard_bytes=args.hard_bytes,
             timeout_seconds=args.timeout,
             policy_version=2,
-            allow_warning=args.small_workload,
+            allow_warning=args.small_workload or args.qualified_medium,
             min_headroom_bytes=1_000_000_000 if args.small_workload else 1_500_000_000,
         ),
         output=args.output,

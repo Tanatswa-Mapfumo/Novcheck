@@ -170,6 +170,18 @@ async def test_real_slice_compiles_loaded_report_and_preserves_summary_only_bran
     assert json.loads((exported / "report.json").read_text())["report_id"] == full.report.report_id
     assert (exported / "report.yaml").exists() and (exported / "report.md").exists()
     assert any(event.stage.value == "REPORTED" for event in sink.events)
+    accepted_events = [e for e in sink.events if e.reason_code == "REPORT_STATUS_ACCEPTED"]
+    assert len(accepted_events) == 1
+    assert accepted_events[0].data["report_id"] == full.report.report_id
+    assert accepted_events[0].data["compilation_id"] == full.report.compilation_id
+    export_events = [e for e in sink.events if e.reason_code == "REPORT_EXPORT_COMPLETE"]
+    assert len(export_events) == 1
+    assert export_events[0].data["report_id"] == full.report.report_id
+    local_events = [
+        json.loads(line) for line in (full.run_dir / "trace.jsonl").read_text().splitlines()
+    ]
+    assert any(e["event_id"] == accepted_events[0].event_id for e in local_events)
+    assert any(e["event_id"] == export_events[0].event_id for e in local_events)
 
 
 @pytest.mark.parametrize("failure", ["generation", "export"])

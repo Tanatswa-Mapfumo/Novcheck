@@ -76,6 +76,7 @@ from novelty_harness.ports.models import (
     SearchQuery,
     SourceContent,
 )
+from novelty_harness.ports.reporting import ReportPorts
 from novelty_harness.ports.search import SearchProvider
 from novelty_harness.reporting.ir import CompiledAssessmentReport
 from novelty_harness.reporting.minimal import (
@@ -962,11 +963,16 @@ async def run_vertical_slice(
                 artifact_writer.write_text(record.assessment_id, "report.md", summary.markdown)
                 if phase8 is not None:
                     try:
+                        report_ports = phase8.ports or ReportPorts()
+                        report_ports = replace(
+                            report_ports,
+                            trace_sink=report_ports.trace_sink or _ResearchTraceSink(run),
+                        )
                         report = await compile_assessment_report(
                             record.assessment_id,
                             adjudication_id=frozen.adjudication_id,
                             repository=repository,
-                            ports=phase8.ports,
+                            ports=report_ports,
                             options=phase8.options,
                             attempt_token=phase8.attempt_token,
                         )
@@ -975,6 +981,7 @@ async def run_vertical_slice(
                             report_id=report.report_id,
                             repository=repository,
                             artifact_writer=artifact_writer,
+                            trace_sink=_ResearchTraceSink(run),
                         )
                     except ReportAuthorityError:
                         raise

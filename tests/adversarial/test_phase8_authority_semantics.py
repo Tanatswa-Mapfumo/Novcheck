@@ -621,3 +621,173 @@ def test_rehashed_actual_instruction_cannot_authorize_loaded_report(acceptance_c
         acceptance_case.repository.load_compiled_report(
             report.scope.assessment_id, report_id=attack.report_id
         )
+
+
+def test_report_success_trace_follows_commit_and_cannot_authorize_text(acceptance_case):
+    from novelty_harness.application.phase8_tracing import publish_report_events
+    from novelty_harness.reporting.execution import ReportExecutionRecord
+    from novelty_harness.runtime.tracing.sinks import InMemoryTraceSink
+
+    compilation, proposed, _ = _report_candidate(acceptance_case, generative=True)
+    report_id = acceptance_case.repository.accept_compiled_report(
+        compilation.compilation_id, proposed
+    )
+    accepted = acceptance_case.repository.load_compiled_report(
+        compilation.scope.assessment_id, report_id=report_id
+    )
+    calls = []
+
+    class FailingSink(InMemoryTraceSink):
+        def emit(self, event):
+            # A separate native read must already see acceptance before success delivery.
+            assert (
+                acceptance_case.repository.load_compiled_report(
+                    compilation.scope.assessment_id, report_id=report_id
+                )
+                == accepted
+            )
+            calls.append(event)
+            if event.reason_code == "REPORT_STATUS_ACCEPTED":
+                raise OSError("recorded delivery failure after acceptance")
+            super().emit(event)
+
+    failed = publish_report_events(
+        compilation.compilation_id, repository=acceptance_case.repository, sink=FailingSink()
+    )
+    assert failed == tuple(e.event_id for e in calls if e.reason_code == "REPORT_STATUS_ACCEPTED")
+    assert (
+        acceptance_case.repository.load_compiled_report(
+            compilation.scope.assessment_id, report_id=report_id
+        )
+        == accepted
+    )
+    committed = acceptance_case.repository.load_report_artifacts(compilation.compilation_id)
+    expected = {
+        a.artifact_id: a.document.request_hash
+        for a in committed
+        if isinstance(a.document, ReportExecutionRecord)
+    }
+    assert {
+        e.data["artifact_id"]: e.request_hash
+        for e in calls
+        if e.reason_code.startswith("REPORT_EXECUTION_")
+    } == expected
+    sink = InMemoryTraceSink()
+    assert (
+        publish_report_events(
+            compilation.compilation_id, repository=acceptance_case.repository, sink=sink
+        )
+        == ()
+    )
+    assert {e.event_id for e in sink.events} == {e.event_id for e in calls}
+    assert acceptance_case.repository.load_report_artifacts(compilation.compilation_id) == committed
+    with pytest.raises(ReportAuthorityError):
+        acceptance_case.repository.load_compiled_report(
+            compilation.scope.assessment_id, report_id=sink.events[0].event_id
+        )
+
+
+def test_full_generative_report_repair_acceptance_replay_and_revocation(acceptance_case, tmp_path):
+    """Integrated native boundary; pending execution is not acceptance evidence."""
+    from collections import Counter
+
+    from novelty_harness.application.phase8_exports import export_compiled_report
+    from novelty_harness.ports.reporting import ReportPorts
+    from novelty_harness.reporting.execution import ReportExecutionRecord
+    from novelty_harness.reporting.models import ReportSemanticRole
+    from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
+    from tests.integration.test_phase8_compiler import (
+        RecordedCompilerPort,
+        assert_complete,
+        compile_report,
+        generous_options,
+        upstream_rows,
+    )
+    from tests.unit.reporting.test_repair import ScriptedSections
+
+    class RepairingCompiler(RecordedCompilerPort):
+        def __init__(self):
+            super().__init__()
+            self.localized = ScriptedSections()
+
+        async def write(self, context):
+            if context.question_id == 2:
+                self.operation("write", 2)
+                return await self.localized.write(context)
+            return await super().write(context)
+
+        async def extract(self, context):
+            if context.draft.question_id == 2:
+                self.operation("extract", 2)
+                return await self.localized.extract(context)
+            return await super().extract(context)
+
+        async def verify(self, context):
+            if context.draft.question_id == 2:
+                self.operation("verify", 2)
+                return await self.localized.verify(context)
+            return await super().verify(context)
+
+        async def repair(self, context):
+            self.operation("repair", context.cluster.question_id)
+            return await self.localized.repair(context)
+
+    port = RepairingCompiler()
+    ports = ReportPorts(planner=port, writer=port, extractor=port, verifier=port)
+    options = generous_options()
+    before = upstream_rows(acceptance_case)
+    report = compile_report(
+        acceptance_case, token="integrated-closure", port=port, ports=ports, options=options
+    )
+    assert_complete(acceptance_case, report)
+    assert any(b.origin == "GENERATIVE_ACCEPTED" for s in report.ir.sections for b in s.blocks)
+    repairs = Counter(
+        context.cluster.origin_id for name, context in port.localized.calls if name == "repair"
+    )
+    assert repairs and all(count == 1 for count in repairs.values())
+    artifacts = acceptance_case.repository.load_report_artifacts(report.compilation_id)
+    repair_executions = [
+        a
+        for a in artifacts
+        if isinstance(a.document, ReportExecutionRecord)
+        and a.document.role == ReportSemanticRole.REPAIR
+    ]
+    assert len(repair_executions) == sum(repairs.values())
+    calls = tuple(port.calls), tuple(port.localized.calls)
+    replay = compile_report(
+        acceptance_case,
+        token="integrated-closure",
+        ports=ports,
+        options=options,
+        repository=acceptance_case.repository,
+    )
+    assert replay == report
+    assert (tuple(port.calls), tuple(port.localized.calls)) == calls
+    assert upstream_rows(acceptance_case) == before
+    writer = RunArtifactWriter(tmp_path / "exports")
+    paths = export_compiled_report(
+        report.scope.assessment_id,
+        report_id=report.report_id,
+        repository=acceptance_case.repository,
+        artifact_writer=writer,
+    )
+    assert all(path.is_file() for path in paths)
+    original_bytes = tuple(path.read_bytes() for path in paths)
+    _corrupt(
+        acceptance_case,
+        "DELETE FROM phase6_graph_edge_memberships WHERE edge_id=:id",
+        {"id": acceptance_case.bundle.authorized_relations[0].edge.edge_id},
+    )
+    with pytest.raises(ReportAuthorityError):
+        acceptance_case.repository.load_compiled_report(
+            report.scope.assessment_id, report_id=report.report_id
+        )
+    with pytest.raises(ReportAuthorityError):
+        export_compiled_report(
+            report.scope.assessment_id,
+            report_id=report.report_id,
+            repository=acceptance_case.repository,
+            artifact_writer=writer,
+        )
+    assert tuple(path.read_bytes() for path in paths) == original_bytes
+    assert (tuple(port.calls), tuple(port.localized.calls)) == calls

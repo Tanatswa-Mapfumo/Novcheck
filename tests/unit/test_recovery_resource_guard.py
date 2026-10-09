@@ -413,3 +413,72 @@ class RiskPolicyTests(unittest.TestCase):
             monitor = RiskMonitor(self.limits)
             monitor.check(self.sample(10))
             self.assertEqual(monitor.check(replace(stable, **change)), "SUSTAINED_PAGING")
+
+
+class QualifiedMediumPolicyTests(unittest.TestCase):
+    def limits(self):
+        return ResourceLimits(
+            soft_bytes=320_000_000,
+            hard_bytes=448_000_000,
+            min_headroom_bytes=1_500_000_000,
+            allow_warning=True,
+        )
+
+    def test_measured_medium_warning_profile_preserves_runtime_protection(self):
+        from scripts.recovery.resource_guard import RiskMonitor, approved_local_limits
+
+        limits = self.limits()
+        self.assertTrue(approved_local_limits(limits))
+        base = replace(
+            safe_sample(),
+            pressure=2,
+            headroom_bytes=1_800_000_000,
+            swap_bytes=5_000_000_000,
+            pageins_bytes=0,
+            pageouts_bytes=0,
+            swapins_bytes=0,
+            swapouts_bytes=0,
+            monotonic_seconds=10,
+        )
+        monitor = RiskMonitor(limits)
+        self.assertIsNone(monitor.check(base))
+        self.assertIsNone(monitor.check(replace(base, monotonic_seconds=13)))
+        self.assertEqual(
+            monitor.check(replace(base, monotonic_seconds=14, footprint_bytes=320_000_000)),
+            "SOFT_MEMORY_LIMIT",
+        )
+
+    def test_medium_profile_cannot_borrow_small_headroom_or_heavy_caps(self):
+        with self.assertRaises(ValueError):
+            replace(self.limits(), min_headroom_bytes=1_000_000_000)
+        with self.assertRaises(ValueError):
+            replace(self.limits(), soft_bytes=384_000_001, hard_bytes=512_000_000)
+        with self.assertRaises(ValueError):
+            replace(self.limits(), hard_bytes=512_000_001)
+
+    def test_medium_profile_keeps_severe_paging_and_critical_pressure_stops(self):
+        from scripts.recovery.resource_guard import RiskMonitor
+
+        base = replace(
+            safe_sample(),
+            pressure=2,
+            headroom_bytes=1_800_000_000,
+            pageins_bytes=0,
+            pageouts_bytes=0,
+            swapins_bytes=0,
+            swapouts_bytes=0,
+            monotonic_seconds=10,
+        )
+        monitor = RiskMonitor(self.limits())
+        self.assertIsNone(monitor.check(base))
+        self.assertEqual(
+            monitor.check(replace(base, monotonic_seconds=13, swapouts_bytes=192_000_000)),
+            "SUSTAINED_PAGING",
+        )
+        self.assertEqual(
+            RiskMonitor(self.limits()).check(replace(base, pressure=4)), "MEMORY_PRESSURE"
+        )
+        self.assertEqual(
+            RiskMonitor(self.limits()).check(replace(base, headroom_bytes=1_499_999_999)),
+            "LOW_HEADROOM",
+        )

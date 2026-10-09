@@ -1,5 +1,6 @@
 """Compile a report from exact repository locators, then return authoritative readback."""
 
+import logging
 from datetime import UTC, datetime
 from typing import cast
 
@@ -10,6 +11,7 @@ from novelty_harness.application.phase8_sections import (
     invoke_report_operation,
     record_section_artifact,
 )
+from novelty_harness.application.phase8_tracing import publish_report_events
 from novelty_harness.domain.ids import AssessmentId
 from novelty_harness.ports.reporting import ReportPorts
 from novelty_harness.reporting.artifacts import (
@@ -43,6 +45,16 @@ from novelty_harness.reporting.plan import (
 )
 from novelty_harness.reporting.repository import ReportAuthorityError, ReportRepository
 from novelty_harness.runtime.tracing.hashing import canonical_json
+
+
+def _publish_trace(compilation_id: str, repository: ReportRepository, ports: ReportPorts) -> None:
+    if ports.trace_sink is not None:
+        failed = publish_report_events(compilation_id, repository=repository, sink=ports.trace_sink)
+        if failed:
+            logging.getLogger(__name__).warning(
+                "Committed report trace delivery failed; retry publish_report_events",
+                extra={"compilation_id": compilation_id, "failed_event_ids": failed},
+            )
 
 
 def _state(artifacts: tuple[ReportArtifact, ...]) -> ReportStatusEvent:
@@ -186,9 +198,11 @@ async def compile_assessment_report(
         prefix = "Accepted compiled report "
         if not current.reason.startswith(prefix):
             raise ReportAuthorityError("accepted compilation has no exact report locator")
-        return repository.load_compiled_report(
+        loaded = repository.load_compiled_report(
             assessment_id, report_id=current.reason[len(prefix) :]
         )
+        _publish_trace(compilation.compilation_id, repository, selected)
+        return loaded
     if current.next_state == ReportAttemptState.FAILED:
         raise ReportAuthorityError("failed compilation requires a new attempt token")
     for role in compilation.configuration.roles:
@@ -259,4 +273,6 @@ async def compile_assessment_report(
     )
     proposed = proposed.model_copy(update={"report_id": report_id(proposed)})
     accepted_id = repository.accept_compiled_report(compilation.compilation_id, proposed)
-    return repository.load_compiled_report(assessment_id, report_id=accepted_id)
+    loaded = repository.load_compiled_report(assessment_id, report_id=accepted_id)
+    _publish_trace(compilation.compilation_id, repository, selected)
+    return loaded
