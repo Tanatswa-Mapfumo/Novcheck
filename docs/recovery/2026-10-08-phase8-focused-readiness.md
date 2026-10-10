@@ -2,7 +2,7 @@
 
 **Date:** 8 October 2026. **Tested implementation:** `562f63e2542f387b275c85b364fea082a44ae2fe`, clean tree; source/file-mode digest `e7f1c066a3808308afe50dc01ba55aaafe4466ac708364098ae6331f4f67db93`.
 
-**Status: INCOMPLETE — historical focused selection remains 52/69; three formerly pending native nodes now pass at their recorded source identities, leaving 14 native readiness nodes pending. Task 22 cleanup corrections have resumed with focused RED/GREEN proof; native integration assertions remain unverified. Independent Task 23 delivery/capability work is in progress; Task 24 integrated coverage is prepared.** This is a development readiness gate, not recovered-baseline or Phase 8 acceptance.
+**Status: INCOMPLETE — historical focused selection remains 52/69; eleven formerly pending native nodes now pass at their recorded source identities, leaving six native readiness nodes pending. Task 22 cleanup corrections have resumed with focused RED/GREEN proof; native integration assertions remain unverified. Independent Task 23 delivery/capability work is in progress; Task 24 integrated coverage is prepared.** This is a development readiness gate, not recovered-baseline or Phase 8 acceptance.
 
 ## Authorization and preserved state
 
@@ -646,3 +646,29 @@ Clean, independently backed-up `e8c2bd8` completed full native recomputation and
 The validator now returns its complete validated private report and terminal status; acceptance and authoritative loading consume that report. Complete native closure/IR/citation/fallback recomputation, exact dependencies/provenance, scope/identity checks, rendering/parity, atomic transaction and immutable replay remain intact. The native regression requires canonical acceptance, authoritative reload equality, unchanged caller bytes, exact replay, one accepted row/terminal and unchanged upstream rows. Native GREEN is pending at this pre-run backup checkpoint; no pass is inferred from inspection.
 
 The final unrestricted-policy mechanical selection passed **98 controls plus 16 nested subtests** (`task22-unrestricted-current-controls-green-124`, 12.886s), including strict wrapper and closure-lifetime controls. Historical policy construction is now separate from current `ResourceLimits`, so even invalid obsolete memory arguments cannot reject current execution. Cohort planning no longer imposes a memory tier or requires capacity proof before dispatching unmeasured required nodes. New behavior received exact RED/GREEN controls. Current receipts record disabled memory fields and zero samples when memory is unobserved; zero sampled peaks do not imply zero memory consumption. Full Ruff lint/format pass. Complete strict Pyright passed at the corrected application identity (`task22-unrestricted-snapshot-pyright-122`, 9.060s, zero diagnostics); later supervisor/test/traceability changes retain separate identities. All 14 historical focused native nodes and final acceptance gates remain open pending actual execution.
+
+
+## 10 October: unrestricted native readiness and exact functional corrections
+
+Clean checkpoint `507b0589576c5d5aa844424170b795992e121e67` was pushed without force and independently restored from GitHub and its complete local bundle. All 567 tracked blobs and Git modes matched and integrity checks passed; bundle SHA `4f33526e1c2682583b68d39b4a2c04fab074817a6770950db864f8f5de3cbaa6`. Actual collection recorded **2,813 required nodes and the same five network exclusions**, execution identity `a1294871b72cac6b0a460ef637b781e5f46767341f4e4fde86432a5b6d5eb840`. No memory samples were collected; zero recorded peaks mean unobserved memory use.
+
+The tracked acceptance-snapshot regression now passes all setup/call/teardown, native acceptance/reload/replay, exit and cleanup (`task22-unrestricted-snapshot-green-125`, 382.885s). It preserves caller bytes, canonical accepted identity, one accepted terminal and unchanged upstream rows. Reopened accounting retains exact inventory/evidence hashes.
+
+Eight formerly pending focused nodes pass at that same identity:
+
+| Exact owning boundary | Receipt | Supervised elapsed |
+| --- | --- | ---: |
+| Complete fallback coordinator | `task22-unrestricted-full-fallback-readiness-125` | 450.103s |
+| Exact text/execution/dependency acceptance | `task22-unrestricted-readiness-00-126` | 313.826s |
+| Atomic acceptance rollback | `01-126` | 197.569s |
+| Authoritative one-transaction report load | `02-126` | 294.907s |
+| Native CONTEXT transplant refusal | `03-126` | 368.065s |
+| Native SOURCE_VERSION transplant refusal | `04-126` | 367.441s |
+| All-format scope/permission/limitation preservation | `05-126` | 184.170s |
+| Full generative planner/writer/synthesis pipeline | `06-126` | 1,592.970s |
+
+`task22-unrestricted-focused-accounting-128.json` independently reopens all eight complete receipts against the collected inventory. All phases, supervisor exit and cleanup pass; historical source identities are not relabeled as a current full gate. **Six focused nodes remain pending.** The new acceptance regression is separate from the protected 69-node selection.
+
+The real-slice primary then failed functionally before compilation (`07-126`, 56.325s): its prepared observer expected FROZEN, but the deliberately limited real research fixture freezes an UNASSESSABLE finding and the native Phase 7 store correctly commits ABSTAINED. The test now requires that exact verdict, exact ABSTAINED state and independently reloaded frozen authority; upstream-row, attempt-scope, nine-question, accepted-load, summary, export and trace assertions remain. Native GREEN is pending at this backup checkpoint. No production state or fixture research ceiling changed.
+
+A separate synthetic cleanup regression reproduced retention of departed descendant PIDs (`task22-live-process-red-128`). Tracking now retains only living process members, preserving living escaped descendants and timeout/cleanup gates. The first synthetic attempt lacked a subprocess constant and is not the regression RED. The corrected supervisor selection passed **85 tests plus 16 nested subtests** (`task22-live-process-green-128`, 11.872s); full Ruff lint/format pass (449 Python files). No memory gate was restored. These edits retain a new source identity and do not relabel earlier native passes. Tasks 22–24, rendering replacements, full final verification, detached acceptance and independent whole-phase review remain OPEN. Original-tree equivalence remains unproved.

@@ -529,7 +529,7 @@ def run_guarded(
                 collect = collector
                 while True:
                     before = time.monotonic()
-                    known.update(process_tree_members(process.pid, known))
+                    known = set(process_tree_members(process.pid, known))
                     if collect is not None:
                         try:
                             sample = collect(process.pid)

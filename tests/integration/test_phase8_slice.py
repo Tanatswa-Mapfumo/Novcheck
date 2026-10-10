@@ -102,6 +102,7 @@ async def test_real_slice_compiles_loaded_report_and_preserves_summary_only_bran
     del summary_only
     from novelty_harness.adjudication.models import Phase7RunState
     from novelty_harness.application import vertical_slice
+    from novelty_harness.domain.enums import VerdictState
 
     original_compile = vertical_slice.compile_assessment_report
     observed = []
@@ -112,7 +113,16 @@ async def test_real_slice_compiles_loaded_report_and_preserves_summary_only_bran
             assessment_id, adjudication_id=kwargs["adjudication_id"]
         )
         frozen = bundle.frozen_adjudication
-        assert repository.load_phase7_run(frozen.run_id).state == Phase7RunState.FROZEN
+        # This deliberately limited real research fixture freezes an unassessable
+        # finding. Its authoritative terminal state records that abstention.
+        assert frozen.overall_finding.verdict == VerdictState.UNASSESSABLE
+        assert repository.load_phase7_run(frozen.run_id).state == Phase7RunState.ABSTAINED
+        assert (
+            repository.load_frozen_adjudication(
+                assessment_id, adjudication_id=frozen.adjudication_id
+            )
+            == frozen
+        )
         case = ReportCase(repository, frozen, bundle)
         before = upstream_rows(case)
         scope, run_id, adjudication_id = bundle.scope, frozen.run_id, frozen.adjudication_id

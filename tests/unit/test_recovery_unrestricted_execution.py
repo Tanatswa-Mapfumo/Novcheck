@@ -165,3 +165,59 @@ def test_legacy_constructor_arguments_cannot_refuse_current_execution():
     )
     assert limits.policy_version == 3
     assert limits.soft_bytes == limits.hard_bytes == limits.min_headroom_bytes == 0
+
+
+def test_departed_process_ids_are_not_retained_for_cleanup(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from scripts.recovery import resource_guard as guard
+
+    class Child:
+        pid = 12345
+        returncode = None
+        polls = 0
+
+        def poll(self):
+            self.polls += 1
+            if self.polls >= 3:
+                self.returncode = 0
+            return self.returncode
+
+    child = Child()
+    observations = []
+    cleanup = []
+
+    def members(pid, known):
+        observations.append(set(known))
+        if len(observations) == 1:
+            return (12345, 45678)
+        if len(observations) == 2:
+            return (12345,)
+        assert 45678 not in known, (
+            "departed descendant retained; its PID could belong to another process"
+        )
+        return (12345,) if len(observations) == 3 else ()
+
+    monkeypatch.setattr(guard, "_output", lambda command: "mechanical-source")
+    monkeypatch.setattr(
+        guard,
+        "subprocess",
+        SimpleNamespace(
+            check_output=lambda *args, **kwargs: b"",
+            Popen=lambda *args, **kwargs: child,
+            STDOUT=-2,
+        ),
+    )
+    monkeypatch.setattr(guard, "process_tree_members", members)
+    monkeypatch.setattr(
+        guard, "_cleanup", lambda process, grace, known: cleanup.append(set(known)) or True
+    )
+    receipt = guard.run_guarded(
+        ("mechanical-child-never-executed",),
+        cwd=Path.cwd(),
+        limits=ResourceLimits(timeout_seconds=3),
+        output=tmp_path / "guard.json",
+        lock_path=tmp_path / "lock",
+    )
+    assert receipt.state == "PASSED"
+    assert cleanup == [{12345}]
