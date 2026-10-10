@@ -517,6 +517,9 @@ inherited_requirements:
       - "tests/integration/test_phase8_compiler.py::test_native_trace_retry_preserves_committed_execution_without_dispatch"
       - "tests/unit/test_phase8_tracing.py::test_attempt_reload_projects_complete_committed_closure_with_stable_retry_id"
       - "tests/unit/test_phase8_tracing.py::test_attempt_reload_sink_failure_preserves_artifact_delivery"
+      - "tests/unit/test_phase8_tracing.py::test_plan_firewall_trace_discloses_origin_and_retries_without_semantic_calls"
+      - "tests/unit/test_phase8_tracing.py::test_plan_firewall_sink_failure_returns_exact_retry_id_without_mutation"
+      - "tests/unit/test_phase8_tracing.py::test_plan_origin_delivery_appends_beside_legacy_event_and_jsonl_retry_is_idempotent"
     verification: "PENDING_FULL_NATIVE_DELIVERY_RESUME_AND_CITATION_GATE"
 versions:
   approved_registry: "p8-approved-methods-v1"

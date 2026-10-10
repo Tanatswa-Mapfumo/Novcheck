@@ -10,6 +10,7 @@ from novelty_harness.reporting.execution import ReportExecutionRecord, ReportRol
 from novelty_harness.reporting.fallback import FallbackRecord
 from novelty_harness.reporting.firewall import FirewallResult
 from novelty_harness.reporting.ir import CompiledAssessmentReport
+from novelty_harness.reporting.plan import ReportPlan
 from novelty_harness.reporting.repository import ReportAuthorityError, ReportRepository
 from novelty_harness.reporting.verification import ClaimVerificationBatch, CompositionCheck
 from novelty_harness.runtime.tracing.hashing import canonical_hash
@@ -65,12 +66,54 @@ def publish_report_events(
     events = (
         _event(a, start, configurations) for a in sorted(artifacts, key=lambda a: a.artifact_id)
     )
-    for event in chain((_attempt_load_event(artifacts, start),), events, accepted_events):
+    plan_events = (
+        _plan_firewall_event(a, start)
+        for a in sorted(artifacts, key=lambda a: a.artifact_id)
+        if isinstance(a.document, ReportPlan)
+    )
+    for event in chain(
+        (_attempt_load_event(artifacts, start),), events, plan_events, accepted_events
+    ):
         try:
             sink.emit(event)
         except Exception:
             failed.append(event.event_id)
     return tuple(failed)
+
+
+def _plan_firewall_event(artifact: ReportArtifact, start: ReportStatusEvent) -> TraceEvent:
+    """Append explicit planning origin without rewriting legacy artifact events."""
+    plan = artifact.document
+    if not isinstance(plan, ReportPlan):
+        raise ReportAuthorityError("plan trace requires a committed coverage-validated plan")
+    data: dict[str, JsonValue] = {
+        "compilation_id": artifact.compilation_id,
+        "adjudication_id": artifact.scope.adjudication_id,
+        "assessment_context_id": artifact.scope.assessment_context_id,
+        "phase6_snapshot_id": artifact.scope.phase6_snapshot_id,
+        "artifact_id": artifact.artifact_id,
+        "artifact_kind": "PLAN_FIREWALL",
+        "method_version": artifact.method_version,
+        "execution_ref": artifact.execution_ref,
+        "plan_id": plan.plan_id,
+        "origin": plan.origin,
+        "bundle_digest": plan.bundle_digest,
+        "proposal_digest": plan.proposal_digest,
+        "validation_method": plan.validation_method,
+    }
+    return TraceEvent(
+        event_id="trace_"
+        + canonical_hash(
+            {"projection": "p8-plan-firewall-trace-v1", "artifact_id": artifact.artifact_id}
+        ),
+        assessment_id=artifact.scope.assessment_id,
+        occurred_at=start.observed_at,
+        stage=AssessmentStage.REPORTED,
+        component="phase8",
+        status=TraceStatus.DEGRADED if plan.origin == "COVERAGE_FALLBACK" else TraceStatus.SUCCESS,
+        reason_code="REPORT_PLAN_FIREWALL_" + plan.origin,
+        data=data,
+    )
 
 
 def _attempt_load_event(

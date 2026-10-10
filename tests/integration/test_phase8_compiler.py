@@ -666,6 +666,7 @@ def test_begin_and_resume_trace_precedes_semantic_dispatch(
         _configuration,
         compile_assessment_report,
     )
+    from novelty_harness.domain.enums import TraceStatus
     from novelty_harness.reporting.artifacts import ReportAttemptState, make_report_artifact
     from novelty_harness.reporting.plan import build_coverage_plan
     from novelty_harness.runtime.tracing.sinks import InMemoryTraceSink
@@ -751,9 +752,16 @@ def test_begin_and_resume_trace_precedes_semantic_dispatch(
                 ReportArtifactKind.STATUS,
                 ReportArtifactKind.PLAN,
             }
-            assert next(
-                a.document for a in committed if a.kind == ReportArtifactKind.PLAN
-            ).questions
+            plan = next(a for a in committed if a.kind == ReportArtifactKind.PLAN)
+            assert plan.document.questions
+            plan_events = [
+                e for e in sink.events if e.reason_code == "REPORT_PLAN_FIREWALL_COVERAGE_FALLBACK"
+            ]
+            assert len(plan_events) == 3 and len({e.event_id for e in plan_events}) == 1
+            assert all(e.status == TraceStatus.DEGRADED for e in plan_events)
+            assert all(e.data["artifact_id"] == plan.artifact_id for e in plan_events)
+            assert all(e.data["origin"] == "COVERAGE_FALLBACK" for e in plan_events)
+            assert all(e.data["bundle_digest"] == case.bundle.bundle_digest for e in plan_events)
 
     finally:
         case.repository.close()

@@ -453,3 +453,111 @@ def test_attempt_reload_sink_failure_preserves_artifact_delivery():
     assert {e.data["artifact_id"] for e in delivered if "artifact_id" in e.data} == {
         a.artifact_id for a in artifacts
     }
+
+
+def plan_shapes(origin="COVERAGE_FALLBACK"):
+    from novelty_harness.reporting.plan import ReportPlan
+
+    compilation, artifacts = committed_shapes()
+    plan = ReportPlan(
+        scope=compilation.scope,
+        compilation_id=compilation.compilation_id,
+        plan_id="plan-delivery-shape",
+        bundle_digest=compilation.bundle_digest,
+        questions=(),
+        proposal_digest="d" * 64,
+        validation_basis_refs=(),
+        origin=origin,
+    )
+    artifact = make_report_artifact(
+        compilation, ReportArtifactKind.PLAN, plan, method_version="p8-plan-firewall-v1"
+    )
+    return compilation, (*artifacts, artifact), artifact
+
+
+@pytest.mark.parametrize("origin", ["COVERAGE_FALLBACK", "PLANNER"])
+def test_plan_firewall_trace_discloses_origin_and_retries_without_semantic_calls(origin):
+    from novelty_harness.application.phase8_tracing import publish_report_events
+
+    compilation, artifacts, plan = plan_shapes(origin)
+    repository = ReadOnlyRepository(compilation, artifacts)
+    sink = InMemoryTraceSink()
+    assert publish_report_events(compilation.compilation_id, repository=repository, sink=sink) == ()
+    first = sink.events
+    events = [e for e in first if e.reason_code == "REPORT_PLAN_FIREWALL_" + origin]
+    assert len(events) == 1
+    event = events[0]
+    assert event.status == (
+        TraceStatus.DEGRADED if origin == "COVERAGE_FALLBACK" else TraceStatus.SUCCESS
+    )
+    assert event.data["origin"] == origin
+    assert event.data["artifact_id"] == plan.artifact_id
+    assert event.data["plan_id"] == plan.document.plan_id
+    assert event.data["bundle_digest"] == compilation.bundle_digest
+    assert event.data["proposal_digest"] == "d" * 64
+    assert event.data["validation_method"] == "p8-plan-firewall-v1"
+    assert event.data["adjudication_id"] == compilation.scope.adjudication_id
+    assert event.occurred_at == compilation.started_at
+    assert "questions" not in event.data and "Secret prose" not in str(first)
+    assert publish_report_events(compilation.compilation_id, repository=repository, sink=sink) == ()
+    assert sink.events[len(first) :] == first
+    assert repository.artifacts == artifacts
+
+
+def test_plan_firewall_sink_failure_returns_exact_retry_id_without_mutation():
+    from novelty_harness.application.phase8_tracing import publish_report_events
+
+    compilation, artifacts, _ = plan_shapes()
+    delivered = []
+
+    class FailingSink:
+        def emit(self, event):
+            delivered.append(event)
+            if event.reason_code == "REPORT_PLAN_FIREWALL_COVERAGE_FALLBACK":
+                raise OSError("controlled plan delivery failure")
+
+    repository = ReadOnlyRepository(compilation, artifacts)
+    failed = publish_report_events(
+        compilation.compilation_id, repository=repository, sink=FailingSink()
+    )
+    events = [e for e in delivered if e.reason_code == "REPORT_PLAN_FIREWALL_COVERAGE_FALLBACK"]
+    assert len(events) == 1
+    assert failed == (events[0].event_id,)
+    assert repository.artifacts == artifacts
+
+
+def test_plan_origin_delivery_appends_beside_legacy_event_and_jsonl_retry_is_idempotent(tmp_path):
+    import json
+
+    from novelty_harness.application.phase8_tracing import publish_report_events
+    from novelty_harness.domain.enums import AssessmentStage
+    from novelty_harness.runtime.tracing.hashing import canonical_hash
+    from novelty_harness.runtime.tracing.models import TraceEvent
+    from novelty_harness.runtime.tracing.sinks import JsonlTraceSink
+
+    compilation, artifacts, plan = plan_shapes()
+    path = tmp_path / "trace.jsonl"
+    sink = JsonlTraceSink(path)
+    legacy = TraceEvent(
+        event_id="trace_"
+        + canonical_hash({"projection": "p8-trace-v1", "artifact_id": plan.artifact_id}),
+        assessment_id=compilation.scope.assessment_id,
+        occurred_at=OBSERVED,
+        stage=AssessmentStage.REPORTED,
+        component="phase8",
+        status=TraceStatus.SUCCESS,
+        reason_code="REPORT_PLAN_COMMITTED",
+        data={"artifact_id": plan.artifact_id, "artifact_kind": "PLAN"},
+    )
+    sink.emit(legacy)
+    original = path.read_bytes()
+    repository = ReadOnlyRepository(compilation, artifacts)
+    assert publish_report_events(compilation.compilation_id, repository=repository, sink=sink) == ()
+    completed = path.read_bytes()
+    assert completed.startswith(original)
+    records = [json.loads(line) for line in completed.splitlines()]
+    events = [e for e in records if e["reason_code"] == "REPORT_PLAN_FIREWALL_COVERAGE_FALLBACK"]
+    assert len(events) == 1 and events[0]["event_id"] != legacy.event_id
+    assert events[0]["data"]["origin"] == "COVERAGE_FALLBACK"
+    assert publish_report_events(compilation.compilation_id, repository=repository, sink=sink) == ()
+    assert path.read_bytes() == completed
