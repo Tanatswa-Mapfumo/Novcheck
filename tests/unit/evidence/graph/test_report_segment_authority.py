@@ -107,9 +107,24 @@ def test_segmented_publication_failure_rolls_back_every_row(acceptance_case, mon
     before = _upstream_rows(case.repository)
     monkeypatch.setattr(report_store, "_inline_document_capacity", lambda *_: 0)
     for selected in (CompiledReportChunkRow, ReportDependencyRow, ReportArtifactRow):
+        observed_partial_segment_rows = []
 
         def fail(session, _context, _instances):
-            if any(isinstance(row, selected) for row in session.new):
+            rows = [row for row in session.new if isinstance(row, selected)]
+            if selected is CompiledReportChunkRow:
+                # Ordinal zero is already flushed in the SAME uncommitted
+                # transaction. Fail on the next row, rather than before any
+                # segment publication, and independently observe that first row.
+                if not any(row.ordinal == 1 for row in rows):
+                    return
+                count = (
+                    session.connection()
+                    .exec_driver_sql("SELECT COUNT(*) FROM compiled_report_document_chunks")
+                    .scalar_one()
+                )
+                assert count == 1
+                observed_partial_segment_rows.append(count)
+            if rows:
                 raise RuntimeError("injected segmented publication failure")
 
         event.listen(Session, "before_flush", fail)
@@ -118,6 +133,8 @@ def test_segmented_publication_failure_rolls_back_every_row(acceptance_case, mon
                 case.repository.accept_compiled_report(compilation.compilation_id, proposed)
         finally:
             event.remove(Session, "before_flush", fail)
+        if selected is CompiledReportChunkRow:
+            assert observed_partial_segment_rows == [1]
         assert _accepted_count(case, compilation) == (0, 0)
         with case.repository.engine.connect() as connection:
             assert (
