@@ -289,10 +289,10 @@ def run_batch(cwd, python, directory, *, inventory, nodes, limits, resume_from=N
 
 
 def plan_measured_batches(inventory_path, cohort_paths, *, cwd, python):
-    """Group only complete measured cohorts; unmeasured nodes are not dispatched.
+    """Schedule verified cohorts, then every remaining node sequentially.
 
-    Same-source capacity proofs are deliberately conservative. Never infer light
-    workloads from file names, isolated per-test peaks, or a historical lost tree.
+    Prior proof supplies ordering and timeout information, never memory eligibility.
+    Unmeasured tests run fresh; scheduling does not count them as passing.
     """
     inventory = load_inventory(inventory_path, cwd, python)
     covered = set()
@@ -309,23 +309,26 @@ def plan_measured_batches(inventory_path, cohort_paths, *, cwd, python):
             raise ValueError("cohort environment differs from collection")
         if any(node not in inventory["expected_nodes"] or node in covered for node in nodes):
             raise ValueError("overlapping or foreign measured cohort")
-        guard = receipt["guard"]
-        peak = max(guard["peak_rss_bytes"], guard["peak_footprint_bytes"])
-        if len(nodes) > 1 and (
-            receipt["limits"]["soft_bytes"] > 256_000_000 or peak * 1.25 >= 256_000_000
-        ):
-            raise ValueError("multi-node cohort does not fit the conservative lightweight tier")
         covered.update(nodes)
         measured_seconds += receipt["total_seconds"]
         batches.append(
             {
                 "nodes": nodes,
-                "limits": receipt["limits"],
+                "limits": asdict(execution_limits(ResourceLimits(**receipt["limits"]))),
                 "capacity_evidence": str(path),
                 "state": "MEASURED",
             }
         )
     unmeasured = [node for node in inventory["expected_nodes"] if node not in covered]
+    batches.extend(
+        {
+            "nodes": [node],
+            "limits": asdict(ResourceLimits(timeout_seconds=14_400)),
+            "capacity_evidence": None,
+            "state": "UNVERIFIED",
+        }
+        for node in unmeasured
+    )
     return {
         "batches": batches,
         "unmeasured_nodes": unmeasured,
@@ -333,7 +336,7 @@ def plan_measured_batches(inventory_path, cohort_paths, *, cwd, python):
         "required_count": len(inventory["expected_nodes"]),
         "measured_cohort_seconds": measured_seconds,
         "complete_suite_forecast_seconds": None,
-        "state": "PLAN_COMPLETE" if not unmeasured else "CAPACITY_INCOMPLETE",
+        "state": "PLAN_COMPLETE",
     }
 
 
@@ -352,8 +355,6 @@ def account_complete_inventory(inventory_path, batch_paths, *, cwd, python):
                 path, source_identity=inventory["source_identity"], expected_nodes=nodes
             )
             or receipt.get("configuration") != inventory["configuration"]
-            or receipt["limits"]["soft_bytes"] > 1_500_000_000
-            or receipt["limits"]["hard_bytes"] > 2_000_000_000
         ):
             return {"state": "INCOMPLETE", "reason": "INVALID_BATCH_EVIDENCE"}
         actual.extend(nodes)
@@ -368,11 +369,11 @@ def account_complete_inventory(inventory_path, batch_paths, *, cwd, python):
 
 
 def execute_measured_plan(inventory_path, cohort_paths, output, *, cwd, python, resume=False):
-    """Execute proven cohorts sequentially; incomplete capacity is never a suite pass.
+    """Execute all scheduled nodes sequentially; scheduling is never a suite pass.
 
     Resume reopens each complete proof through run_batch. Fresh is the default;
     final detached verification must use fresh execution and separate final gates.
-    A resource refusal stops this dispatch session rather than retrying.
+    An incomplete functional/timeout/lifecycle outcome stops the dispatch session.
     """
     started = time.perf_counter()
     plan = plan_measured_batches(inventory_path, cohort_paths, cwd=cwd, python=python)
@@ -389,7 +390,11 @@ def execute_measured_plan(inventory_path, cohort_paths, output, *, cwd, python, 
             inventory=inventory,
             nodes=batch["nodes"],
             limits=ResourceLimits(**batch["limits"]),
-            resume_from=Path(batch["capacity_evidence"]) if resume else None,
+            resume_from=(
+                Path(batch["capacity_evidence"])
+                if resume and batch["capacity_evidence"] is not None
+                else None
+            ),
         )
         proof = (
             Path(result["receipt"]) if result["state"] == "RESUMED" else directory / "batch.json"

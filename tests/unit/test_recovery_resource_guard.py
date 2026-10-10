@@ -10,7 +10,10 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from scripts.recovery.resource_guard import ResourceLimits, ResourceSample, run_guarded, stop_reason
+from scripts.recovery.resource_guard import (
+    HistoricalResourceLimits as ResourceLimits,
+)
+from scripts.recovery.resource_guard import ResourceSample, run_guarded, stop_reason
 
 
 def safe_sample(pgid=None):

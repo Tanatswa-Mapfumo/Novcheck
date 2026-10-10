@@ -1034,7 +1034,9 @@ def accept_compiled_report(
     try:
         with Session(engine) as session:
             session.execute(text("BEGIN IMMEDIATE"))
-            current = validate_compiled_report_in_session(session, loader, compilation_id, proposed)
+            proposed, current = validate_compiled_report_in_session(
+                session, loader, compilation_id, proposed
+            )
             existing = session.scalar(
                 select(CompiledReportRow).where(CompiledReportRow.compilation_id == compilation_id)
             )
@@ -1141,7 +1143,7 @@ def load_compiled_report_in_session(
     compilation = load_report_compilation_in_session(session, row.compilation_id)
     if _accepted_header_id(session, compilation) != report_id:
         raise ReportAuthorityError("accepted report locator differs from its immutable manifest")
-    current = validate_compiled_report_in_session(
+    stored, current = validate_compiled_report_in_session(
         session, load_view_in_session, compilation.compilation_id, stored
     )
     if current.next_state != ReportAttemptState.ACCEPTED:

@@ -123,3 +123,45 @@ def test_batch_normalizes_historical_recipe_before_dispatch(tmp_path, monkeypatc
                 policy_version=2, soft_bytes=1, hard_bytes=2, min_headroom_bytes=1
             ),
         )
+
+
+def test_sequential_plan_schedules_unmeasured_tests_and_ignores_observed_memory(
+    tmp_path, monkeypatch
+):
+    from dataclasses import asdict
+
+    from scripts.recovery import local_batches
+
+    nodes = ["tests/x.py::test_a", "tests/x.py::test_b", "tests/x.py::test_c"]
+    inventory = {"source_identity": "source", "expected_nodes": nodes, "configuration": {}}
+    receipt = {
+        "expected_nodes": nodes[:2],
+        "configuration": {},
+        "total_seconds": 1,
+        "guard": {"peak_rss_bytes": 100_000_000_000, "peak_footprint_bytes": 100_000_000_000},
+        "limits": asdict(ResourceLimits(timeout_seconds=120)),
+    }
+    monkeypatch.setattr(local_batches, "load_inventory", lambda *args: inventory)
+    monkeypatch.setattr(local_batches, "read_json", lambda *args: receipt)
+    monkeypatch.setattr(local_batches, "verify_resume", lambda *args, **kwargs: True)
+    result = local_batches.plan_measured_batches(
+        tmp_path / "inventory", [tmp_path / "cohort"], cwd=tmp_path, python=Path(sys.executable)
+    )
+    assert [node for batch in result["batches"] for node in batch["nodes"]] == nodes
+    assert all(
+        batch["limits"]["soft_bytes"] == batch["limits"]["hard_bytes"] == 0
+        for batch in result["batches"]
+    )
+    assert result["state"] == "PLAN_COMPLETE"
+
+
+def test_legacy_constructor_arguments_cannot_refuse_current_execution():
+    limits = ResourceLimits(
+        policy_version=2,
+        soft_bytes=100_000_000_000,
+        hard_bytes=1,
+        min_headroom_bytes=-1,
+        allow_warning=True,
+    )
+    assert limits.policy_version == 3
+    assert limits.soft_bytes == limits.hard_bytes == limits.min_headroom_bytes == 0

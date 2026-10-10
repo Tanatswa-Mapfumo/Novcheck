@@ -356,6 +356,7 @@ requirements:
     test_selectors:
       - "tests/unit/reporting/test_execution.py::test_execution_uses_matching_audit_and_instruction"
       - "tests/unit/evidence/graph/test_report_store.py::test_acceptance_revalidates_exact_text_execution_and_dependency_set"
+      - "tests/unit/evidence/graph/test_report_store.py::test_acceptance_persists_validated_snapshot_and_preserves_caller"
       - "tests/adversarial/test_phase8_authority_semantics.py::test_report_success_trace_follows_commit_and_cannot_authorize_text"
   -
     id: "RPT-23"

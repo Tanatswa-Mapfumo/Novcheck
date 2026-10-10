@@ -24,8 +24,8 @@ def validate_compiled_report_in_session(
     load_view_in_session: Callable[..., Phase6AssessmentView],
     compilation_id: str,
     proposed: CompiledAssessmentReport,
-) -> ReportStatusEvent:
-    """Validate the complete closure, retaining only its checked terminal status.
+) -> tuple[CompiledAssessmentReport, ReportStatusEvent]:
+    """Return the strictly validated proposal and its checked terminal status.
 
     Native inputs remain live through IR/dependency/provenance validation in the
     same transaction. They are released before allocating format renditions; no
@@ -84,7 +84,7 @@ def validate_compiled_report_in_session(
             proposed, renderer_version=compilation.options.render_policy_version
         )
         validate_rendition_parity(proposed, renditions)
-        return current
+        return proposed, current
     except ValueError as error:
         if isinstance(error, ReportAuthorityError):
             raise

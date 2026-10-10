@@ -8,6 +8,7 @@ from dataclasses import asdict, fields
 from pathlib import Path
 
 from scripts.recovery.resource_guard import (
+    HistoricalResourceLimits,
     ResourceLimits,
     ResourceSample,
     RiskMonitor,
@@ -123,7 +124,12 @@ def verify_guard(guard_path, samples_path):
         or guard["cleanup_complete"] is not True
     ):
         raise ValueError("supervisor did not complete safely")
-    limits = ResourceLimits(**{"policy_version": 1, **guard["limits"]})
+    recorded_limits = {"policy_version": 1, **guard["limits"]}
+    limits = (
+        ResourceLimits(**recorded_limits)
+        if recorded_limits["policy_version"] == 3
+        else HistoricalResourceLimits(**recorded_limits)
+    )
     if not approved_local_limits(limits):
         raise ValueError("supervisor policy exceeds approved local limits")
     if limits.policy_version == 3 and guard["limits"] != asdict(limits):

@@ -7,7 +7,8 @@ from dataclasses import asdict
 import pytest
 
 from scripts.recovery.batch_evidence import digest_file, verify_resume, write_record
-from scripts.recovery.resource_guard import ResourceLimits, ResourceSample, RunReceipt
+from scripts.recovery.resource_guard import HistoricalResourceLimits as ResourceLimits
+from scripts.recovery.resource_guard import ResourceSample, RunReceipt
 from scripts.recovery.sequential import account_batch
 
 

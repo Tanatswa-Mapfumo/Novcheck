@@ -716,6 +716,34 @@ def test_acceptance_revalidates_exact_text_execution_and_dependency_set(acceptan
     assert _accepted_count(case, compilation) == (1, 1)
 
 
+def test_acceptance_persists_validated_snapshot_and_preserves_caller(acceptance_case):
+    case = acceptance_case
+    compilation, proposed, artifacts = _report_candidate(case)
+    del artifacts
+    canonical_id = proposed.report_id
+    caller = proposed.model_copy(update={"report_id": " " + canonical_id + " "})
+    caller_wire = caller.model_dump_json()
+    before = _upstream_rows(case.repository)
+
+    accepted_id = case.repository.accept_compiled_report(compilation.compilation_id, caller)
+    assert accepted_id == canonical_id
+    assert caller.model_dump_json() == caller_wire
+    assert _accepted_count(case, compilation) == (1, 1)
+    assert _upstream_rows(case.repository) == before
+    del caller_wire
+    loaded = case.repository.load_compiled_report(
+        compilation.scope.assessment_id, report_id=accepted_id
+    )
+    assert loaded == proposed.model_copy(update={"accepted_at": loaded.accepted_at})
+    del loaded
+    assert (
+        case.repository.accept_compiled_report(compilation.compilation_id, caller) == canonical_id
+    )
+    assert caller.report_id == " " + canonical_id + " "
+    assert _accepted_count(case, compilation) == (1, 1)
+    assert _upstream_rows(case.repository) == before
+
+
 def test_caller_compiled_shape_or_ir_export_cannot_skip_acceptance(acceptance_case):
     from novelty_harness.reporting.repository import ReportAuthorityError
 

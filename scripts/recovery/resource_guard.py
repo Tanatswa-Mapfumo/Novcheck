@@ -19,12 +19,12 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
 @dataclass(frozen=True)
-class ResourceLimits:
+class HistoricalResourceLimits:
     soft_bytes: int = 1_500_000_000
     hard_bytes: int = 2_000_000_000
     min_headroom_bytes: int = 1_500_000_000
@@ -36,7 +36,7 @@ class ResourceLimits:
     timeout_seconds: float = 60
     grace_seconds: float = 0.5
     # Versions 1/2 are retained solely for interpreting historical receipts.
-    policy_version: int = 3
+    policy_version: int = 2
     allow_warning: bool = False
     max_paging_bytes_per_second: int = 16_000_000
     paging_window_seconds: float = 3.0
@@ -115,6 +115,17 @@ class ResourceLimits:
             or self.min_headroom_bytes < warning_headroom
         ):
             raise ValueError("warning-pressure execution exceeds bounded profile or headroom")
+
+
+@dataclass(frozen=True)
+class ResourceLimits(HistoricalResourceLimits):
+    """Current execution: only polling, timeout and cleanup grace govern lifetime."""
+
+    policy_version: int = 3
+
+    def __post_init__(self):
+        object.__setattr__(self, "policy_version", 3)
+        super().__post_init__()
 
 
 @dataclass(frozen=True)
@@ -253,7 +264,11 @@ class RiskMonitor:
 
 def execution_limits(limits: ResourceLimits) -> ResourceLimits:
     """Preserve lifecycle options; force unrestricted memory policy for every run."""
-    return replace(limits, policy_version=3)
+    return ResourceLimits(
+        sample_seconds=limits.sample_seconds,
+        timeout_seconds=limits.timeout_seconds,
+        grace_seconds=limits.grace_seconds,
+    )
 
 
 def approved_local_limits(limits: ResourceLimits) -> bool:

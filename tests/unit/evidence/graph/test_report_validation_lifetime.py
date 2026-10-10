@@ -98,7 +98,7 @@ def test_checked_native_closure_is_released_before_rendition_allocation(monkeypa
     result = report_validation.validate_compiled_report_in_session(
         None, None, report.compilation_id, report
     )
-    assert result == status
+    assert result == (report, status)
     assert calls == ["native_bundle", "native_artifacts", "IR_recomputation", "render", "parity"]
 
 
