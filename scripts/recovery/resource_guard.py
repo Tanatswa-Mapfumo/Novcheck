@@ -1,6 +1,7 @@
-"""Fail-closed macOS test supervisor; does not import the application.
+"""Sequential timeout supervisor; does not import the application.
 
-Sampled thresholds reduce risk but cannot prevent transient allocation overshoot.
+Execution policy v3 imposes no memory limits or memory preflight. Versions 1/2
+remain replay-only definitions for historical receipts; execution always uses v3.
 Receipts describe execution only, never repository acceptance or report authority.
 """
 
@@ -18,7 +19,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 
@@ -34,13 +35,32 @@ class ResourceLimits:
     sample_seconds: float = 0.1
     timeout_seconds: float = 60
     grace_seconds: float = 0.5
-    # Version 1 is retained solely for interpreting historical controls/receipts.
-    policy_version: int = 2
+    # Versions 1/2 are retained solely for interpreting historical receipts.
+    policy_version: int = 3
     allow_warning: bool = False
     max_paging_bytes_per_second: int = 16_000_000
     paging_window_seconds: float = 3.0
 
     def __post_init__(self):
+        if self.policy_version == 3:
+            if not all(
+                math.isfinite(value) and value > 0
+                for value in (self.sample_seconds, self.timeout_seconds, self.grace_seconds)
+            ):
+                raise ValueError("poll interval, timeout and grace must be finite and positive")
+            # Compatibility arguments cannot restore a memory restriction.
+            for name in (
+                "soft_bytes",
+                "hard_bytes",
+                "min_headroom_bytes",
+                "launch_headroom_bytes",
+                "max_swap_bytes",
+                "max_paging_bytes_per_second",
+                "paging_window_seconds",
+            ):
+                object.__setattr__(self, name, 0)
+            object.__setattr__(self, "allow_warning", True)
+            return
         if not all(math.isfinite(value) for value in asdict(self).values()):
             raise ValueError("limits must be finite")
         if not 0 < self.soft_bytes <= self.hard_bytes <= 3_000_000_000:
@@ -131,6 +151,8 @@ class RunReceipt:
 
 
 def stop_reason(sample: ResourceSample, limits: ResourceLimits) -> str | None:
+    if limits.policy_version == 3:
+        return None
     peak = max(sample.rss_bytes, sample.footprint_bytes, sample.peak_footprint_bytes)
     if peak >= limits.hard_bytes:
         return "HARD_MEMORY_LIMIT"
@@ -163,14 +185,14 @@ class RiskMonitor:
         self.started: float | None = None
 
     def ready(self, sample: ResourceSample) -> bool:
-        return self.limits.policy_version == 1 or (
+        return self.limits.policy_version in (1, 3) or (
             self.started is not None
             and sample.monotonic_seconds - self.started >= self.limits.paging_window_seconds
         )
 
     def check(self, sample: ResourceSample) -> str | None:
         reason = stop_reason(sample, self.limits)
-        if reason or self.limits.policy_version == 1:
+        if reason or self.limits.policy_version in (1, 3):
             return reason
         counters = ("pageins_bytes", "pageouts_bytes", "swapins_bytes", "swapouts_bytes")
         if any(
@@ -229,7 +251,14 @@ class RiskMonitor:
         return None
 
 
+def execution_limits(limits: ResourceLimits) -> ResourceLimits:
+    """Preserve lifecycle options; force unrestricted memory policy for every run."""
+    return replace(limits, policy_version=3)
+
+
 def approved_local_limits(limits: ResourceLimits) -> bool:
+    if limits.policy_version == 3:
+        return True
     headroom = (
         1_000_000_000
         if limits.policy_version == 2
@@ -422,8 +451,7 @@ def run_guarded(
 ) -> RunReceipt:
     if not command:
         raise ValueError("empty command")
-    if limits.policy_version == 2 and not approved_local_limits(limits):
-        raise ValueError("execution exceeds the approved local risk policy")
+    limits = execution_limits(limits)
     output.parent.mkdir(parents=True, exist_ok=True)
     # Reserve receipt before launch; no replay may overwrite previous evidence.
     receipt_file = output.open("x")
@@ -474,44 +502,40 @@ def run_guarded(
 
             previous_term = signal.signal(signal.SIGTERM, interrupted)
             try:
-                collect = collector or MacCollector()
-                risk = RiskMonitor(limits)
+                # Launch immediately under the global lock. macOS manages RAM/swap.
+                # Memory observers are optional diagnostics, never execution gates.
+                process = subprocess.Popen(
+                    command,
+                    cwd=cwd,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                collect = collector
                 while True:
                     before = time.monotonic()
-                    sample = collect(process.pid if process else None)
-                    known = set(sample.pids)
-                    count += 1
-                    peak_rss = max(peak_rss, sample.rss_bytes)
-                    peak_footprint = max(
-                        peak_footprint, sample.peak_footprint_bytes, sample.footprint_bytes
-                    )
-                    samples.write(json.dumps(asdict(sample)) + "\n")
-                    samples.flush()
-                    reason = risk.check(sample)
-                    if (
-                        reason is None
-                        and process is None
-                        and limits.launch_headroom_bytes
-                        and sample.headroom_bytes is not None
-                        and sample.headroom_bytes < limits.launch_headroom_bytes
-                    ):
-                        reason = "LOW_HEADROOM"
-                    if reason is None and time.monotonic() - before > 0.2:
-                        reason = "MONITOR_TOO_SLOW"
-                    if reason:
-                        state = "ABORTED" if process else "REFUSED"
-                        break
-                    if process is None:
-                        # Three stable samples before any actual command launch.
-                        if count >= 3 and risk.ready(sample):
-                            process = subprocess.Popen(
-                                command,
-                                cwd=cwd,
-                                stdout=log,
-                                stderr=subprocess.STDOUT,
-                                start_new_session=True,
+                    known.update(process_tree_members(process.pid, known))
+                    if collect is not None:
+                        try:
+                            sample = collect(process.pid)
+                        except Exception as exc:
+                            log.write(
+                                "Optional memory observation unavailable: "
+                                + type(exc).__name__
+                                + "\n"
                             )
-                    elif process.poll() is not None:
+                            collect = None
+                        else:
+                            count += 1
+                            peak_rss = max(peak_rss, sample.rss_bytes)
+                            peak_footprint = max(
+                                peak_footprint,
+                                sample.peak_footprint_bytes,
+                                sample.footprint_bytes,
+                            )
+                            samples.write(json.dumps(asdict(sample)) + "\n")
+                            samples.flush()
+                    if process.poll() is not None:
                         code = process.returncode
                         if process_tree_members(process.pid, known):
                             state, reason = "ABORTED", "DESCENDANTS_AFTER_EXIT"
@@ -563,15 +587,15 @@ def run_guarded(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--soft-bytes", type=int, default=256_000_000)
-    parser.add_argument("--hard-bytes", type=int, default=384_000_000)
+    parser.add_argument("--soft-bytes", type=int, default=0, help="Deprecated; ignored")
+    parser.add_argument("--hard-bytes", type=int, default=0, help="Deprecated; ignored")
     parser.add_argument("--timeout", type=float, default=60)
     profile = parser.add_mutually_exclusive_group()
     profile.add_argument("--small-workload", action="store_true")
     profile.add_argument(
         "--qualified-medium",
         action="store_true",
-        help="Measured medium recipe only; requires 1.5 GB native headroom",
+        help="Deprecated compatibility flag; memory is unrestricted",
     )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -583,9 +607,8 @@ def main() -> int:
             soft_bytes=args.soft_bytes,
             hard_bytes=args.hard_bytes,
             timeout_seconds=args.timeout,
-            policy_version=2,
+            policy_version=3,
             allow_warning=args.small_workload or args.qualified_medium,
-            min_headroom_bytes=1_000_000_000 if args.small_workload else 1_500_000_000,
         ),
         output=args.output,
     )

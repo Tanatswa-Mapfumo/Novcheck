@@ -58,9 +58,7 @@ def test_same_bytes_and_configuration_preserve_execution_identity(tmp_path, monk
     assert local_batches.execution_identity(tmp_path, python)[0] == before
 
 
-@pytest.mark.parametrize(
-    "attack", ["stale", "foreign", "duplicate", "large_limit", "weak_headroom", "weak_paging"]
-)
+@pytest.mark.parametrize("attack", ["stale", "foreign", "duplicate"])
 def test_invalid_batch_is_rejected_before_guard_dispatch(monkeypatch, attack):
     monkeypatch.setattr(local_batches, "execution_identity", lambda *args: ("source", "tree", {}))
 

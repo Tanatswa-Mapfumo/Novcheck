@@ -1,5 +1,7 @@
 # Local 8 GB verification remediation proposal
 
+> **10 October override:** The user explicitly removed all development/test memory restrictions. [ADR-042](../../architecture/decisions/ADR-042-unrestricted-development-test-memory.md) governs current execution. The caps, reserves and memory/paging stops below are historical policy and measurement records; they do not authorize a current launch veto or termination. Sequential execution, timeouts, cleanup and all functional acceptance gates remain required.
+
 **Status: verified A+B partial rollout retained; general expansion paused. Focused Phase 8 recovery readiness is INCOMPLETE (52 passes, 17 pending); controlled Tasks 22–24 resumption is authorized after that gate. Final acceptance remains OPEN. Current risk policy is in §11; current development priority is in §12.**
 
 **Date:** 8 October 2026. **Source checkpoint:** `fa7feb5daad3ab340c96f04413bfe79e11abe3fe`.

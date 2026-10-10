@@ -189,6 +189,7 @@ def test_v2_proof_replays_paging_and_completed_preflight(tmp_path, attack):
     guard = json.loads(files["guard"].read_text())
     guard["limits"] = asdict(
         ResourceLimits(
+            policy_version=2,
             soft_bytes=256000000,
             hard_bytes=384000000,
             allow_warning=True,

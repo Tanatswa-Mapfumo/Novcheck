@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 import os
-from dataclasses import fields
+from dataclasses import asdict, fields
 from pathlib import Path
 
 from scripts.recovery.resource_guard import (
@@ -126,6 +126,8 @@ def verify_guard(guard_path, samples_path):
     limits = ResourceLimits(**{"policy_version": 1, **guard["limits"]})
     if not approved_local_limits(limits):
         raise ValueError("supervisor policy exceeds approved local limits")
+    if limits.policy_version == 3 and guard["limits"] != asdict(limits):
+        raise ValueError("noncanonical unrestricted execution policy")
     risk = RiskMonitor(limits)
     count = peak_rss = peak_footprint = 0
     previous = -math.inf
@@ -137,7 +139,7 @@ def verify_guard(guard_path, samples_path):
             for value in (sample.rss_bytes, sample.footprint_bytes, sample.peak_footprint_bytes):
                 if type(value) is not int or value < 0:
                     raise ValueError("invalid native memory measurement")
-            if (
+            if limits.policy_version != 3 and (
                 type(sample.pressure) is not int
                 or type(sample.headroom_bytes) is not int
                 or sample.headroom_bytes < 0
@@ -156,8 +158,7 @@ def verify_guard(guard_path, samples_path):
                 peak_footprint, sample.footprint_bytes, sample.peak_footprint_bytes
             )
     if (
-        count < 4
-        or not risk.ready(sample)
+        (limits.policy_version != 3 and (count < 4 or not risk.ready(sample)))
         or count != guard["samples"]
         or peak_rss != guard["peak_rss_bytes"]
         or peak_footprint != guard["peak_footprint_bytes"]
