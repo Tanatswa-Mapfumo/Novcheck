@@ -511,3 +511,40 @@ The four projection owners initially stopped at the provisional 192 MB cap. Afte
 Full-project checker preflights `40`, `42` and `45` refused the unchanged launch reserve and started no children. Complete-report preflights also started no children. After the completed owning sequence, five fresh observations showed **1.439–1.453 GB headroom**, **7–20 ms** collector latency and approximately **31 KB/s** output paging (`task24-native-observations-after-required-owners-47`). Neither the checker nor the complete-report child was dispatched below its qualified margin. Earlier complete strict passes keep their recorded identities; no new typing pass is inferred.
 
 The raw rendering counterexamples and unmodified native primary remain **prepared, not passed**; their native RED/GREEN proof is still pending. No rendering replacement has been generated or adopted by this continuation. All **14 focused native readiness nodes**, Tasks 22–24 completion, full accepted authority/export/adversarial closure, final-source full verification, two rendering goldens, exact detached execution and independent whole-phase review remain OPEN. This evidence update changes documentation only and does not relabel earlier execution as final-source acceptance.
+
+## 10 October: complete small native owners and exact current-source accounting
+
+Continuation preserved clean checkpoint `171c9db65b98d3f9abe1417e757296910f326b12` and its independently matched GitHub/bundle restores. Application code, tests, dependencies, goldens and supervisor settings did not change during this execution increment. The following receipts bind source/file-mode execution identity `fbdcc5c19649ca77a1fa67daf40c87e6d4be03a60a6b1df43fe9884eaabbe4b0`, before this documentation update. No Task 22–24 or Phase 8 completion is claimed.
+
+### Complete native owning selections
+
+| Required owner | Exact passing nodes | Receipt | Guarded elapsed | Footprint/lifetime peak |
+| --- | ---: | --- | ---: | ---: |
+| Citation ancestry | 13 | `task24-required-native-test_citations-50` | 41.048s | 248,792,832 B |
+| Actual model/port execution and repair failure | 21 | `task24-required-native-test_execution-53` | 279.715s | 189,974,208 B |
+| Gate D research origin | 13 | `task24-required-native-test_gate_d_research_origin-53` | 66.120s | 131,204,672 B |
+| Phase 7 role authority | 27 | `task24-required-native-test_roles-53` | 78.859s | 125,978,112 B |
+| All-question fallback and native artifact recomputation | 19 | `task24-required-native-test_fallback-56` | 61.416s | 190,547,648 B |
+| Complete Phase 7 store owner | 40 | `task24-required-native-test_phase7_store-56` | 494.354s | 132,531,712 B |
+| Report verification | 36 | `task24-required-native-test_verification-62` | 76.873s | 192,644,864 B |
+| Native compilation attempts | 12 | `task24-required-native-test_attempts-62` | 102.909s | 135,251,584 B |
+| Complete native input bundle | 12 | `task24-required-native-test_bundle-62` | 227.712s | 132,089,408 B |
+| All six adopted fallback golden owners | 6 | `task24-required-native-test_phase8_reports-59` | 116.009s | 211,420,928 B |
+
+Every listed selection has passing setup/call/teardown, supervisor exit 0 and complete cleanup. The fallback owner observes all nine questions, full obligation coverage, unchanged native recomputation, inert upstream text and absent assessed value despite M1's attributed higher maturity. The six golden owners retain their independent raw native expectations before normalization. All replacement files, original provenance, preserved Markdown and partial rendering-prefix bytes remain unchanged. These passes establish their owning boundaries; they do not qualify complete compiler acceptance or real-slice integration.
+
+All **18 strict IR revalidation controls** also passed: 14 together in `task24-ir-current-strict-51`, then four allocation controls in separate `task24-ir-allocation-*-59` children. The largest allocation-control footprint was **212,862,784 B**. The first allocation attempt at suffix 51 stopped on paging and remains incomplete; its later complete receipt supplies fresh proof independently. These synthetic controls establish snapshot mechanics and strict rejection, not native accepted authority or a whole-process saving.
+
+### Exact accounting and resource outcomes
+
+The independently reopened `task24-current-source-accounting-65.json` joins the actual 2,801-node inventory to each complete guard, job, sample, log and pytest record. It verifies original evidence hashes, invocation/plugin/socket policy, all test phases, exit and cleanup. It accounts **24 complete selections, 997 distinct required parameterized nodes, zero overlapping nodes and 16 nested subtests separately**. The remaining **1,804 required nodes are unverified at this identity**. Accounting SHA: `28dea4384a5eddac1002c5e14082c84befc2986c94744bd31d7cb471c2071ae1`. This is partial source-bound execution evidence, not complete-suite or final detached acceptance.
+
+The additional passing selections include the existing 424 domain/state contracts, 55 remaining capability controls and 82 recovery-evidence controls, plus final-source serialization (19), compiled snapshot (8), citation snapshot (12) and rendition digest (18) owners. Earlier source identities and overlapping selections are not added. Protected continuation ledgers at suffixes 51, 58, 61 and 65 retain successful and incomplete outcomes separately.
+
+After six native golden and four isolated allocation passes, five fresh observations showed 1.536–1.589 GB headroom, 8–20 ms collection latency and about 39 KB/s output paging. One full strict checker launched under its unchanged 640/896 MB profile and stopped on **SUSTAINED_PAGING**, **13.652s**, **579,993,600 B sampled RSS / 592,477,248 B footprint**, with cleanup (`task24-rendering-full-pyright-61`). It produced no completed checker result or diagnostics; final-source strict typing remains OPEN. Its earlier complete strict passes retain their original identities. A subsequent checker attempt would require stronger observed launch margin than this aborted run; no guard default or threshold was changed.
+
+After three further complete native owners, fresh observations remained below the 1.7 GB complete-report reserve and 1.6 GB real-question reserve. Full acceptance, the three prepared raw-rendering controls and remaining real Q3/Q4/Q5/Q8/Q9 stages were **not dispatched** (`task24-native-observations-*-63`). There is no new stage result, failed semantic claim or inferred capacity proof from those observations.
+
+Four independent serialization owners subsequently passed. The 17-node parity owner then stopped on **SUSTAINED_PAGING**, **8.196s**, **77,579,648 B footprint**, with cleanup (`task24-required-native-test_rendering_parity-64`). That complete selection remains unverified; individual body output is not counted. Payload/YAML owners were not dispatched afterward. No identical paging-aborted recipe was immediately retried, caps raised, monitor relaxed or user app stopped. Warning pressure and allocated swap alone were never the veto.
+
+All **14 focused native readiness nodes**, Task 22 full real integration and accepted exports, Task 23 full accepted delivery, Task 24 integrated adversarial executions, two rendering replacements, final strict typing/full suites, `scripts/verify.py`, exact clean detached verification and whole-phase independent review remain OPEN. Original `1f50323` equivalence remains unproved. No speedup, whole-suite forecast, memory-saving or acceptance claim follows from this increment.
