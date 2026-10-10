@@ -529,7 +529,12 @@ def run_guarded(
                 collect = collector
                 while True:
                     before = time.monotonic()
-                    known = set(process_tree_members(process.pid, known))
+                    try:
+                        known = set(process_tree_members(process.pid, known))
+                    except subprocess.TimeoutExpired:
+                        # A slow process listing is not a test failure. Retain
+                        # the last live membership until the next observation.
+                        log.write("Process listing timed out; observing again\n")
                     if collect is not None:
                         try:
                             sample = collect(process.pid)
@@ -552,11 +557,18 @@ def run_guarded(
                             samples.flush()
                     if process.poll() is not None:
                         code = process.returncode
-                        if process_tree_members(process.pid, known):
-                            state, reason = "ABORTED", "DESCENDANTS_AFTER_EXIT"
+                        try:
+                            remaining = process_tree_members(process.pid, known)
+                        except subprocess.TimeoutExpired:
+                            # Do not infer that descendants are gone. Wait for
+                            # a confirmed observation under the run timeout.
+                            log.write("Exit process listing timed out; observing again\n")
                         else:
-                            state = "PASSED" if code == 0 else "FAILED"
-                        break
+                            if remaining:
+                                state, reason = "ABORTED", "DESCENDANTS_AFTER_EXIT"
+                            else:
+                                state = "PASSED" if code == 0 else "FAILED"
+                            break
                     if time.monotonic() - started >= limits.timeout_seconds:
                         state, reason = "ABORTED", "TIME_LIMIT"
                         break

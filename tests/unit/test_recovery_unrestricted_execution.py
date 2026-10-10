@@ -221,3 +221,66 @@ def test_departed_process_ids_are_not_retained_for_cleanup(tmp_path, monkeypatch
     )
     assert receipt.state == "PASSED"
     assert cleanup == [{12345}]
+
+
+@pytest.mark.parametrize("listing", ["transient", "persistent"])
+def test_transient_process_listing_timeout_does_not_terminate_test(tmp_path, monkeypatch, listing):
+    import subprocess
+    from types import SimpleNamespace
+
+    from scripts.recovery import resource_guard as guard
+
+    class Child:
+        pid = 12345
+        returncode = None
+        polls = 0
+
+        def poll(self):
+            if listing == "persistent":
+                return None
+            self.polls += 1
+            if self.polls >= 3:
+                self.returncode = 0
+            return self.returncode
+
+    child = Child()
+    observations = []
+    cleanup = []
+
+    def members(pid, known):
+        observations.append(set(known))
+        if listing == "persistent" or len(observations) in (1, 4):
+            raise subprocess.TimeoutExpired(("ps",), 2)
+        return (child.pid,) if child.returncode is None else ()
+
+    monkeypatch.setattr(guard, "_output", lambda command: "mechanical-source")
+    monkeypatch.setattr(
+        guard,
+        "subprocess",
+        SimpleNamespace(
+            check_output=lambda *args, **kwargs: b"",
+            Popen=lambda *args, **kwargs: child,
+            STDOUT=-2,
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
+    monkeypatch.setattr(guard, "process_tree_members", members)
+    monkeypatch.setattr(
+        guard, "_cleanup", lambda process, grace, known: cleanup.append(set(known)) or True
+    )
+    receipt = guard.run_guarded(
+        ("mechanical-child-never-executed",),
+        cwd=Path.cwd(),
+        limits=ResourceLimits(timeout_seconds=0.05 if listing == "persistent" else 3),
+        output=tmp_path / "guard.json",
+        lock_path=tmp_path / "lock",
+    )
+    if listing == "persistent":
+        assert receipt.state == "ABORTED"
+        assert receipt.reason == "TIME_LIMIT"
+        assert len(observations) >= 2
+    else:
+        assert receipt.state == "PASSED"
+        assert receipt.returncode == 0
+        assert len(observations) >= 5
+    assert len(cleanup) == 1
