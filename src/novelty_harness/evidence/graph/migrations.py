@@ -13,7 +13,7 @@ from novelty_harness.evidence.graph.sqlalchemy_models import (
     VerifiedEdgeRow,
 )
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def schema_version(engine: Engine) -> int | None:
@@ -34,6 +34,7 @@ def ensure_schema(engine: Engine) -> int:
     """
     assert phase7_models.Phase7InputManifestRow.__tablename__ in Base.metadata.tables
     assert report_models.ReportCompilationRow.__tablename__ in Base.metadata.tables
+    assert report_models.CompiledReportChunkRow.__tablename__ in Base.metadata.tables
     with engine.begin() as connection:
         connection.exec_driver_sql("BEGIN IMMEDIATE")
         existing_tables = set(inspect(connection).get_table_names())
@@ -48,7 +49,7 @@ def ensure_schema(engine: Engine) -> int:
                 f"Evidence graph schema version {current} is newer than supported "
                 f"{SCHEMA_VERSION}; refusing to reinterpret"
             )
-        if current is not None and current < SCHEMA_VERSION and current not in range(1, 9):
+        if current is not None and current < SCHEMA_VERSION and current not in range(1, 10):
             raise ValueError(
                 f"Evidence graph schema version {current} requires migration to {SCHEMA_VERSION}"
             )

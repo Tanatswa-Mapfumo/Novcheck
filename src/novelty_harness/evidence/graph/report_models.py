@@ -1,10 +1,11 @@
-"""Exactly four additive schema v9 report tables on the shared SQLite engine."""
+"""Additive report authority and schema v10 physical document segments."""
 
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -81,6 +82,22 @@ class CompiledReportRow(Base):
     ir_digest: Mapped[str] = mapped_column(String(512), nullable=False)
     document_json: Mapped[str] = mapped_column(Text, nullable=False)
     accepted_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class CompiledReportChunkRow(Base):
+    __tablename__ = "compiled_report_document_chunks"
+    __table_args__ = (
+        CheckConstraint("ordinal >= 0", name="report_chunk_nonnegative_ordinal"),
+        CheckConstraint("byte_length > 0", name="report_chunk_positive_length"),
+    )
+    report_id: Mapped[str] = mapped_column(
+        String(512), ForeignKey("compiled_reports.report_id"), primary_key=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
+    codec: Mapped[str] = mapped_column(String(64), nullable=False)
+    byte_length: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
 
 
 class ReportDependencyRow(Base):

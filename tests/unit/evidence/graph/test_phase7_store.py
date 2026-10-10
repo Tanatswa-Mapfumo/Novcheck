@@ -56,8 +56,8 @@ def test_v7_migrates_to_empty_v8_without_phase7_backfill(tmp_path) -> None:
     with repository.engine.begin() as connection:
         connection.execute(text("UPDATE schema_version SET version = 7"))
     assert not PHASE7_TABLES & set(inspect(repository.engine).get_table_names())
-    assert ensure_schema(repository.engine) == 9
-    assert schema_version(repository.engine) == 9
+    assert ensure_schema(repository.engine) == 10
+    assert schema_version(repository.engine) == 10
     assert PHASE7_TABLES <= set(inspect(repository.engine).get_table_names())
     with repository.engine.connect() as connection:
         for table in sorted(PHASE7_TABLES):
@@ -68,10 +68,10 @@ def test_v7_migrates_to_empty_v8_without_phase7_backfill(tmp_path) -> None:
 def test_v8_initialization_is_idempotent_and_rollback_is_atomic(tmp_path) -> None:
     database = tmp_path / "phase7.db"
     repository = SqlAlchemyEvidenceGraphRepository(database)
-    assert ensure_schema(repository.engine) == 9
+    assert ensure_schema(repository.engine) == 10
     repository.close()
     reopened = SqlAlchemyEvidenceGraphRepository(database)
-    assert ensure_schema(reopened.engine) == 9
+    assert ensure_schema(reopened.engine) == 10
     assert PHASE7_TABLES <= set(inspect(reopened.engine).get_table_names())
     snapshot_id = make_snapshot(reopened)
     manifest = make_manifest(
@@ -881,7 +881,7 @@ def test_v7_migration_does_not_authorize_fixture_adjudication(tmp_path) -> None:
     try:
         with repository.engine.begin() as connection:
             connection.execute(text("UPDATE schema_version SET version=7"))
-        assert ensure_schema(repository.engine) == 9
+        assert ensure_schema(repository.engine) == 10
         with pytest.raises(ValueError, match="missing"):
             repository.load_frozen_adjudication("asm_fixture", adjudication_id="fixture-json-id")
     finally:

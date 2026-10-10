@@ -637,7 +637,7 @@ def test_schema_v3_metadata_graph_migrates_and_unsafe_phase6_is_blocked(tmp_path
         connection.execute(sql_text("UPDATE schema_version SET version = 3"))
     safe.close()
     reopened = SqlAlchemyEvidenceGraphRepository(safe_path)
-    assert schema_version(reopened.engine) == SCHEMA_VERSION == 9
+    assert schema_version(reopened.engine) == SCHEMA_VERSION == 10
     reopened.close()
 
     unsafe_path = tmp_path / "unsafe-v3.sqlite"

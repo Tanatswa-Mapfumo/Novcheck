@@ -1,7 +1,7 @@
 # ADR-043: Lossless storage for reports beyond a SQLite row
 
 - Date: 10 October 2026
-- Status: PROPOSED — persisted-storage decision required before implementation
+- Status: ACCEPTED — explicitly approved by the user on 10 October 2026
 - Scope: Phase 8 accepted-report persistence; public report contracts remain unchanged
 
 ## Observed failure
@@ -10,11 +10,11 @@ With all development/test memory restrictions removed, the exact native Task 22 
 
 The installed Python SQLite engine reports version 3.50.4 and both runtime `SQLITE_LIMIT_LENGTH` and compiled `MAX_LENGTH` equal to 1,000,000,000 bytes (`task22-sqlite-native-limit-135`). SQLite applies this intrinsic boundary to strings, blobs and complete rows; see [SQLite implementation limits](https://www.sqlite.org/limits.html). The failed private database retains all nine FALLBACK artifacts (individual JSON lengths 55,636; 20,603,297; 81,379,182; 100,961,360; 1,047,121; 47,322; 3,195,629; 81,007,435; 101,075,798 bytes), DRAFTED/VERIFIED status and zero accepted rows. These measurements do not establish the exact complete attempted row length or a native pass.
 
-The approved Phase 8 plan stores one canonical report document in `compiled_reports.document_json` at schema v9. Changing that persisted representation requires the explicit versioning/decision required by AGENTS.md §§2/7. Current unrestricted execution under ADR-042 continues during this decision.
+The approved Phase 8 plan stores one canonical report document in `compiled_reports.document_json` at schema v9. Changing that persisted representation requires the explicit versioning/decision required by AGENTS.md §§2/7. The user explicitly approved this storage change. Unrestricted execution under ADR-042 continues.
 
-## Proposed decision
+## Decision
 
-Introduce schema v10 with additive `compiled_report_document_chunks`, owned by `compiled_reports.report_id`, with a primary key `(report_id, ordinal)` and nonnegative ordinal constraint. Each row stores one physical segment of the exact original canonical UTF-8 report document, with a versioned lossless codec, byte length and content digest. Use fixed physical segment granularity (initial proposal: 1 MiB before standard-library zlib compression). Segment granularity is a storage format: there is no limit on total report bytes, segment count or process memory, and no execution veto or termination follows from it.
+Introduce schema v10 with additive `compiled_report_document_chunks`, owned by `compiled_reports.report_id`, with a primary key `(report_id, ordinal)` and nonnegative ordinal constraint. Each row stores one physical segment of the exact original canonical UTF-8 report document, with a versioned lossless codec, byte length and content digest. Use fixed physical segment granularity (1 MiB before standard-library zlib compression). Segment granularity is a storage format: there is no limit on total report bytes, segment count or process memory, and no execution veto or termination follows from it.
 
 For segmented reports, the existing document column stores a strict versioned manifest identifying the report, codec, complete canonical-document digest/length and segment count. Existing inline canonical report documents remain valid and are not rewritten. Select segmentation when a document cannot safely fit the engine's intrinsic row representation; keep small documents inline. No SQLite limit is raised or test resource limit introduced. New schema-version checks prevent older code from silently interpreting v10.
 

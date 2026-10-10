@@ -328,7 +328,7 @@ def test_f07_schema_v1_migrates_to_v3(tmp_path) -> None:
     migrated = SqlAlchemyEvidenceGraphRepository(database)
     from novelty_harness.evidence.graph.migrations import SCHEMA_VERSION, schema_version
 
-    assert schema_version(migrated.engine) == SCHEMA_VERSION == 9
+    assert schema_version(migrated.engine) == SCHEMA_VERSION == 10
     migrated.close()
 
 

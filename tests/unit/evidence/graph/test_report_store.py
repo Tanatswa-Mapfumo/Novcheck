@@ -15,6 +15,7 @@ REPORT_TABLES = {
     "report_compilations",
     "report_artifacts",
     "compiled_reports",
+    "compiled_report_document_chunks",
     "report_dependencies",
 }
 
@@ -56,8 +57,8 @@ def test_v8_migrates_to_empty_v9_preserving_authority(tmp_path):
         )
         _v8_topology(repository)
         before = _upstream_rows(repository)
-        assert ensure_schema(repository.engine) == 9
-        assert schema_version(repository.engine) == 9
+        assert ensure_schema(repository.engine) == 10
+        assert schema_version(repository.engine) == 10
         assert REPORT_TABLES <= set(inspect(repository.engine).get_table_names())
         assert _upstream_rows(repository) == before
         assert _report_counts(repository) == dict.fromkeys(REPORT_TABLES, 0)
@@ -98,15 +99,15 @@ def test_v9_initialization_reopen_and_migration_rollback(tmp_path, populated):
         assert schema_version(repository.engine) == 8
         assert not REPORT_TABLES & set(inspect(repository.engine).get_table_names())
         assert _upstream_rows(repository) == before
-        assert ensure_schema(repository.engine) == 9
-        assert ensure_schema(repository.engine) == 9
+        assert ensure_schema(repository.engine) == 10
+        assert ensure_schema(repository.engine) == 10
     finally:
         repository.close()
     from pathlib import Path
 
     reopened = SqlAlchemyEvidenceGraphRepository(Path(database))
     try:
-        assert ensure_schema(reopened.engine) == 9
+        assert ensure_schema(reopened.engine) == 10
         assert _report_counts(reopened) == dict.fromkeys(REPORT_TABLES, 0)
         if populated:
             assert (
@@ -124,7 +125,7 @@ def test_v9_refuses_newer_and_unsafe_legacy_schema(tmp_path):
     try:
         _v8_topology(repository)
         with repository.engine.begin() as connection:
-            connection.execute(text("UPDATE schema_version SET version=10"))
+            connection.execute(text("UPDATE schema_version SET version=11"))
         before = set(inspect(repository.engine).get_table_names())
         with pytest.raises(ValueError, match="newer"):
             ensure_schema(repository.engine)
@@ -207,7 +208,7 @@ def test_migration_never_backfills_fixture_report(tmp_path):
         (tmp_path / "adjudication.json").write_text(fixture.model_dump_json())
         with repository.engine.begin() as connection:
             connection.execute(text("UPDATE schema_version SET version=7"))
-        assert ensure_schema(repository.engine) == 9
+        assert ensure_schema(repository.engine) == 10
         assert _report_counts(repository) == dict.fromkeys(REPORT_TABLES, 0)
         with repository.engine.connect() as connection:
             assert (

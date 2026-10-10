@@ -1,5 +1,6 @@
 """Append-only report attempts and typed artifacts on the existing engine."""
 
+import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -10,8 +11,15 @@ from sqlalchemy.orm import Session
 
 from novelty_harness.domain.ids import AssessmentId
 from novelty_harness.evidence.graph.assessment_view import Phase6AssessmentView
+from novelty_harness.evidence.graph.report_document import (
+    DocumentChunk,
+    decode_document,
+    document_manifest,
+    encode_document,
+)
 from novelty_harness.evidence.graph.report_input import load_report_input_bundle_in_session
 from novelty_harness.evidence.graph.report_models import (
+    CompiledReportChunkRow,
     CompiledReportRow,
     ReportArtifactRow,
     ReportCompilationRow,
@@ -238,6 +246,70 @@ def _validate_stage_records(
         raise ReportAuthorityError("report stage lacks its completed committed records")
 
 
+def _inline_document_capacity(session: Session, accepted: CompiledAssessmentReport) -> int:
+    """Select physical representation using SQLite's unchanged intrinsic row limit.
+
+    SQLite record headers use at most nine bytes per serial type/length. Reserve
+    those headers and the exact non-document text payload; this is not a process
+    memory criterion, and no SQLite connection limit is modified.
+    """
+    driver = session.connection().connection.driver_connection
+    if not isinstance(driver, sqlite3.Connection):
+        raise ReportAuthorityError("report storage requires the native SQLite connection")
+    scope = accepted.scope
+    fields = (
+        accepted.report_id,
+        accepted.compilation_id,
+        scope.assessment_id,
+        scope.adjudication_id,
+        scope.assessment_context_id,
+        scope.phase6_snapshot_id,
+        accepted.ir.bundle_digest,
+        canonical_hash(accepted.ir),
+        accepted.accepted_at.isoformat(),
+    )
+    header_bytes = sum(len(field.encode("utf-8")) for field in fields)
+    record_overhead = 9 * (len(CompiledReportRow.__table__.columns) + 1)
+    return driver.getlimit(sqlite3.SQLITE_LIMIT_LENGTH) - header_bytes - record_overhead
+
+
+def _load_report_document(
+    session: Session, row: CompiledReportRow
+) -> tuple[CompiledAssessmentReport, str]:
+    """Recover exact logical bytes inside the caller's existing transaction."""
+    cursor = session.execute(
+        select(
+            CompiledReportChunkRow.report_id,
+            CompiledReportChunkRow.ordinal,
+            CompiledReportChunkRow.codec,
+            CompiledReportChunkRow.byte_length,
+            CompiledReportChunkRow.content_digest,
+            CompiledReportChunkRow.payload,
+        )
+        .where(CompiledReportChunkRow.report_id == row.report_id)
+        .order_by(CompiledReportChunkRow.ordinal)
+    )
+    try:
+        # A canonical manifest has byte_length as its first sorted field. Other
+        # encodings never acquire authority: strict inline parsing rejects them.
+        if row.document_json.startswith('{"byte_length":'):
+            document = decode_document(
+                row.document_json,
+                row.report_id,
+                (DocumentChunk(*values) for values in cursor),
+            )
+        else:
+            if cursor.first() is not None:
+                raise ValueError("inline accepted report has foreign physical segments")
+            document = row.document_json
+    finally:
+        cursor.close()
+    stored = CompiledAssessmentReport.model_validate_json(document)
+    if canonical_json(stored) != document:
+        raise ValueError("accepted logical report document is noncanonical")
+    return stored, document
+
+
 def _accepted_header_id(session: Session, compilation: ReportCompilationRecord) -> str | None:
     row = session.scalar(
         select(CompiledReportRow).where(
@@ -246,7 +318,7 @@ def _accepted_header_id(session: Session, compilation: ReportCompilationRecord) 
     )
     if row is None:
         return None
-    stored = CompiledAssessmentReport.model_validate_json(row.document_json)
+    stored, document = _load_report_document(session, row)
     scope = compilation.scope
     if (
         stored.scope,
@@ -261,7 +333,7 @@ def _accepted_header_id(session: Session, compilation: ReportCompilationRecord) 
         scope,
         compilation.compilation_id,
         row.report_id,
-        row.document_json,
+        document,
         row.report_id,
         row.bundle_digest,
         row.ir_digest,
@@ -1043,7 +1115,7 @@ def accept_compiled_report(
             if existing is not None:
                 if current.next_state != ReportAttemptState.ACCEPTED:
                     raise ReportAuthorityError("accepted report lacks its terminal receipt")
-                original = CompiledAssessmentReport.model_validate_json(existing.document_json)
+                original = _load_report_document(session, existing)[0]
                 if original.report_id != proposed.report_id or report_id(original) != report_id(
                     proposed
                 ):
@@ -1057,6 +1129,14 @@ def accept_compiled_report(
                 raise ReportAuthorityError("only VERIFIED can atomically accept a report")
             accepted = proposed.model_copy(update={"accepted_at": datetime.now(UTC)})
             scope = accepted.scope
+            document = canonical_json(accepted)
+            # canonical_json always escapes non-ASCII: text length is UTF-8 length.
+            segmented = len(document) > _inline_document_capacity(session, accepted)
+            stored_document = (
+                canonical_json(document_manifest(accepted.report_id, document))
+                if segmented
+                else document
+            )
             session.add(
                 CompiledReportRow(
                     report_id=accepted.report_id,
@@ -1067,11 +1147,25 @@ def accept_compiled_report(
                     snapshot_id=scope.phase6_snapshot_id,
                     bundle_digest=accepted.ir.bundle_digest,
                     ir_digest=canonical_hash(accepted.ir),
-                    document_json=canonical_json(accepted),
+                    document_json=stored_document,
                     accepted_at=accepted.accepted_at.isoformat(),
                 )
             )
             session.flush()
+            if segmented:
+                for chunk in encode_document(accepted.report_id, document):
+                    session.add(
+                        CompiledReportChunkRow(
+                            report_id=chunk.report_id,
+                            ordinal=chunk.ordinal,
+                            codec=chunk.codec,
+                            byte_length=chunk.byte_length,
+                            content_digest=chunk.content_digest,
+                            payload=chunk.payload,
+                        )
+                    )
+                    session.flush()
+            del document, stored_document
             for dependency in accepted.dependencies:
                 session.add(_dependency_row(accepted, dependency))
             compilation = load_report_compilation_in_session(session, compilation_id)
@@ -1139,7 +1233,7 @@ def load_compiled_report_in_session(
         raise ReportAuthorityError(
             "accepted report locator is missing or belongs to another assessment"
         )
-    stored = CompiledAssessmentReport.model_validate_json(row.document_json)
+    stored = _load_report_document(session, row)[0]
     compilation = load_report_compilation_in_session(session, row.compilation_id)
     if _accepted_header_id(session, compilation) != report_id:
         raise ReportAuthorityError("accepted report locator differs from its immutable manifest")
