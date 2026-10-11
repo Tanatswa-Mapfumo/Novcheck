@@ -255,6 +255,7 @@ def test_begin_uses_one_transaction_and_preserves_frozen_authority(tmp_path):
             "report_compilations": 1,
             "report_artifacts": 1,
             "compiled_reports": 0,
+            "compiled_report_document_chunks": 0,
             "report_dependencies": 0,
         }
     finally:
