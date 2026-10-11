@@ -21,6 +21,7 @@ def test_segmented_acceptance_load_replay_and_export_preserve_native_report(
     from novelty_harness.application.phase8_exports import export_compiled_report
     from novelty_harness.evidence.graph import report_store
     from novelty_harness.evidence.graph.report_document import DocumentManifest
+    from novelty_harness.reporting.rendering import render_compiled_report
     from novelty_harness.runtime.artifacts.writer import RunArtifactWriter
     from novelty_harness.runtime.tracing.hashing import canonical_json
 
@@ -50,6 +51,7 @@ def test_segmented_acceptance_load_replay_and_export_preserve_native_report(
     )
     assert loaded == proposed.model_copy(update={"accepted_at": loaded.accepted_at})
     assert manifest.byte_length == len(canonical_json(loaded).encode("utf-8"))
+    accepted_at = loaded.accepted_at
     assert _accepted_count(case, compilation) == (1, 1)
     del loaded
     assert (
@@ -80,7 +82,6 @@ def test_segmented_acceptance_load_replay_and_export_preserve_native_report(
     )
     del refusal, changed_ir, forged
     assert _accepted_count(case, compilation) == (1, 1)
-    # Existing renderer/authority owners independently retain exact public parity.
     paths = export_compiled_report(
         compilation.scope.assessment_id,
         report_id=proposed.report_id,
@@ -88,6 +89,140 @@ def test_segmented_acceptance_load_replay_and_export_preserve_native_report(
         artifact_writer=RunArtifactWriter(tmp_path / "segmented-exports"),
     )
     assert len(paths) == 3 and all(path.is_file() and path.stat().st_size > 0 for path in paths)
+    expected = render_compiled_report(proposed.model_copy(update={"accepted_at": accepted_at}))
+    for path, content in zip(paths, (expected.json, expected.yaml, expected.markdown), strict=True):
+        assert path.read_bytes() == content.encode("utf-8")
+    assert _upstream_rows(case.repository) == before
+
+
+def _rewrite_segmented_native_report(case, original, changed):
+    """Make every physical/identity join coherent without changing native findings."""
+    from sqlalchemy import delete, select
+    from sqlalchemy.orm import Session
+
+    from novelty_harness.evidence.graph.report_document import document_manifest, encode_document
+    from novelty_harness.evidence.graph.report_models import (
+        CompiledReportChunkRow,
+        CompiledReportRow,
+        ReportArtifactRow,
+        ReportDependencyRow,
+    )
+    from novelty_harness.evidence.graph.report_store import (
+        _accepted_header_id,
+        _artifact_row,
+        _dependency_row,
+        _validate_dependency_rows,
+        load_report_compilation_in_session,
+    )
+    from novelty_harness.reporting.artifacts import (
+        ReportArtifact,
+        report_artifact_id,
+        report_status_event_id,
+    )
+    from novelty_harness.reporting.ir import report_id
+    from novelty_harness.runtime.tracing.hashing import canonical_hash, canonical_json
+
+    assert changed.report_id == report_id(changed)
+    wire = canonical_json(changed)
+    with Session(case.repository.engine) as session:
+        session.execute(text("BEGIN IMMEDIATE"))
+        compilation = load_report_compilation_in_session(session, original.compilation_id)
+        terminal_row = next(
+            row
+            for row in session.scalars(
+                select(ReportArtifactRow).where(
+                    ReportArtifactRow.compilation_id == original.compilation_id,
+                    ReportArtifactRow.kind == "STATUS",
+                )
+            )
+            if '"next_state":"ACCEPTED"' in row.document_json
+        )
+        terminal = ReportArtifact.model_validate_json(terminal_row.document_json)
+        status = terminal.document.model_copy(
+            update={"reason": f"Accepted compiled report {changed.report_id}"}
+        )
+        status = status.model_copy(update={"event_id": report_status_event_id(status)})
+        replacement = terminal.model_copy(update={"document": status})
+        replacement = replacement.model_copy(
+            update={"artifact_id": report_artifact_id(replacement)}
+        )
+        session.delete(terminal_row)
+        session.execute(
+            delete(CompiledReportChunkRow).where(
+                CompiledReportChunkRow.report_id == original.report_id
+            )
+        )
+        session.execute(
+            delete(ReportDependencyRow).where(ReportDependencyRow.report_id == original.report_id)
+        )
+        session.flush()
+        header = session.get(CompiledReportRow, original.report_id)
+        header.report_id = changed.report_id
+        header.ir_digest = canonical_hash(changed.ir)
+        header.document_json = canonical_json(document_manifest(changed.report_id, wire))
+        session.flush()
+        session.add_all(
+            CompiledReportChunkRow(**vars(chunk))
+            for chunk in encode_document(changed.report_id, wire)
+        )
+        session.add(_artifact_row(replacement))
+        session.add_all(_dependency_row(changed, dependency) for dependency in changed.dependencies)
+        session.flush()
+        assert _accepted_header_id(session, compilation) == changed.report_id
+        _validate_dependency_rows(session, changed)
+        assert not session.execute(text("PRAGMA foreign_key_check")).all()
+        session.commit()
+
+
+def test_coherent_segmented_semantic_forgery_reaches_native_ir_rejection(
+    acceptance_case, monkeypatch
+):
+    from novelty_harness.evidence.graph import report_store
+    from novelty_harness.reporting.models import ReportProposalError
+    from novelty_harness.reporting.repository import ReportAuthorityError
+    from tests.unit.evidence.graph.test_report_store import _rehash_report
+
+    case = acceptance_case
+    compilation, proposed, artifacts = _report_candidate(case)
+    del artifacts
+    before = _upstream_rows(case.repository)
+    monkeypatch.setattr(report_store, "_inline_document_capacity", lambda *_: 0)
+    case.repository.accept_compiled_report(compilation.compilation_id, proposed)
+    original = case.repository.load_compiled_report(
+        compilation.scope.assessment_id, report_id=proposed.report_id
+    )
+    assert original.ir.uncertainty_summary
+    assert original.ir.compact_summary is not None
+    changed_ir = original.ir.model_copy(
+        update={
+            "uncertainty_summary": (),
+            "compact_summary": original.ir.compact_summary.model_copy(update={"uncertainty": ()}),
+        }
+    )
+    forged = _rehash_report(original.model_copy(update={"ir": changed_ir}))
+    assert forged.report_id != original.report_id
+    _rewrite_segmented_native_report(case, original, forged)
+    with pytest.raises(
+        ReportAuthorityError, match="closure failed authoritative validation"
+    ) as refusal:
+        case.repository.load_compiled_report(
+            compilation.scope.assessment_id, report_id=forged.report_id
+        )
+    assert isinstance(refusal.value.__cause__, ReportProposalError)
+    assert str(refusal.value.__cause__) == (
+        "IR differs from exact frozen projections, actual proofs or deterministic summary"
+    )
+    del refusal, changed_ir
+    assert _accepted_count(case, compilation) == (1, 1)
+    assert _upstream_rows(case.repository) == before
+    _rewrite_segmented_native_report(case, forged, original)
+    assert (
+        case.repository.load_compiled_report(
+            compilation.scope.assessment_id, report_id=original.report_id
+        )
+        == original
+    )
+    assert _accepted_count(case, compilation) == (1, 1)
     assert _upstream_rows(case.repository) == before
 
 

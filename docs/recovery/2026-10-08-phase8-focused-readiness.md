@@ -2,7 +2,7 @@
 
 **Date:** 8 October 2026. **Tested implementation:** `562f63e2542f387b275c85b364fea082a44ae2fe`, clean tree; source/file-mode digest `e7f1c066a3808308afe50dc01ba55aaafe4466ac708364098ae6331f4f67db93`.
 
-**Status: INCOMPLETE — historical focused selection remains 52/69; fourteen formerly pending nodes now pass at their recorded source identities, leaving three focused native readiness nodes pending. All application-imposed test memory restrictions are removed under ADR-042. ADR-043 lossless schema-v10 storage is approved and being implemented after a reproduced native SQLite row-size failure. Task 23 accepted delivery and Task 24 integrated/final acceptance gates remain OPEN.** This is a development readiness gate, not recovered-baseline or Phase 8 acceptance.
+**Status: INCOMPLETE — historical focused selection remains 52/69; all seventeen formerly pending nodes now pass individually at their recorded source identities. This is not a fresh current-tree 69-node gate. All application-imposed test memory restrictions are removed under ADR-042. Approved ADR-043 schema-v10 storage clears the original SQLite row failure and real-slice owners. Task 23 accepted delivery, Task 24 integrated coverage, rendering replacements and final acceptance gates remain OPEN.** This is a development readiness gate, not recovered-baseline or Phase 8 acceptance.
 
 ## Authorization and preserved state
 
@@ -719,3 +719,25 @@ The complete local bundle and independent GitHub restore match all **573 tracked
 Static source review strengthens the prepared rollback variant to fail on ordinal one, after independently observing ordinal zero in the same uncommitted transaction. The subsequent assertion still requires zero header/segment/dependency/accepted-status rows and unchanged upstream data after failure. This prepared variant correction is not an observed native rollback pass; its source identity differs from the completed authority owner.
 
 The strengthened-test source preflight passed full Ruff lint/format, full strict Pyright (**zero diagnostics, 9.098s**) and the **40 focused controls (2.294s supervised)** (`task22-schema10-final-source-*-151`, source/file-mode `2c6a6838dc905e37d1ee98c0ee6427e8bb7ae6c9410f0d31ae1464d0f93e869b`). Formatting changed the prepared test before this identity was checked. Native variant/source regressions are not inferred from these preflight passes.
+
+
+## 11 October: original large-report owners pass under schema v10
+
+Clean checkpoint `043d60d00eaf61d5456ec6a04688875d64be7e88` was independently restored from GitHub and its complete local bundle: all 573 tracked blobs and Git modes matched, integrity passed and other remote heads were unchanged. Bundle SHA `af0a15034ca89c057b7ad7072a172023e2f2ee26055ac2a6ccdd5f7c0f38d98c`.
+
+The complete native sequence passes at execution identity `2e53b9a735d7470cf140c196b66d837516621bd53642babfcd040ca0746d069a`, source/file-mode digest `1810dfb0477b2736c29a6ff183310f6c2f392fb1e658035bf5388602906f33cc`, against the actual 2,844-node inventory and same five network exclusions. Independent accounting reopens every exact node, all pytest phases, command/job/guard/log/sample bytes, exit 0 and cleanup (`task22-schema10-required-accounting-159.json`).
+
+| Native selection | Receipt | Passing nodes | Supervised elapsed |
+| --- | --- | ---: | ---: |
+| variants | `task22-schema10-required-variants-152` | 3 | 904.284s |
+| export-failure | `task22-schema10-required-export-failure-152` | 1 | 5,605.085s |
+| real-slice | `task22-schema10-required-real-slice-152` | 1 | 7,608.964s |
+| completed-lifecycle | `task22-schema10-required-completed-lifecycle-152` | 1 | 4,493.126s |
+
+Rollback observes ordinal zero already flushed before failing on ordinal one, then requires zero report/header/segment/dependency/accepted-status rows and unchanged upstream. Corruption and preserved-inline migration owners retain full native reload assertions. The original export-failure owner now reaches its intended injected I/O failure after genuine acceptance and native reload; adjudication and summary remain unchanged. The real-slice and completed-lifecycle owners preserve their full native, nine-question, upstream, scope, summary, export and trace assertions. This clears the final three individually pending focused nodes; historical and later source identities are not combined into a fresh current-tree gate.
+
+The naturally selected large export-failure report has 1,044 segments reconstructing exactly 1,093,685,598 canonical UTF-8 bytes. A coherent accepted database backup is preserved separately (`task22-schema10-real-accepted-preserved-158`); future operations require fresh native validation. The backup and storage representation confer no additional test pass, performance or memory-saving claim. Current execution has no memory caps, headroom/pressure/swap/paging launch vetoes or termination; finite timeouts, sequential ownership, offline policy and cleanup remain.
+
+Independent read-only storage review found no demonstrated implementation defect, but identified two Important coverage gaps: exact segmented export bytes and coherently persisted semantic forgery. Prepared test-only corrections compare every exported format with the accepted model's exact rendition, and consistently rewrite report identity/header/digest/manifest/chunks/dependency owners/terminal identity before requiring the typed native IR mismatch and restoring original authority. Rereview confirms those specific source gaps addressed; these additions remain unexecuted at this checkpoint. Earlier native passes retain their preceding source identity.
+
+Task 23 accepted delivery, Task 24 integrated adversarial executions, both rendering replacements, affected complete owners, final strict/full suites, `uv run python scripts/verify.py`, fresh exact detached verification and independent whole-phase review remain OPEN. Original `1f50323` equivalence remains unproved. This is partial development evidence, not Phase 8 acceptance.

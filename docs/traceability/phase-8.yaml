@@ -2,7 +2,7 @@
 phase: 8
 acceptance: "OPEN_REQUIRED_VERIFICATION_AND_INDEPENDENT_REVIEW"
 status: "IMPLEMENTED_SOURCE_MAPPING_WITH_PENDING_INTEGRATED_COVERAGE"
-source_checkpoint: "a8efa945d646ca6f655c4df85ca3a72a4034b82e"
+source_checkpoint: "043d60d00eaf61d5456ec6a04688875d64be7e88"
 evidence_record: "docs/recovery/2026-10-08-phase8-focused-readiness.md"
 approved_plan: "docs/superpowers/plans/2026-10-05-phase-8-full-report-compiler-implementation-plan.md"
 selector_policy: "Selectors below name existing test functions, including parameterized functions. Static existence is checked without importing or executing tests. Fresh collected node IDs and passing receipts are required for execution evidence; a mapping is not a pass."
@@ -322,6 +322,7 @@ requirements:
       - "tests/golden/test_phase8_reports.py::test_rendering_raw_checks_reject_divergent_native_projection"
       - "tests/golden/test_phase8_reports.py::test_rendered_format_public_projection_golden"
       - "tests/integration/test_phase8_slice.py::test_two_reports_keep_separate_export_paths"
+      - "tests/unit/evidence/graph/test_report_segment_authority.py::test_segmented_acceptance_load_replay_and_export_preserve_native_report"
   -
     id: "RPT-21"
     contract: "Artifacts bind exact native scope and compilation attempt"
@@ -369,10 +370,21 @@ requirements:
     modules:
       - "evidence/graph/report_store.py"
       - "evidence/graph/report_validation.py"
+      - "evidence/graph/report_document.py"
+      - "evidence/graph/report_models.py"
+      - "evidence/graph/migrations.py"
     test_selectors:
       - "tests/unit/evidence/graph/test_report_store.py::test_acceptance_failure_rolls_back_dependencies_and_status"
       - "tests/unit/evidence/graph/test_report_store.py::test_report_load_uses_one_explicit_transaction"
       - "tests/unit/evidence/graph/test_report_store.py::test_report_read_snapshot_survives_concurrent_revocation"
+      - "tests/unit/evidence/graph/test_report_segment_authority.py::test_segmented_publication_failure_rolls_back_every_row"
+      - "tests/unit/evidence/graph/test_report_segment_authority.py::test_segment_corruption_and_rehashed_semantics_never_authorize_native_report"
+      - "tests/unit/evidence/graph/test_report_segment_authority.py::test_coherent_segmented_semantic_forgery_reaches_native_ir_rejection"
+      - "tests/unit/evidence/graph/test_report_segment_authority.py::test_v9_inline_accepted_bytes_survive_v10_migration_and_native_reload"
+      - "tests/unit/evidence/graph/test_report_segments_schema.py::test_v9_additive_segments_migration_is_atomic_and_preserves_existing_bytes"
+      - "tests/unit/evidence/graph/test_report_document.py::test_segmented_document_retains_every_original_utf8_byte"
+      - "tests/unit/evidence/graph/test_report_document.py::test_segmented_document_refuses_corrupt_physical_projection"
+      - "tests/unit/evidence/graph/test_report_document.py::test_segmented_document_matches_independent_literal_wire_and_digest"
   -
     id: "RPT-24"
     contract: "Actual public text independently governs extraction completeness"
@@ -543,6 +555,11 @@ versions:
     - "p8-obligations-v1"
   supported_legacy_bundle_policy: "p8-bundle-v1"
   bundle_identity_decision: "docs/architecture/decisions/ADR-041-phase8-deterministic-bundle-identity.md"
+  physical_storage:
+    schema_version: 10
+    segmented_document: "p8-canonical-report-segments-v1"
+    codec: "zlib-v1-1048576"
+    decision: "docs/architecture/decisions/ADR-043-phase8-large-report-storage.md"
   source:
     - "src/novelty_harness/reporting/execution.py"
     - "src/novelty_harness/reporting/prompts.py"
@@ -563,7 +580,7 @@ outstanding_integrated_named_cases:
     selector: "tests/adversarial/test_phase8_authority_semantics.py::test_hidden_heading_assertion_crosses_extraction_and_composition_boundary"
     status: "PRESENT_NATIVE_EXECUTION_PENDING"
 final_gates:
-  focused_readiness: "OPEN_14_NATIVE_NODES_PENDING_HISTORICAL_SELECTION_NOT_CURRENT_ACCEPTANCE"
+  focused_readiness: "OPEN_CURRENT_SOURCE_FULL_GATE_REQUIRED_HISTORICAL_SELECTION_NOT_CURRENT_ACCEPTANCE"
   tasks_22_23_24: "OPEN_REQUIRED_NATIVE_AND_REGRESSION_GATES"
   goldens: "SIX_REGENERATED_FALLBACK_REPLACEMENTS_VERIFIED_TWO_RENDERING_PROJECTIONS_UNRESOLVED"
   strict_typing: "OPEN_FULL_PROJECT_CHECK_REQUIRED"
