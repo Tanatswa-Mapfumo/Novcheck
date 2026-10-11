@@ -1,0 +1,338 @@
+{
+  "questions": [
+    [
+      1,
+      "What exactly is being proposed?"
+    ],
+    [
+      2,
+      "What already exists that is closest?"
+    ],
+    [
+      3,
+      "Which parts are already established?"
+    ],
+    [
+      4,
+      "Where does novelty appear to live?"
+    ],
+    [
+      5,
+      "What is the strongest evidence against the novelty claim?"
+    ],
+    [
+      6,
+      "Does the remaining difference create a meaningful advantage?"
+    ],
+    [
+      7,
+      "What would need to be demonstrated?"
+    ],
+    [
+      8,
+      "What can defensibly be claimed today?"
+    ],
+    [
+      9,
+      "What remains uncertain or insufficiently researched?"
+    ]
+  ],
+  "overall_verdict": "MIXED_CONTRIBUTION_SPECIFIC",
+  "targets": [
+    {
+      "target_id": "mcu_comb_2ff9633c4dc1451be7f900cc",
+      "target_kind": "COMBINATION",
+      "claim_scope": "Control a relay and show status",
+      "verdict": "UNASSESSABLE",
+      "language_permission": [
+        "ABSTENTION"
+      ],
+      "limiting_factors": [
+        "unknown_combination_topology",
+        "historical_research_unknown",
+        "unassessed_candidate",
+        "phase6_coverage_limited",
+        "input_clarification_required"
+      ]
+    },
+    {
+      "target_id": "mcu_control",
+      "target_kind": "MCU",
+      "claim_scope": "Temperature sensor controls a relay",
+      "verdict": "NOT_NOVEL_AT_CLAIMED_LEVEL",
+      "language_permission": [
+        "CLAIM_SPECIFIC_NEGATIVE",
+        "COVERAGE_LIMITATION"
+      ],
+      "limiting_factors": [
+        "historical_research_unknown",
+        "unassessed_candidate",
+        "phase6_coverage_limited"
+      ]
+    },
+    {
+      "target_id": "mcu_status",
+      "target_kind": "MCU",
+      "claim_scope": "Show relay status",
+      "verdict": "UNASSESSABLE",
+      "language_permission": [
+        "ABSTENTION"
+      ],
+      "limiting_factors": [
+        "unknown_material_mechanism",
+        "historical_research_unknown",
+        "unassessed_candidate",
+        "phase6_coverage_limited",
+        "input_clarification_required"
+      ]
+    }
+  ],
+  "value": [
+    "ATTRIBUTED_INPUT_CLAIM",
+    "NO_VALUE_ASSESSMENT"
+  ],
+  "material_limitations": [
+    "Target mcu_comb_2ff9633c4dc1451be7f900cc: unknown_combination_topology",
+    "Target mcu_comb_2ff9633c4dc1451be7f900cc: historical_research_unknown",
+    "Target mcu_comb_2ff9633c4dc1451be7f900cc: unassessed_candidate",
+    "Target mcu_comb_2ff9633c4dc1451be7f900cc: phase6_coverage_limited",
+    "Target mcu_comb_2ff9633c4dc1451be7f900cc: input_clarification_required",
+    "Target mcu_control: historical_research_unknown",
+    "Target mcu_control: unassessed_candidate",
+    "Target mcu_control: phase6_coverage_limited",
+    "Target mcu_status: unknown_material_mechanism",
+    "Target mcu_status: historical_research_unknown",
+    "Target mcu_status: unassessed_candidate",
+    "Target mcu_status: phase6_coverage_limited",
+    "Target mcu_status: input_clarification_required",
+    "Target mcu_comb_2ff9633c4dc1451be7f900cc remains UNASSESSABLE",
+    "Target mcu_status remains UNASSESSABLE",
+    "Overall state retains the distinct per-target claim scopes and verdicts",
+    "unknown_combination_topology",
+    "historical_research_unknown",
+    "unassessed_candidate",
+    "phase6_coverage_limited",
+    "input_clarification_required",
+    "No project-specific validation supplied",
+    "combination_topology",
+    "mechanism",
+    "No accepted assessed-value validation basis",
+    "Recorded source access: FULL_TEXT",
+    "The target claim lacks material input needed for comparison",
+    "phase3",
+    "phase4",
+    "budget_usage: {\"contract_kind\":\"budget-usage-v1\",\"deep_search_rounds\":0,\"elapsed_seconds\":0.0,\"full_text_fetches\":0,\"llm_input_tokens\":0,\"llm_output_tokens\":0,\"provider_calls\":0,\"retrieved_documents\":0,\"schema_version\":\"0.1\"}",
+    "query_history: []",
+    "providers_attempted: []",
+    "stop_reason: null",
+    "budget_limits: null",
+    "research_plan: null",
+    "research_result: null",
+    "coverage_policy: null",
+    "{\"contract_kind\":\"phase6-coverage-ledger-v1\",\"excluded_sources\":[{\"contract_kind\":\"phase6-coverage-exclusion-v1\",\"evidence_families\":[\"SCHOLARLY\"],\"reason\":\"SOURCE_BOUND\",\"routing_priority\":0,\"schema_version\":\"0.1\",\"source_access_state\":\"FULL_TEXT\",\"source_content_hash\":\"<native-id>\",\"source_id\":\"<native-id>\",\"source_version_id\":null,\"target_id\":\"mcu_control\",\"version_access_state\":null,\"version_content_hash\":null},{\"contract_kind\":\"phase6-coverage-exclusion-v1\",\"evidence_families\":[\"SCHOLARLY\"],\"reason\":\"SOURCE_BOUND\",\"routing_priority\":0,\"schema_version\":\"0.1\",\"source_access_state\":\"FULL_TEXT\",\"source_content_hash\":\"<native-id>\",\"source_id\":\"<native-id>\",\"source_version_id\":null,\"target_id\":\"mcu_status\",\"version_access_state\":null,\"version_content_hash\":null},{\"contract_kind\":\"phase6-coverage-exclusion-v1\",\"evidence_families\":[\"SCHOLARLY\"],\"reason\":\"SOURCE_BOUND\",\"routing_priority\":0,\"schema_version\":\"0.1\",\"source_access_state\":\"FULL_TEXT\",\"source_content_hash\":\"<native-id>\",\"source_id\":\"<native-id>\",\"source_version_id\":null,\"target_id\":\"mcu_comb_2ff9633c4dc1451be7f900cc\",\"version_access_state\":null,\"version_content_hash\":null}],\"excluded_versions\":[{\"contract_kind\":\"phase6-coverage-exclusion-v1\",\"evidence_families\":[\"SCHOLARLY\"],\"reason\":\"SOURCE_BOUND\",\"routing_priority\":0,\"schema_version\":\"0.1\",\"source_access_state\":\"FULL_TEXT\",\"source_content_hash\":\"<native-id>\",\"source_id\":\"<native-id>\",\"source_version_id\":\"<native-id>\",\"target_id\":\"mcu_control\",\"version_access_state\":\"FULL_TEXT\",\"version_content_hash\":\"<native-id>\"},{\"contract_kind\":\"phase6-coverage-exclusion-v1\",\"evidence_families\":[\"SCHOLARLY\"],\"reason\":\"SOURCE_BOUND\",\"routing_priority\":0,\"schema_version\":\"0.1\",\"source_access_state\":\"FULL_TEXT\",\"source_content_hash\":\"<native-id>\",\"source_id\":\"<native-id>\",\"source_version_id\":\"<native-id>\",\"target_id\":\"mcu_status\",\"version_access_state\":\"FULL_TEXT\",\"version_content_hash\":\"<native-id>\"},{\"contract_kind\":\"phase6-coverage-exclusion-v1\",\"evidence_families\":[\"SCHOLARLY\"],\"reason\":\"SOURCE_BOUND\",\"routing_priority\":0,\"schema_version\":\"0.1\",\"source_access_state\":\"FULL_TEXT\",\"source_content_hash\":\"<native-id>\",\"source_id\":\"<native-id>\",\"source_version_id\":\"<native-id>\",\"target_id\":\"mcu_comb_2ff9633c4dc1451be7f900cc\",\"version_access_state\":\"FULL_TEXT\",\"version_content_hash\":\"<native-id>\"}],\"limitations\":[\"3 candidate source(s) were outside the bounded local coverage and remain unassessed\"],\"schema_version\":\"0.1\",\"selected_source_ids\":[\"<native-id>\",\"<native-id>\",\"<native-id>\"],\"selected_version_ids\":[\"<native-id>\",\"<native-id>\",\"<native-id>\"]}",
+    "SOURCE_BOUND",
+    "[\"Chronology state is UNCERTAIN; post-cutoff or uncertain evidence cannot be decisive\"]",
+    "{\"as_of\":\"2026-09-26\",\"contract_kind\":\"chronology-assessment-v1\",\"decisive_date\":null,\"decisive_date_field\":\"version_published_date\",\"rationale\":[\"Cited disclosure has no complete public date\"],\"schema_version\":\"0.1\",\"state\":\"UNCERTAIN\"}",
+    "unknown_material_mechanism"
+  ],
+  "citations": [
+    {
+      "display_number": 1,
+      "source_id": "<native-id>",
+      "source_version_id": "<native-id>",
+      "passage_id": "<native-id>",
+      "locator": {
+        "char_end": 117,
+        "char_start": 0,
+        "contract_kind": "passage-locator-v1",
+        "end_paragraph": null,
+        "kind": "RESOLVED_CONTENT",
+        "label": null,
+        "notes": [],
+        "schema_version": "0.1",
+        "section": null,
+        "start_paragraph": null
+      },
+      "passage_access_state": "FULL_TEXT",
+      "limitations": [],
+      "canonical_page_is_versionless": true,
+      "unversioned_authority": false
+    },
+    {
+      "display_number": 2,
+      "source_id": "<native-id>",
+      "source_version_id": "<native-id>",
+      "passage_id": "<native-id>",
+      "locator": {
+        "char_end": 117,
+        "char_start": 0,
+        "contract_kind": "passage-locator-v1",
+        "end_paragraph": null,
+        "kind": "RESOLVED_CONTENT",
+        "label": null,
+        "notes": [],
+        "schema_version": "0.1",
+        "section": null,
+        "start_paragraph": null
+      },
+      "passage_access_state": "FULL_TEXT",
+      "limitations": [],
+      "canonical_page_is_versionless": true,
+      "unversioned_authority": false
+    },
+    {
+      "display_number": 3,
+      "source_id": "<native-id>",
+      "source_version_id": "<native-id>",
+      "passage_id": "<native-id>",
+      "locator": {
+        "char_end": 117,
+        "char_start": 0,
+        "contract_kind": "passage-locator-v1",
+        "end_paragraph": null,
+        "kind": "RESOLVED_CONTENT",
+        "label": null,
+        "notes": [],
+        "schema_version": "0.1",
+        "section": null,
+        "start_paragraph": null
+      },
+      "passage_access_state": "FULL_TEXT",
+      "limitations": [],
+      "canonical_page_is_versionless": true,
+      "unversioned_authority": false
+    },
+    {
+      "display_number": 4,
+      "source_id": "<native-id>",
+      "source_version_id": "<native-id>",
+      "passage_id": "<native-id>",
+      "locator": {
+        "char_end": 93,
+        "char_start": 0,
+        "contract_kind": "passage-locator-v1",
+        "end_paragraph": null,
+        "kind": "RESOLVED_CONTENT",
+        "label": null,
+        "notes": [],
+        "schema_version": "0.1",
+        "section": null,
+        "start_paragraph": null
+      },
+      "passage_access_state": "FULL_TEXT",
+      "limitations": [],
+      "canonical_page_is_versionless": true,
+      "unversioned_authority": false
+    },
+    {
+      "display_number": 5,
+      "source_id": "<native-id>",
+      "source_version_id": "<native-id>",
+      "passage_id": "<native-id>",
+      "locator": {
+        "char_end": 93,
+        "char_start": 0,
+        "contract_kind": "passage-locator-v1",
+        "end_paragraph": null,
+        "kind": "RESOLVED_CONTENT",
+        "label": null,
+        "notes": [],
+        "schema_version": "0.1",
+        "section": null,
+        "start_paragraph": null
+      },
+      "passage_access_state": "FULL_TEXT",
+      "limitations": [],
+      "canonical_page_is_versionless": true,
+      "unversioned_authority": false
+    },
+    {
+      "display_number": 6,
+      "source_id": "<native-id>",
+      "source_version_id": "<native-id>",
+      "passage_id": "<native-id>",
+      "locator": {
+        "char_end": 93,
+        "char_start": 0,
+        "contract_kind": "passage-locator-v1",
+        "end_paragraph": null,
+        "kind": "RESOLVED_CONTENT",
+        "label": null,
+        "notes": [],
+        "schema_version": "0.1",
+        "section": null,
+        "start_paragraph": null
+      },
+      "passage_access_state": "FULL_TEXT",
+      "limitations": [],
+      "canonical_page_is_versionless": true,
+      "unversioned_authority": false
+    },
+    {
+      "display_number": 7,
+      "source_id": "<native-id>",
+      "source_version_id": "<native-id>",
+      "passage_id": "<native-id>",
+      "locator": {
+        "char_end": 107,
+        "char_start": 0,
+        "contract_kind": "passage-locator-v1",
+        "end_paragraph": null,
+        "kind": "RESOLVED_CONTENT",
+        "label": null,
+        "notes": [],
+        "schema_version": "0.1",
+        "section": null,
+        "start_paragraph": null
+      },
+      "passage_access_state": "FULL_TEXT",
+      "limitations": [],
+      "canonical_page_is_versionless": true,
+      "unversioned_authority": false
+    },
+    {
+      "display_number": 8,
+      "source_id": "<native-id>",
+      "source_version_id": "<native-id>",
+      "passage_id": "<native-id>",
+      "locator": {
+        "char_end": 107,
+        "char_start": 0,
+        "contract_kind": "passage-locator-v1",
+        "end_paragraph": null,
+        "kind": "RESOLVED_CONTENT",
+        "label": null,
+        "notes": [],
+        "schema_version": "0.1",
+        "section": null,
+        "start_paragraph": null
+      },
+      "passage_access_state": "FULL_TEXT",
+      "limitations": [],
+      "canonical_page_is_versionless": true,
+      "unversioned_authority": false
+    },
+    {
+      "display_number": 9,
+      "source_id": "<native-id>",
+      "source_version_id": "<native-id>",
+      "passage_id": "<native-id>",
+      "locator": {
+        "char_end": 107,
+        "char_start": 0,
+        "contract_kind": "passage-locator-v1",
+        "end_paragraph": null,
+        "kind": "RESOLVED_CONTENT",
+        "label": null,
+        "notes": [],
+        "schema_version": "0.1",
+        "section": null,
+        "start_paragraph": null
+      },
+      "passage_access_state": "FULL_TEXT",
+      "limitations": [],
+      "canonical_page_is_versionless": true,
+      "unversioned_authority": false
+    }
+  ]
+}

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "original_artifacts_recovered": false,
   "original_tree_equivalence_proved": false,
-  "status": "SIX_REGENERATED_FALLBACK_REPLACEMENTS_ADOPTED_RENDERING_PENDING",
+  "status": "EIGHT_INDEPENDENTLY_VERIFIED_REGENERATED_REPLACEMENTS_ADOPTED_FINAL_ACCEPTANCE_PENDING",
   "normalization": "Existing fallback_golden: hashed display tokens and full-width-colon UTC observations. The regex also masks content hashes/basis digests; exact raw native authority and Q9 target/basis joins are checked before normalization. Publication/cutoff dates remain checked.",
   "independent_semantic_review": "Read-only expectations derived from the master specification, approved Phase 8 plan and original upstream fixtures before candidate examination. Reviewed native combination identity/members/scope, exact Q9 target and basis joins, absent assessed value, and complete localized equivalence. No Critical/Important defect found. All six fresh owning checks subsequently passed under supervision; this covers regenerated fallback replacements only, not original-tree equivalence or final Phase 8 acceptance.",
   "verification_recipe": "tests/golden/test_phase8_reports.py::test_fallback_real_scenario_golden; full nine-section native recomputation followed by assert_fallback_scenario_semantics and exact normalized comparison",
@@ -290,11 +290,263 @@
       }
     }
   ],
-  "rendering_json_yaml": "UNRESOLVED",
+  "rendering_json_yaml": {
+    "status": "ADOPTED_REGENERATED_REPLACEMENTS_NOT_RECOVERED_ORIGINALS",
+    "artifacts": [
+      {
+        "path": "rendering-public.json",
+        "sha256": "577d69d76d265edd11a6a7a651c74dfe312d958824fb7e5dbba344a56cfc5fe6",
+        "bytes": 13035,
+        "origin": "INDEPENDENT_REGENERATION_NOT_ORIGINAL_RECOVERY",
+        "status": "ADOPTED_INDEPENDENTLY_VERIFIED_REGENERATED_RENDERING",
+        "candidate_source_commit": "b09d7eca4ecfd0b50353fcc66b7ddf838b84b04b",
+        "candidate_source_file_mode_sha256": "51e6f9f1eba046ed42f03c1f1bd6c6a6a6ed264dc13ee856ac590007dbc9f71e",
+        "recipe_sha256": "bc87eeb82a60453c978841c857b603a0a2ed1901da97005de62b15891c1c1684",
+        "recipe_receipt": "task24-schema10-rendering-candidate-169/recipe.py",
+        "source_database_sha256": "012fe9371c8da98b58d5b7746fe933605944836b048730ceb812d16535bdaa44",
+        "native_facts": {
+          "scope": {
+            "schema_version": "0.1",
+            "contract_kind": "phase8-report-scope-v1",
+            "assessment_id": "asm_research",
+            "adjudication_id": "p7frozen_cc50c5751f22398106859ac30a2b120027b04fc8749ed779f5f082e36ea9911f",
+            "assessment_context_id": "p7ctx_69db03abb58d351624c1294da06e3cc04de87b20cac1dfb090196e166b243fcb",
+            "phase6_snapshot_id": "p6snap_1fe86ca067bf2386bd0abf13274483e07ad27579e3eaa5fe93ea5b9217f41574"
+          },
+          "bundle_digest": "6927e5dc1673ef5ae98fd1487d88285598cc1d56b8208a3af66a12954fc41058",
+          "native_compilation_id": "p8run_967915576fd5dec66edc98ff6b123f0c705cc8ee7c553836c975a442d76c98cf",
+          "artifact_ids": [
+            "p8artifact_026ca9cb73f50365d5da61f8be33a3ce3c1daf7d28c77e706185dd6ddadfc1ef",
+            "p8artifact_03cc92ecc507597e4c5617d6c67961d5edaddaf968ec21d3d8496ec76b883a15",
+            "p8artifact_17ddd93613e62276ea0281b0c3cee1e51572a6097ade444f6a764557ef6957a0",
+            "p8artifact_260b9ba539f6456af7e7ef50bfe7b2054d3b89aeab4c2f484ea0a710436cd8ef",
+            "p8artifact_398865c48c43b50ed56424f1d1f9a49819225d216c99cc9c6e5b4073f00be124",
+            "p8artifact_496dfe912c871bcd5ce933edd4c81739953c3114dfbae78472f29c7cde79109c",
+            "p8artifact_5c0c65ba54bcd040a2833036e3e42be5bc8e46f478cb275b53d35bb2c879c82b",
+            "p8artifact_68d090b6eed2869fd03a8ed8fa454050f071f7f06709cb148eda4bc03e60068e",
+            "p8artifact_9648841b1392ed83886e151aa2842eefbe3e9b47719db39a329791cff753026b",
+            "p8artifact_acc289b698599cecf0a5a21c195ecc00f083b374d2af0562ed2f1f21298eeb3f",
+            "p8artifact_f7692ba1dfdc01dde24f67137dca6292a68376498cc2cccfbc76b7f57ecf0093"
+          ],
+          "approved_versions": [
+            "p8-plan-firewall-v1",
+            "p8-semantic-firewall-v1",
+            "p8-fallback-v1",
+            "p8-citations-v1",
+            "p8-render-v1",
+            "p8-summary-v1",
+            "p8-lens-v1",
+            "p8-bundle-v2",
+            "p8-obligations-v1"
+          ],
+          "options": {
+            "schema_version": "0.1",
+            "contract_kind": "phase8-report-options-v1",
+            "lens": "RESEARCH",
+            "detail": "STANDARD",
+            "compact_summary": true,
+            "limits": {
+              "schema_version": "0.1",
+              "contract_kind": "phase8-report-generation-limits-v1",
+              "max_calls": 96,
+              "max_tokens": 100000,
+              "max_cost_usd": null,
+              "max_context_chars": 80000,
+              "max_question_chars": 24000,
+              "max_blocks_per_question": 32,
+              "max_subsections_per_question": 8,
+              "max_hierarchy_depth": 2,
+              "max_repairs_total": 9
+            },
+            "render_policy_version": "p8-render-v1"
+          },
+          "report_id": "p8report_235432b1d7443f214e2a588381204862e362a908b9026b723312becbf09dd2d2",
+          "canonical_ir_sha256": "a2fc843af7eab42fb7c170e41db2710b11cd93d3b53f93ea3e5c1d543fc18a6e"
+        },
+        "renderer_version": "p8-render-v1",
+        "complete_rendition_output_sha256": {
+          "json": "aa137f5392ef3c2af7665ad6765826a2dcf939f291726e13b31419ecdefc162e",
+          "yaml": "e34950f49fec7e00117648dcb89cb8388855acf966ba3cff7168057d7f68972e",
+          "markdown": "531829316b21e7118efd7a88b1f2142e440169ec5ae94d1c541e85e9b701cf5f"
+        },
+        "rendition_digests": {
+          "json": "05f78fbd0b4a005695ff2ddf86a321cabaee6bb9627332af81691573e6cae9ce",
+          "yaml": "3edd2285c840ddc6dd58c9fa95e2c06e077aa99c2375e48c6ec3fe51f2870fdb",
+          "markdown": "a312f7a4d35e49c9aed36d0433d97f944b80be46efc8fa9d6b4461d51421a1f4"
+        },
+        "candidate_execution": {
+          "source_commit": "b09d7eca4ecfd0b50353fcc66b7ddf838b84b04b",
+          "source_file_mode_sha256": "51e6f9f1eba046ed42f03c1f1bd6c6a6a6ed264dc13ee856ac590007dbc9f71e",
+          "guard_receipt": "task24-schema10-rendering-candidate-169.json",
+          "guard_sha256": "2072fc8797e2ab27194a61c33f3d61ef2332d7399583c06a307336b29b9d0a0c",
+          "supervised_seconds": 172.46768341600546,
+          "memory_limits": "NONE",
+          "adoption": "OPEN_INDEPENDENT_REVIEW_AND_FRESH_OWNING_COMPARISON_REQUIRED"
+        },
+        "candidate_manifest_sha256": "40f40597fbdb12635e29209dfdfed16b724d3458113e289ad2a92ef3bd4aac5c",
+        "fresh_native_owning_comparison": {
+          "source_commit": "b09d7eca4ecfd0b50353fcc66b7ddf838b84b04b",
+          "source_file_mode_sha256": "51e6f9f1eba046ed42f03c1f1bd6c6a6a6ed264dc13ee856ac590007dbc9f71e",
+          "node": "tests/golden/test_phase8_reports.py::test_rendered_format_public_projection_golden",
+          "state": "PASSED",
+          "candidate_status": "NOT_YET_ADOPTED",
+          "original_assertions": "UNCHANGED",
+          "seconds": 183.28837900000508,
+          "evidence_sha256": {
+            "guard.json": "1c81eed1c2f1e75ba8886e9eb319879fbf7c5c657179fa1736cd59b828d5191f",
+            "guard.log": "19210f4ccd39b2bf6777a3dedd5b7b4ff592f542d8802fddd50286f06b7c4a96",
+            "guard.samples.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "pytest.jsonl": "125118c0b3bf56f179c79967ba12cbbd0470545fb5d6eefef4c151fe2f37b7ee",
+            "recipe.py": "ba7fbe302558b17337e6f3d7a09aa0b089c9f7c749a09153be00adeeacb78af1",
+            "child.py": "27c784236c179505b228ce5b24b4f6d0050cfe76830d789180416fe93423a7f4",
+            "phase8/rendering-public.json": "577d69d76d265edd11a6a7a651c74dfe312d958824fb7e5dbba344a56cfc5fe6",
+            "phase8/rendering-public.yaml": "b2eb21447eeb23193be174388e7b8973f80d65f4d7a29fcd6a223afa13d40f97",
+            "phase8/rendering-public.md": "b30bbe10f2a14d513f68a4d9fd32804ff7da13451d0669351812dc375e7cbf71"
+          }
+        },
+        "owning_accounting_sha256": "f3d796d5a3923b6a2aa0e33de396f28db24b9c55600fa47326a62b46df0c85c3"
+      },
+      {
+        "path": "rendering-public.yaml",
+        "sha256": "b2eb21447eeb23193be174388e7b8973f80d65f4d7a29fcd6a223afa13d40f97",
+        "bytes": 10436,
+        "origin": "INDEPENDENT_REGENERATION_NOT_ORIGINAL_RECOVERY",
+        "status": "ADOPTED_INDEPENDENTLY_VERIFIED_REGENERATED_RENDERING",
+        "candidate_source_commit": "b09d7eca4ecfd0b50353fcc66b7ddf838b84b04b",
+        "candidate_source_file_mode_sha256": "51e6f9f1eba046ed42f03c1f1bd6c6a6a6ed264dc13ee856ac590007dbc9f71e",
+        "recipe_sha256": "bc87eeb82a60453c978841c857b603a0a2ed1901da97005de62b15891c1c1684",
+        "recipe_receipt": "task24-schema10-rendering-candidate-169/recipe.py",
+        "source_database_sha256": "012fe9371c8da98b58d5b7746fe933605944836b048730ceb812d16535bdaa44",
+        "native_facts": {
+          "scope": {
+            "schema_version": "0.1",
+            "contract_kind": "phase8-report-scope-v1",
+            "assessment_id": "asm_research",
+            "adjudication_id": "p7frozen_cc50c5751f22398106859ac30a2b120027b04fc8749ed779f5f082e36ea9911f",
+            "assessment_context_id": "p7ctx_69db03abb58d351624c1294da06e3cc04de87b20cac1dfb090196e166b243fcb",
+            "phase6_snapshot_id": "p6snap_1fe86ca067bf2386bd0abf13274483e07ad27579e3eaa5fe93ea5b9217f41574"
+          },
+          "bundle_digest": "6927e5dc1673ef5ae98fd1487d88285598cc1d56b8208a3af66a12954fc41058",
+          "native_compilation_id": "p8run_967915576fd5dec66edc98ff6b123f0c705cc8ee7c553836c975a442d76c98cf",
+          "artifact_ids": [
+            "p8artifact_026ca9cb73f50365d5da61f8be33a3ce3c1daf7d28c77e706185dd6ddadfc1ef",
+            "p8artifact_03cc92ecc507597e4c5617d6c67961d5edaddaf968ec21d3d8496ec76b883a15",
+            "p8artifact_17ddd93613e62276ea0281b0c3cee1e51572a6097ade444f6a764557ef6957a0",
+            "p8artifact_260b9ba539f6456af7e7ef50bfe7b2054d3b89aeab4c2f484ea0a710436cd8ef",
+            "p8artifact_398865c48c43b50ed56424f1d1f9a49819225d216c99cc9c6e5b4073f00be124",
+            "p8artifact_496dfe912c871bcd5ce933edd4c81739953c3114dfbae78472f29c7cde79109c",
+            "p8artifact_5c0c65ba54bcd040a2833036e3e42be5bc8e46f478cb275b53d35bb2c879c82b",
+            "p8artifact_68d090b6eed2869fd03a8ed8fa454050f071f7f06709cb148eda4bc03e60068e",
+            "p8artifact_9648841b1392ed83886e151aa2842eefbe3e9b47719db39a329791cff753026b",
+            "p8artifact_acc289b698599cecf0a5a21c195ecc00f083b374d2af0562ed2f1f21298eeb3f",
+            "p8artifact_f7692ba1dfdc01dde24f67137dca6292a68376498cc2cccfbc76b7f57ecf0093"
+          ],
+          "approved_versions": [
+            "p8-plan-firewall-v1",
+            "p8-semantic-firewall-v1",
+            "p8-fallback-v1",
+            "p8-citations-v1",
+            "p8-render-v1",
+            "p8-summary-v1",
+            "p8-lens-v1",
+            "p8-bundle-v2",
+            "p8-obligations-v1"
+          ],
+          "options": {
+            "schema_version": "0.1",
+            "contract_kind": "phase8-report-options-v1",
+            "lens": "RESEARCH",
+            "detail": "STANDARD",
+            "compact_summary": true,
+            "limits": {
+              "schema_version": "0.1",
+              "contract_kind": "phase8-report-generation-limits-v1",
+              "max_calls": 96,
+              "max_tokens": 100000,
+              "max_cost_usd": null,
+              "max_context_chars": 80000,
+              "max_question_chars": 24000,
+              "max_blocks_per_question": 32,
+              "max_subsections_per_question": 8,
+              "max_hierarchy_depth": 2,
+              "max_repairs_total": 9
+            },
+            "render_policy_version": "p8-render-v1"
+          },
+          "report_id": "p8report_235432b1d7443f214e2a588381204862e362a908b9026b723312becbf09dd2d2",
+          "canonical_ir_sha256": "a2fc843af7eab42fb7c170e41db2710b11cd93d3b53f93ea3e5c1d543fc18a6e"
+        },
+        "renderer_version": "p8-render-v1",
+        "complete_rendition_output_sha256": {
+          "json": "aa137f5392ef3c2af7665ad6765826a2dcf939f291726e13b31419ecdefc162e",
+          "yaml": "e34950f49fec7e00117648dcb89cb8388855acf966ba3cff7168057d7f68972e",
+          "markdown": "531829316b21e7118efd7a88b1f2142e440169ec5ae94d1c541e85e9b701cf5f"
+        },
+        "rendition_digests": {
+          "json": "05f78fbd0b4a005695ff2ddf86a321cabaee6bb9627332af81691573e6cae9ce",
+          "yaml": "3edd2285c840ddc6dd58c9fa95e2c06e077aa99c2375e48c6ec3fe51f2870fdb",
+          "markdown": "a312f7a4d35e49c9aed36d0433d97f944b80be46efc8fa9d6b4461d51421a1f4"
+        },
+        "candidate_execution": {
+          "source_commit": "b09d7eca4ecfd0b50353fcc66b7ddf838b84b04b",
+          "source_file_mode_sha256": "51e6f9f1eba046ed42f03c1f1bd6c6a6a6ed264dc13ee856ac590007dbc9f71e",
+          "guard_receipt": "task24-schema10-rendering-candidate-169.json",
+          "guard_sha256": "2072fc8797e2ab27194a61c33f3d61ef2332d7399583c06a307336b29b9d0a0c",
+          "supervised_seconds": 172.46768341600546,
+          "memory_limits": "NONE",
+          "adoption": "OPEN_INDEPENDENT_REVIEW_AND_FRESH_OWNING_COMPARISON_REQUIRED"
+        },
+        "candidate_manifest_sha256": "40f40597fbdb12635e29209dfdfed16b724d3458113e289ad2a92ef3bd4aac5c",
+        "fresh_native_owning_comparison": {
+          "source_commit": "b09d7eca4ecfd0b50353fcc66b7ddf838b84b04b",
+          "source_file_mode_sha256": "51e6f9f1eba046ed42f03c1f1bd6c6a6a6ed264dc13ee856ac590007dbc9f71e",
+          "node": "tests/golden/test_phase8_reports.py::test_rendered_format_public_projection_golden",
+          "state": "PASSED",
+          "candidate_status": "NOT_YET_ADOPTED",
+          "original_assertions": "UNCHANGED",
+          "seconds": 183.28837900000508,
+          "evidence_sha256": {
+            "guard.json": "1c81eed1c2f1e75ba8886e9eb319879fbf7c5c657179fa1736cd59b828d5191f",
+            "guard.log": "19210f4ccd39b2bf6777a3dedd5b7b4ff592f542d8802fddd50286f06b7c4a96",
+            "guard.samples.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "pytest.jsonl": "125118c0b3bf56f179c79967ba12cbbd0470545fb5d6eefef4c151fe2f37b7ee",
+            "recipe.py": "ba7fbe302558b17337e6f3d7a09aa0b089c9f7c749a09153be00adeeacb78af1",
+            "child.py": "27c784236c179505b228ce5b24b4f6d0050cfe76830d789180416fe93423a7f4",
+            "phase8/rendering-public.json": "577d69d76d265edd11a6a7a651c74dfe312d958824fb7e5dbba344a56cfc5fe6",
+            "phase8/rendering-public.yaml": "b2eb21447eeb23193be174388e7b8973f80d65f4d7a29fcd6a223afa13d40f97",
+            "phase8/rendering-public.md": "b30bbe10f2a14d513f68a4d9fd32804ff7da13451d0669351812dc375e7cbf71"
+          }
+        },
+        "owning_accounting_sha256": "f3d796d5a3923b6a2aa0e33de396f28db24b9c55600fa47326a62b46df0c85c3"
+      }
+    ],
+    "normalization": {
+      "function": "tests/golden/test_phase8_reports.py::format_public_projection",
+      "regex": "\\b(?:[a-z][a-z0-9_]*_)?[0-9a-f]{64}\\b",
+      "replacement": "<native-id>",
+      "rules": "Applied to JSON-serialized selected public fields; every matching 64-hex token is masked, including content or basis digests where present. No publication/cutoff date normalization. The projection omits narrative prose, claims/basis relationships, detailed uncertainty/coverage and execution provenance. It cannot certify those omitted fields.",
+      "required_unmasked_checks": "Fresh complete native IR recomputation; actual blocks/claims/basis/global collections bound to committed sections; native uncertainty and exact citation registry; raw scope/verdict/permission/value/coverage/Q9 ancestry; compact-summary equality; retained uncertainty/Q9-claim counterexamples; complete all-format parity and both safe parses."
+    },
+    "preserved_historical_prefix_comparison": {
+      "preserved_path": "/Users/tanatswamapfumo/Documents/Novcheck-Forensic-Recovery-20261008/evidence/rendering-public-json.partial.txt",
+      "bytes": 7423,
+      "sha256": "ed8d88605964cd61ed6154a69909ac53889d8df2db941ab2be3762d7e690fe6f",
+      "compared_candidate_sha256": "577d69d76d265edd11a6a7a651c74dfe312d958824fb7e5dbba344a56cfc5fe6",
+      "exact_matching_prefix_bytes": 7423,
+      "differences_in_preserved_portion": 0,
+      "missing_tail_equivalence": "UNPROVED",
+      "original_unchanged": true
+    },
+    "prefix_comparison_receipt_sha256": "270f15be8af4a453e80eabd339c74860401899346b0352dc1eed9ffe4b9c7521",
+    "preserved_original_markdown_sha256": "b30bbe10f2a14d513f68a4d9fd32804ff7da13451d0669351812dc375e7cbf71",
+    "independent_review": "Scoped read-only review derived MIXED expectations from master specification/approved plan/original upstream fixtures before candidate examination. No Critical or Important defect found. Minor normalization/prefix provenance omissions are recorded here. Review ran no workload and is not whole-phase acceptance.",
+    "verification": "Original owning golden test executed unchanged against a private candidate directory after fresh native fixture construction, IR recomputation, rendering/parity, both safe parses and preserved Markdown comparison. Candidate-location fixture changed only expected-file location; all original assertions retained. Successful setup/call/teardown, exit 0 and cleanup recorded in task24-rendering-candidate-owning-184/accounting.json.",
+    "limitations": "Normalized public projections are regenerated fixtures, not accepted report authority, recovered original bytes, original-tree equivalence, live semantic quality or Phase 8 acceptance."
+  },
   "remaining_acceptance": [
-    "two rendering goldens",
     "complete owning/golden suites at final implementation source",
-    "full Phase 8 acceptance"
+    "full repository and exact fresh detached verification",
+    "single independent whole-phase review and completion handoff"
   ],
   "fresh_v2_compatibility_check": {
     "status": "SIX_EXISTING_FALLBACK_BYTES_PASS_FRESH_NATIVE_V2_OWNERS_NOT_FULL_ACCEPTANCE",
