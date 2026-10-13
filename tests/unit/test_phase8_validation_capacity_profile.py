@@ -1,4 +1,4 @@
-"""Measured Phase 8 validation reserve; unchanged paging and dangerous-case stops."""
+"""Historical v2 receipt replay; current execution ignores validation reserves."""
 
 import sys
 from dataclasses import replace
@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts.recovery.resource_guard import (
-    ResourceLimits,
+    HistoricalResourceLimits,
     RiskMonitor,
     approved_local_limits,
     run_guarded,
@@ -16,7 +16,8 @@ from tests.unit.test_recovery_resource_guard import safe_sample
 
 
 def validation_limits():
-    return ResourceLimits(
+    return HistoricalResourceLimits(
+        policy_version=2,
         soft_bytes=704_000_000,
         hard_bytes=896_000_000,
         min_headroom_bytes=1_100_000_000,
@@ -93,9 +94,7 @@ def test_validation_profile_preserves_sustained_capacity_and_severe_paging(last)
 
 
 @pytest.mark.parametrize("launch_qualified", [False, True])
-def test_validation_profile_launch_and_runtime_reserve_are_both_enforced(
-    tmp_path, launch_qualified
-):
+def test_historical_validation_reserves_cannot_veto_current_execution(tmp_path, launch_qualified):
     marker = tmp_path / "child"
     clock = 10
 
@@ -119,8 +118,18 @@ def test_validation_profile_launch_and_runtime_reserve_are_both_enforced(
         lock_path=tmp_path / "lock",
         collector=collect,
     )
-    assert (receipt.state, receipt.reason) == (
-        ("PASSED", None) if launch_qualified else ("REFUSED", "LOW_HEADROOM")
-    )
-    assert marker.exists() == launch_qualified
+    assert (receipt.state, receipt.reason) == ("PASSED", None)
+    assert marker.exists()
     assert receipt.cleanup_complete
+    assert receipt.limits.policy_version == 3
+    assert receipt.limits.timeout_seconds == 5
+    for field in (
+        "soft_bytes",
+        "hard_bytes",
+        "min_headroom_bytes",
+        "launch_headroom_bytes",
+        "max_swap_bytes",
+        "max_paging_bytes_per_second",
+        "paging_window_seconds",
+    ):
+        assert getattr(receipt.limits, field) == 0
